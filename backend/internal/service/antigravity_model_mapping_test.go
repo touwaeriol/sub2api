@@ -18,9 +18,13 @@ func TestIsAntigravityModelSupported(t *testing.T) {
 		{"直接支持 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
 		{"直接支持 - claude-opus-4-5-thinking", "claude-opus-4-5-thinking", true},
 		{"直接支持 - claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking", true},
-		{"直接支持 - gemini-2.5-flash", "gemini-2.5-flash", true},
-		{"直接支持 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
+		{"直接支持 - gemini-3-flash", "gemini-3-flash", true},
 		{"直接支持 - gemini-3-pro-high", "gemini-3-pro-high", true},
+
+		// gemini-2.5 通过前缀映射支持（映射到 gemini-3）
+		{"可映射 - gemini-2.5-flash", "gemini-2.5-flash", true},
+		{"可映射 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
+		{"可映射 - gemini-2.5-pro", "gemini-2.5-pro", true},
 
 		// 可映射的模型
 		{"可映射 - claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", true},
@@ -134,12 +138,18 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 
-		// 3. Gemini 透传
+		// 3. Gemini 2.5 → Gemini 3 映射
 		{
-			name:           "Gemini透传 - gemini-2.5-flash",
+			name:           "Gemini映射 - gemini-2.5-flash → gemini-3-flash",
 			requestedModel: "gemini-2.5-flash",
 			accountMapping: nil,
-			expected:       "gemini-2.5-flash",
+			expected:       "gemini-3-flash",
+		},
+		{
+			name:           "Gemini映射 - gemini-2.5-pro → gemini-3-pro-high",
+			requestedModel: "gemini-2.5-pro",
+			accountMapping: nil,
+			expected:       "gemini-3-pro-high",
 		},
 		{
 			name:           "Gemini透传 - gemini-1.5-pro",
