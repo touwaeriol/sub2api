@@ -245,7 +245,7 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 				parts = append([]GeminiPart{{
 					Text:             "Thinking...",
 					Thought:          true,
-					ThoughtSignature: dummyThoughtSignature,
+					ThoughtSignature: DummyThoughtSignature,
 				}}, parts...)
 			}
 		}
@@ -263,9 +263,10 @@ func buildContents(messages []ClaudeMessage, toolIDToName map[string]string, isT
 	return contents, strippedThinking, nil
 }
 
-// dummyThoughtSignature 用于跳过 Gemini 3 thought_signature 验证
+// DummyThoughtSignature 用于跳过 Gemini 3 thought_signature 验证
 // 参考: https://ai.google.dev/gemini-api/docs/thought-signatures
-const dummyThoughtSignature = "skip_thought_signature_validator"
+// 导出此常量以便其他包在跨账号场景下替换签名使用
+const DummyThoughtSignature = "skip_thought_signature_validator"
 
 // buildParts 构建消息的 parts
 // allowDummyThought: 只有 Gemini 模型支持 dummy thought signature
@@ -312,7 +313,7 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 				continue
 			} else {
 				// Gemini 模型使用 dummy signature
-				part.ThoughtSignature = dummyThoughtSignature
+				part.ThoughtSignature = DummyThoughtSignature
 			}
 			parts = append(parts, part)
 
@@ -343,8 +344,8 @@ func buildParts(content json.RawMessage, toolIDToName map[string]string, allowDu
 			// - Gemini 模型：使用 dummy signature（跳过 thought_signature 校验）
 			// - Claude 模型：透传上游返回的真实 signature（Vertex/Google 需要完整签名链路）
 			if allowDummyThought {
-				part.ThoughtSignature = dummyThoughtSignature
-			} else if block.Signature != "" && block.Signature != dummyThoughtSignature {
+				part.ThoughtSignature = DummyThoughtSignature
+			} else if block.Signature != "" && block.Signature != DummyThoughtSignature {
 				part.ThoughtSignature = block.Signature
 			}
 			parts = append(parts, part)
