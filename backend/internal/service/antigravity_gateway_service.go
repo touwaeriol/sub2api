@@ -28,6 +28,18 @@ const (
 	antigravityMaxRetries       = 3
 	antigravityRetryBaseDelay   = 1 * time.Second
 	antigravityRetryMaxDelay    = 16 * time.Second
+
+	// 智能重试相关常量
+	antigravitySmartRetryThreshold = 10 * time.Second // 智能重试阈值：retryDelay < 10s 时触发
+	antigravitySmartRetryMinWait   = 1 * time.Second  // 智能重试最小等待时间
+
+	// Google RPC 状态和类型常量
+	googleRPCStatusResourceExhausted          = "RESOURCE_EXHAUSTED"
+	googleRPCStatusUnavailable                = "UNAVAILABLE"
+	googleRPCTypeRetryInfo                    = "type.googleapis.com/google.rpc.RetryInfo"
+	googleRPCTypeErrorInfo                    = "type.googleapis.com/google.rpc.ErrorInfo"
+	googleRPCReasonModelCapacityExhausted     = "MODEL_CAPACITY_EXHAUSTED"
+	googleRPCReasonRateLimitExceeded          = "RATE_LIMIT_EXCEEDED"
 )
 
 const (
@@ -49,6 +61,7 @@ type antigravityRetryLoopParams struct {
 	c              *gin.Context
 	httpUpstream   HTTPUpstream
 	settingService *SettingService
+	accountRepo    AccountRepository // 用于智能重试的模型级别限流
 	handleError    func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope)
 }
 
@@ -127,18 +140,101 @@ urlFallbackLoop:
 				return nil, fmt.Errorf("upstream request failed after retries: %w", err)
 			}
 
-			// 429 限流处理：区分 URL 级别限流和账户配额限流
-			if resp.StatusCode == http.StatusTooManyRequests {
+			// 429/503 限流处理：区分 URL 级别限流、智能重试和账户配额限流
+			if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable {
 				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 				_ = resp.Body.Close()
 
-				// "Resource has been exhausted" 是 URL 级别限流，切换 URL
-				if isURLLevelRateLimit(respBody) && urlIdx < len(availableURLs)-1 {
+				// "Resource has been exhausted" 是 URL 级别限流，切换 URL（仅 429）
+				if resp.StatusCode == http.StatusTooManyRequests && isURLLevelRateLimit(respBody) && urlIdx < len(availableURLs)-1 {
 					log.Printf("%s URL fallback (429): %s -> %s", p.prefix, baseURL, availableURLs[urlIdx+1])
 					continue urlFallbackLoop
 				}
 
-				// 账户/模型配额限流，重试 3 次（指数退避）
+				// ===== 反重力 OAuth 账号智能重试（与默认重试互斥） =====
+				shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody)
+
+				// 情况1: retryDelay >= 10s，直接限流模型，不重试
+				if shouldRateLimitModel {
+					log.Printf("%s status=%d oauth_long_delay model=%s account=%d (direct model rate limit)",
+						p.prefix, resp.StatusCode, modelName, p.account.ID)
+
+					// 直接限流模型（按 scope 存储）
+					resetAt := time.Now().Add(30 * time.Second) // 默认 30 秒
+					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
+						// 无法映射 scope，fallback 到整个账户限流
+						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+						log.Printf("%s status=%d rate_limited account=%d (no scope mapping)", p.prefix, resp.StatusCode, p.account.ID)
+					}
+
+					resp = &http.Response{
+						StatusCode: resp.StatusCode,
+						Header:     resp.Header.Clone(),
+						Body:       io.NopCloser(bytes.NewReader(respBody)),
+					}
+					break urlFallbackLoop
+				}
+
+				// 情况2: retryDelay < 10s，智能重试一次
+				if shouldSmartRetry {
+					log.Printf("%s status=%d oauth_smart_retry delay=%v model=%s account=%d",
+						p.prefix, resp.StatusCode, waitDuration, modelName, p.account.ID)
+
+					select {
+					case <-p.ctx.Done():
+						log.Printf("%s status=context_canceled_during_smart_retry", p.prefix)
+						return nil, p.ctx.Err()
+					case <-time.After(waitDuration):
+					}
+
+					// 智能重试一次：创建新请求
+					retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
+					if err != nil {
+						log.Printf("%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
+						// 请求构建失败，fallback 到默认限流
+						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+						resp = &http.Response{
+							StatusCode: resp.StatusCode,
+							Header:     resp.Header.Clone(),
+							Body:       io.NopCloser(bytes.NewReader(respBody)),
+						}
+						break urlFallbackLoop
+					}
+
+					retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+					if retryErr == nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
+						// 重试成功
+						log.Printf("%s status=%d smart_retry_success", p.prefix, retryResp.StatusCode)
+						resp = retryResp
+						break urlFallbackLoop
+					}
+
+					// 智能重试失败，限流当前模型
+					log.Printf("%s status=%d smart_retry_failed", p.prefix, resp.StatusCode)
+					if retryResp != nil {
+						_ = retryResp.Body.Close()
+					}
+
+					// 限流当前模型（直接使用官方模型 ID）
+					resetAt := time.Now().Add(30 * time.Second)
+					if p.accountRepo != nil && modelName != "" {
+						if err := p.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, modelName, resetAt); err != nil {
+							log.Printf("%s status=%d model_rate_limit_failed model=%s error=%v", p.prefix, resp.StatusCode, modelName, err)
+						} else {
+							log.Printf("%s status=%d model_rate_limited_after_smart_retry model=%s account=%d reset_in=30s", p.prefix, resp.StatusCode, modelName, p.account.ID)
+						}
+					}
+
+					resp = &http.Response{
+						StatusCode: resp.StatusCode,
+						Header:     resp.Header.Clone(),
+						Body:       io.NopCloser(bytes.NewReader(respBody)),
+					}
+					break urlFallbackLoop
+				}
+				// ===== 智能重试结束，如果未触发则走默认重试逻辑 =====
+
+				// 账户/模型配额限流，重试 3 次（指数退避）- 默认逻辑（非 OAuth 账号或解析失败）
 				if attempt < antigravityMaxRetries {
 					upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 					upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -152,7 +248,7 @@ urlFallbackLoop:
 						Message:            upstreamMsg,
 						Detail:             getUpstreamDetail(respBody),
 					})
-					log.Printf("%s status=429 retry=%d/%d body=%s", p.prefix, attempt, antigravityMaxRetries, truncateForLog(respBody, 200))
+					log.Printf("%s status=%d retry=%d/%d body=%s", p.prefix, resp.StatusCode, attempt, antigravityMaxRetries, truncateForLog(respBody, 200))
 					if !sleepAntigravityBackoffWithContext(p.ctx, attempt) {
 						log.Printf("%s status=context_canceled_during_backoff", p.prefix)
 						return nil, p.ctx.Err()
@@ -162,7 +258,7 @@ urlFallbackLoop:
 
 				// 重试用尽，标记账户限流
 				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
-				log.Printf("%s status=429 rate_limited base_url=%s body=%s", p.prefix, baseURL, truncateForLog(respBody, 200))
+				log.Printf("%s status=%d rate_limited base_url=%s body=%s", p.prefix, resp.StatusCode, baseURL, truncateForLog(respBody, 200))
 				resp = &http.Response{
 					StatusCode: resp.StatusCode,
 					Header:     resp.Header.Clone(),
@@ -171,7 +267,7 @@ urlFallbackLoop:
 				break urlFallbackLoop
 			}
 
-			// 其他可重试错误
+			// 其他可重试错误（不包括 429 和 503，因为上面已处理）
 			if resp.StatusCode >= 400 && shouldRetryAntigravityError(resp.StatusCode) {
 				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 				_ = resp.Body.Close()
@@ -770,6 +866,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		c:              c,
 		httpUpstream:   s.httpUpstream,
 		settingService: s.settingService,
+		accountRepo:    s.accountRepo,
 		handleError:    s.handleUpstreamError,
 	})
 	if err != nil {
@@ -846,6 +943,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					c:              c,
 					httpUpstream:   s.httpUpstream,
 					settingService: s.settingService,
+					accountRepo:    s.accountRepo,
 					handleError:    s.handleUpstreamError,
 				})
 				if retryErr != nil {
@@ -1348,6 +1446,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		c:              c,
 		httpUpstream:   s.httpUpstream,
 		settingService: s.settingService,
+		accountRepo:    s.accountRepo,
 		handleError:    s.handleUpstreamError,
 	})
 	if err != nil {
@@ -1540,6 +1639,26 @@ func sleepAntigravityBackoffWithContext(ctx context.Context, attempt int) bool {
 	}
 }
 
+// setModelRateLimitByModelName 使用官方模型 ID 设置模型级限流
+// 直接使用上游返回的模型 ID（如 claude-sonnet-4-5）作为限流 key
+// 返回是否已成功设置（若模型名为空或 repo 为 nil 将返回 false）
+func setModelRateLimitByModelName(ctx context.Context, repo AccountRepository, accountID int64, modelName, prefix string, statusCode int, resetAt time.Time, afterSmartRetry bool) bool {
+	if repo == nil || modelName == "" {
+		return false
+	}
+	// 直接使用官方模型 ID 作为 key，不再转换为 scope
+	if err := repo.SetModelRateLimit(ctx, accountID, modelName, resetAt); err != nil {
+		log.Printf("%s status=%d model_rate_limit_failed model=%s error=%v", prefix, statusCode, modelName, err)
+		return false
+	}
+	if afterSmartRetry {
+		log.Printf("%s status=%d model_rate_limited_after_smart_retry model=%s account=%d reset_in=%v", prefix, statusCode, modelName, accountID, time.Until(resetAt).Truncate(time.Second))
+	} else {
+		log.Printf("%s status=%d model_rate_limited model=%s account=%d reset_in=%v", prefix, statusCode, modelName, accountID, time.Until(resetAt).Truncate(time.Second))
+	}
+	return true
+}
+
 func antigravityUseScopeRateLimit() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv(antigravityScopeRateLimitEnv)))
 	// 默认开启按配额域限流，只有明确设置为禁用值时才关闭
@@ -1559,6 +1678,155 @@ func antigravityFallbackCooldownSeconds() (time.Duration, bool) {
 		return 0, false
 	}
 	return time.Duration(seconds) * time.Second, true
+}
+
+// antigravitySmartRetryInfo 智能重试所需的信息
+type antigravitySmartRetryInfo struct {
+	RetryDelay time.Duration // 重试延迟时间
+	ModelName  string        // 限流的模型名称（如 "claude-sonnet-4-5"）
+}
+
+// parseAntigravitySmartRetryInfo 解析 Google RPC RetryInfo 和 ErrorInfo 信息
+// 返回解析结果，如果解析失败或不满足条件返回 nil
+//
+// 支持两种情况：
+// 1. 429 RESOURCE_EXHAUSTED + RATE_LIMIT_EXCEEDED：
+//   - error.status == "RESOURCE_EXHAUSTED"
+//   - error.details[].reason == "RATE_LIMIT_EXCEEDED"
+//
+// 2. 503 UNAVAILABLE + MODEL_CAPACITY_EXHAUSTED：
+//   - error.status == "UNAVAILABLE"
+//   - error.details[].reason == "MODEL_CAPACITY_EXHAUSTED"
+//
+// 必须满足以下条件才会返回有效值：
+// - error.details[] 中存在 @type == "type.googleapis.com/google.rpc.RetryInfo" 的元素
+// - 该元素包含 retryDelay 字段，格式为 "数字s"（如 "0.201506475s"）
+func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil
+	}
+
+	errObj, ok := parsed["error"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	// 检查 status 是否符合条件
+	// 情况1: 429 RESOURCE_EXHAUSTED (需要进一步检查 reason == RATE_LIMIT_EXCEEDED)
+	// 情况2: 503 UNAVAILABLE (需要进一步检查 reason == MODEL_CAPACITY_EXHAUSTED)
+	status, _ := errObj["status"].(string)
+	isResourceExhausted := status == googleRPCStatusResourceExhausted
+	isUnavailable := status == googleRPCStatusUnavailable
+
+	if !isResourceExhausted && !isUnavailable {
+		return nil
+	}
+
+	details, ok := errObj["details"].([]any)
+	if !ok {
+		return nil
+	}
+
+	var retryDelay time.Duration
+	var modelName string
+	var hasRateLimitExceeded bool      // 429 需要此 reason
+	var hasModelCapacityExhausted bool // 503 需要此 reason
+
+	for _, d := range details {
+		dm, ok := d.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		atType, _ := dm["@type"].(string)
+
+		// 从 ErrorInfo 提取模型名称和 reason
+		if atType == googleRPCTypeErrorInfo {
+			if meta, ok := dm["metadata"].(map[string]any); ok {
+				if model, ok := meta["model"].(string); ok {
+					modelName = model
+				}
+			}
+			// 检查 reason
+			if reason, ok := dm["reason"].(string); ok {
+				if reason == googleRPCReasonModelCapacityExhausted {
+					hasModelCapacityExhausted = true
+				}
+				if reason == googleRPCReasonRateLimitExceeded {
+					hasRateLimitExceeded = true
+				}
+			}
+			continue
+		}
+
+		// 从 RetryInfo 提取重试延迟
+		if atType == googleRPCTypeRetryInfo {
+			delay, ok := dm["retryDelay"].(string)
+			if !ok || delay == "" {
+				continue
+			}
+			// 只处理 "数字s" 格式
+			if !strings.HasSuffix(delay, "s") || strings.Contains(delay, "m") {
+				continue
+			}
+			dur, err := time.ParseDuration(delay)
+			if err != nil {
+				continue
+			}
+			retryDelay = dur
+		}
+	}
+
+	// 验证条件
+	// 情况1: RESOURCE_EXHAUSTED 需要有 RATE_LIMIT_EXCEEDED reason
+	// 情况2: UNAVAILABLE 需要有 MODEL_CAPACITY_EXHAUSTED reason
+	if isResourceExhausted && !hasRateLimitExceeded {
+		return nil
+	}
+	if isUnavailable && !hasModelCapacityExhausted {
+		return nil
+	}
+
+	// 必须有模型名才返回有效结果
+	if retryDelay <= 0 || modelName == "" {
+		return nil
+	}
+
+	return &antigravitySmartRetryInfo{
+		RetryDelay: retryDelay,
+		ModelName:  modelName,
+	}
+}
+
+// shouldTriggerAntigravitySmartRetry 判断是否应该触发智能重试
+// 返回：
+//   - shouldRetry: 是否应该智能重试（retryDelay < 10s）
+//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= 10s，直接限流不重试）
+//   - waitDuration: 等待时间（智能重试时使用）
+//   - modelName: 限流的模型名称
+func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
+	if !account.IsOAuth() {
+		return false, false, 0, ""
+	}
+
+	info := parseAntigravitySmartRetryInfo(respBody)
+	if info == nil {
+		return false, false, 0, ""
+	}
+
+	// retryDelay >= 10s：直接限流模型，不重试
+	if info.RetryDelay >= antigravitySmartRetryThreshold {
+		return false, true, 0, info.ModelName
+	}
+
+	// retryDelay < 10s：智能重试
+	waitDuration = info.RetryDelay
+	if waitDuration < antigravitySmartRetryMinWait {
+		waitDuration = antigravitySmartRetryMinWait
+	}
+
+	return true, false, waitDuration, info.ModelName
 }
 
 func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {

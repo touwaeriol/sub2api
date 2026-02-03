@@ -53,10 +53,17 @@ type rateLimitCall struct {
 	resetAt   time.Time
 }
 
+type modelRateLimitCall struct {
+	accountID int64
+	modelKey  string // 存储的 key（应该是官方模型 ID，如 "claude-sonnet-4-5"）
+	resetAt   time.Time
+}
+
 type stubAntigravityAccountRepo struct {
 	AccountRepository
-	scopeCalls []scopeLimitCall
-	rateCalls  []rateLimitCall
+	scopeCalls          []scopeLimitCall
+	rateCalls           []rateLimitCall
+	modelRateLimitCalls []modelRateLimitCall
 }
 
 func (s *stubAntigravityAccountRepo) SetAntigravityQuotaScopeLimit(ctx context.Context, id int64, scope AntigravityQuotaScope, resetAt time.Time) error {
@@ -66,6 +73,11 @@ func (s *stubAntigravityAccountRepo) SetAntigravityQuotaScopeLimit(ctx context.C
 
 func (s *stubAntigravityAccountRepo) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
 	s.rateCalls = append(s.rateCalls, rateLimitCall{accountID: id, resetAt: resetAt})
+	return nil
+}
+
+func (s *stubAntigravityAccountRepo) SetModelRateLimit(ctx context.Context, id int64, modelKey string, resetAt time.Time) error {
+	s.modelRateLimitCalls = append(s.modelRateLimitCalls, modelRateLimitCall{accountID: id, modelKey: modelKey, resetAt: resetAt})
 	return nil
 }
 
@@ -187,4 +199,400 @@ func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
 
 func buildGeminiRateLimitBody(delay string) []byte {
 	return []byte(fmt.Sprintf(`{"error":{"message":"too many requests","details":[{"metadata":{"quotaResetDelay":%q}}]}}`, delay))
+}
+
+func TestParseAntigravitySmartRetryInfo(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          string
+		expectedDelay time.Duration
+		expectedModel string
+		expectedNil   bool
+	}{
+		{
+			name: "valid complete response with RATE_LIMIT_EXCEEDED",
+			body: `{
+				"error": {
+					"code": 429,
+					"details": [
+						{
+							"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+							"domain": "cloudcode-pa.googleapis.com",
+							"metadata": {
+								"model": "claude-sonnet-4-5",
+								"quotaResetDelay": "201.506475ms"
+							},
+							"reason": "RATE_LIMIT_EXCEEDED"
+						},
+						{
+							"@type": "type.googleapis.com/google.rpc.RetryInfo",
+							"retryDelay": "0.201506475s"
+						}
+					],
+					"message": "You have exhausted your capacity on this model.",
+					"status": "RESOURCE_EXHAUSTED"
+				}
+			}`,
+			expectedDelay: 201506475 * time.Nanosecond,
+			expectedModel: "claude-sonnet-4-5",
+		},
+		{
+			name: "429 RESOURCE_EXHAUSTED without RATE_LIMIT_EXCEEDED - should return nil",
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{
+							"@type": "type.googleapis.com/google.rpc.ErrorInfo",
+							"metadata": {"model": "claude-sonnet-4-5"},
+							"reason": "QUOTA_EXCEEDED"
+						},
+						{
+							"@type": "type.googleapis.com/google.rpc.RetryInfo",
+							"retryDelay": "3s"
+						}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name: "503 UNAVAILABLE with MODEL_CAPACITY_EXHAUSTED - long delay",
+			body: `{
+				"error": {
+					"code": 503,
+					"status": "UNAVAILABLE",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-3-pro-high"}, "reason": "MODEL_CAPACITY_EXHAUSTED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "39s"}
+					],
+					"message": "No capacity available for model gemini-3-pro-high on the server"
+				}
+			}`,
+			expectedDelay: 39 * time.Second,
+			expectedModel: "gemini-3-pro-high",
+		},
+		{
+			name: "503 UNAVAILABLE without MODEL_CAPACITY_EXHAUSTED - should return nil",
+			body: `{
+				"error": {
+					"code": 503,
+					"status": "UNAVAILABLE",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-pro"}, "reason": "SERVICE_UNAVAILABLE"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "5s"}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name: "wrong status - should return nil",
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "INVALID_ARGUMENT",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3s"}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name: "missing status - should return nil",
+			body: `{
+				"error": {
+					"code": 429,
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3s"}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name: "ignore milliseconds format",
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "test"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "500ms"}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name: "missing model name - should return nil",
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3s"}
+					]
+				}
+			}`,
+			expectedNil: true,
+		},
+		{
+			name:        "invalid JSON",
+			body:        `not json`,
+			expectedNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseAntigravitySmartRetryInfo([]byte(tt.body))
+			if tt.expectedNil {
+				if result != nil {
+					t.Errorf("expected nil, got %+v", result)
+				}
+				return
+			}
+			if result == nil {
+				t.Errorf("expected non-nil result")
+				return
+			}
+			if result.RetryDelay != tt.expectedDelay {
+				t.Errorf("RetryDelay = %v, want %v", result.RetryDelay, tt.expectedDelay)
+			}
+			if result.ModelName != tt.expectedModel {
+				t.Errorf("ModelName = %q, want %q", result.ModelName, tt.expectedModel)
+			}
+		})
+	}
+}
+
+func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
+	oauthAccount := &Account{Type: AccountTypeOAuth}
+	setupTokenAccount := &Account{Type: AccountTypeSetupToken}
+	apiKeyAccount := &Account{Type: AccountTypeAPIKey}
+
+	tests := []struct {
+		name                    string
+		account                 *Account
+		body                    string
+		expectedShouldRetry     bool
+		expectedShouldRateLimit bool
+		minWait                 time.Duration
+		modelName               string
+	}{
+		{
+			name:    "OAuth account with short delay (< 10s) - smart retry",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-opus-4"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.5s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     true,
+			expectedShouldRateLimit: false,
+			minWait:                 1 * time.Second, // 0.5s < 1s, 使用最小等待时间 1s
+			modelName:               "claude-opus-4",
+		},
+		{
+			name:    "SetupToken account with short delay - smart retry",
+			account: setupTokenAccount,
+			body: `{
+				"error": {
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-3-flash"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "3s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     true,
+			expectedShouldRateLimit: false,
+			minWait:                 3 * time.Second,
+			modelName:               "gemini-3-flash",
+		},
+		{
+			name:    "OAuth account with long delay (>= 10s) - direct rate limit",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-sonnet-4-5"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "15s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: true,
+			modelName:               "claude-sonnet-4-5",
+		},
+		{
+			name:    "API Key account - should not trigger",
+			account: apiKeyAccount,
+			body: `{
+				"error": {
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "test"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.5s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: false,
+		},
+		{
+			name:    "OAuth account with exactly 10s delay - direct rate limit",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-pro"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "10s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: true,
+			modelName:               "gemini-pro",
+		},
+		{
+			name:    "503 UNAVAILABLE with MODEL_CAPACITY_EXHAUSTED - long delay",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"code": 503,
+					"status": "UNAVAILABLE",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-3-pro-high"}, "reason": "MODEL_CAPACITY_EXHAUSTED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "39s"}
+					]
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: true,
+			modelName:               "gemini-3-pro-high",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			shouldRetry, shouldRateLimit, wait, model := shouldTriggerAntigravitySmartRetry(tt.account, []byte(tt.body))
+			if shouldRetry != tt.expectedShouldRetry {
+				t.Errorf("shouldRetry = %v, want %v", shouldRetry, tt.expectedShouldRetry)
+			}
+			if shouldRateLimit != tt.expectedShouldRateLimit {
+				t.Errorf("shouldRateLimit = %v, want %v", shouldRateLimit, tt.expectedShouldRateLimit)
+			}
+			if shouldRetry {
+				if wait < tt.minWait {
+					t.Errorf("wait = %v, want >= %v", wait, tt.minWait)
+				}
+			}
+			if (shouldRetry || shouldRateLimit) && model != tt.modelName {
+				t.Errorf("modelName = %q, want %q", model, tt.modelName)
+			}
+		})
+	}
+}
+
+// TestSetModelRateLimitByModelName_UsesOfficialModelID 验证写入端使用官方模型 ID
+func TestSetModelRateLimitByModelName_UsesOfficialModelID(t *testing.T) {
+	tests := []struct {
+		name             string
+		modelName        string
+		expectedModelKey string
+		expectedSuccess  bool
+	}{
+		{
+			name:             "claude-sonnet-4-5 should be stored as-is",
+			modelName:        "claude-sonnet-4-5",
+			expectedModelKey: "claude-sonnet-4-5",
+			expectedSuccess:  true,
+		},
+		{
+			name:             "gemini-3-pro-high should be stored as-is",
+			modelName:        "gemini-3-pro-high",
+			expectedModelKey: "gemini-3-pro-high",
+			expectedSuccess:  true,
+		},
+		{
+			name:             "gemini-3-flash should be stored as-is",
+			modelName:        "gemini-3-flash",
+			expectedModelKey: "gemini-3-flash",
+			expectedSuccess:  true,
+		},
+		{
+			name:             "empty model name should fail",
+			modelName:        "",
+			expectedModelKey: "",
+			expectedSuccess:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := &stubAntigravityAccountRepo{}
+			resetAt := time.Now().Add(30 * time.Second)
+
+			success := setModelRateLimitByModelName(
+				context.Background(),
+				repo,
+				123, // accountID
+				tt.modelName,
+				"[test]",
+				429,
+				resetAt,
+				false, // afterSmartRetry
+			)
+
+			require.Equal(t, tt.expectedSuccess, success)
+
+			if tt.expectedSuccess {
+				require.Len(t, repo.modelRateLimitCalls, 1)
+				call := repo.modelRateLimitCalls[0]
+				require.Equal(t, int64(123), call.accountID)
+				// 关键断言：存储的 key 应该是官方模型 ID，而不是 scope
+				require.Equal(t, tt.expectedModelKey, call.modelKey, "should store official model ID, not scope")
+				require.WithinDuration(t, resetAt, call.resetAt, time.Second)
+			} else {
+				require.Empty(t, repo.modelRateLimitCalls)
+			}
+		})
+	}
+}
+
+// TestSetModelRateLimitByModelName_NotConvertToScope 验证不会将模型名转换为 scope
+func TestSetModelRateLimitByModelName_NotConvertToScope(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	resetAt := time.Now().Add(30 * time.Second)
+
+	// 调用 setModelRateLimitByModelName，传入官方模型 ID
+	success := setModelRateLimitByModelName(
+		context.Background(),
+		repo,
+		456,
+		"claude-sonnet-4-5", // 官方模型 ID
+		"[test]",
+		429,
+		resetAt,
+		true, // afterSmartRetry
+	)
+
+	require.True(t, success)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+
+	call := repo.modelRateLimitCalls[0]
+	// 关键断言：存储的应该是 "claude-sonnet-4-5"，而不是 "claude_sonnet"
+	require.Equal(t, "claude-sonnet-4-5", call.modelKey, "should NOT convert to scope like claude_sonnet")
+	require.NotEqual(t, "claude_sonnet", call.modelKey, "should NOT be scope")
 }
