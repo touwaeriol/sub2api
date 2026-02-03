@@ -68,7 +68,7 @@ type opencodeCacheMetadata struct {
 	LastChecked int64  `json:"lastChecked"`
 }
 
-func applyCodexOAuthTransform(reqBody map[string]any) codexTransformResult {
+func applyCodexOAuthTransform(reqBody map[string]any, isCodexCLI bool) codexTransformResult {
 	result := codexTransformResult{}
 
 	model := ""
@@ -110,15 +110,9 @@ func applyCodexOAuthTransform(reqBody map[string]any) codexTransformResult {
 		result.PromptCacheKey = strings.TrimSpace(v)
 	}
 
-	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
-	existingInstructions, _ := reqBody["instructions"].(string)
-	existingInstructions = strings.TrimSpace(existingInstructions)
-
-	if instructions != "" {
-		if existingInstructions != instructions {
-			reqBody["instructions"] = instructions
-			result.Modified = true
-		}
+	// instructions 处理逻辑：根据是否是 Codex CLI 分别调用不同方法
+	if applyInstructions(reqBody, isCodexCLI) {
+		result.Modified = true
 	}
 
 	if input, ok := reqBody["input"].([]any); ok {
@@ -240,6 +234,66 @@ func getOpenCodeCodexHeader() string {
 
 func GetOpenCodeInstructions() string {
 	return getOpenCodeCodexHeader()
+}
+
+// applyInstructions 处理 instructions 字段
+// isCodexCLI=true: 仅补充缺失的 instructions（使用 opencode 指令）
+// isCodexCLI=false: 优先使用 opencode 指令覆盖
+func applyInstructions(reqBody map[string]any, isCodexCLI bool) bool {
+	if isCodexCLI {
+		return applyCodexCLIInstructions(reqBody)
+	}
+	return applyOpenCodeInstructions(reqBody)
+}
+
+// applyCodexCLIInstructions 为 Codex CLI 请求补充缺失的 instructions
+// 仅在 instructions 为空时添加 opencode 指令
+func applyCodexCLIInstructions(reqBody map[string]any) bool {
+	if !isInstructionsEmpty(reqBody) {
+		return false // 已有有效 instructions，不修改
+	}
+
+	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
+	if instructions != "" {
+		reqBody["instructions"] = instructions
+		return true
+	}
+
+	return false
+}
+
+// applyOpenCodeInstructions 为非 Codex CLI 请求应用 opencode 指令
+// 优先使用 opencode 指令覆盖现有 instructions
+func applyOpenCodeInstructions(reqBody map[string]any) bool {
+	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
+	existingInstructions, _ := reqBody["instructions"].(string)
+	existingInstructions = strings.TrimSpace(existingInstructions)
+
+	if instructions != "" {
+		if existingInstructions != instructions {
+			reqBody["instructions"] = instructions
+			return true
+		}
+	}
+
+	return false
+}
+
+// isInstructionsEmpty 检查 instructions 字段是否为空
+// 处理以下情况：字段不存在、nil、空字符串、纯空白字符串
+func isInstructionsEmpty(reqBody map[string]any) bool {
+	val, exists := reqBody["instructions"]
+	if !exists {
+		return true
+	}
+	if val == nil {
+		return true
+	}
+	str, ok := val.(string)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(str) == ""
 }
 
 func filterCodexInput(input []any) []any {
