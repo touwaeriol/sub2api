@@ -2856,12 +2856,17 @@ func convertClaudeMessagesToGeminiContents(messages any, toolUseIDToName map[str
 					if strings.TrimSpace(id) != "" && strings.TrimSpace(name) != "" {
 						toolUseIDToName[id] = name
 					}
-					parts = append(parts, map[string]any{
+					part := map[string]any{
 						"functionCall": map[string]any{
 							"name": name,
 							"args": bm["input"],
 						},
-					})
+					}
+					// Gemini 3 函数调用必须传递 thoughtSignature
+					if sig, ok := bm["thoughtSignature"].(string); ok && sig != "" {
+						part["thoughtSignature"] = sig
+					}
+					parts = append(parts, part)
 				case "tool_result":
 					toolUseID, _ := bm["tool_use_id"].(string)
 					name := toolUseIDToName[toolUseID]
