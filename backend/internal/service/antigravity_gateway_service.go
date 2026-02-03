@@ -34,12 +34,12 @@ const (
 	antigravitySmartRetryMinWait   = 1 * time.Second  // 智能重试最小等待时间
 
 	// Google RPC 状态和类型常量
-	googleRPCStatusResourceExhausted          = "RESOURCE_EXHAUSTED"
-	googleRPCStatusUnavailable                = "UNAVAILABLE"
-	googleRPCTypeRetryInfo                    = "type.googleapis.com/google.rpc.RetryInfo"
-	googleRPCTypeErrorInfo                    = "type.googleapis.com/google.rpc.ErrorInfo"
-	googleRPCReasonModelCapacityExhausted     = "MODEL_CAPACITY_EXHAUSTED"
-	googleRPCReasonRateLimitExceeded          = "RATE_LIMIT_EXCEEDED"
+	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
+	googleRPCStatusUnavailable            = "UNAVAILABLE"
+	googleRPCTypeRetryInfo                = "type.googleapis.com/google.rpc.RetryInfo"
+	googleRPCTypeErrorInfo                = "type.googleapis.com/google.rpc.ErrorInfo"
+	googleRPCReasonModelCapacityExhausted = "MODEL_CAPACITY_EXHAUSTED"
+	googleRPCReasonRateLimitExceeded      = "RATE_LIMIT_EXCEEDED"
 )
 
 const (
