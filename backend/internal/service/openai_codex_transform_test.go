@@ -233,8 +233,10 @@ func setupCodexCache(t *testing.T) {
 	t.Helper()
 
 	// 使用临时 HOME 避免触发网络拉取 header。
+	// Windows 使用 USERPROFILE，Unix 使用 HOME。
 	tempDir := t.TempDir()
 	t.Setenv("HOME", tempDir)
+	t.Setenv("USERPROFILE", tempDir)
 
 	cacheDir := filepath.Join(tempDir, ".opencode", "cache")
 	require.NoError(t, os.MkdirAll(cacheDir, 0o755))

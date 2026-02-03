@@ -616,6 +616,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		// 1. 过滤出路由列表中可调度的账号
 		var routingCandidates []*Account
 		var filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredWindowCost int
+		var modelScopeSkippedIDs []int64 // 记录因模型限流被跳过的账号 ID
 		for _, routingAccountID := range routingAccountIDs {
 			if isExcluded(routingAccountID) {
 				filteredExcluded++
@@ -636,6 +637,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 			if !account.IsSchedulableForModel(requestedModel) {
 				filteredModelScope++
+				modelScopeSkippedIDs = append(modelScopeSkippedIDs, account.ID)
 				continue
 			}
 			if requestedModel != "" && !s.isModelSupportedByAccount(account, requestedModel) {
@@ -654,6 +656,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			log.Printf("[ModelRoutingDebug] routed candidates: group_id=%v model=%s routed=%d candidates=%d filtered(excluded=%d missing=%d unsched=%d platform=%d model_scope=%d model_mapping=%d window_cost=%d)",
 				derefGroupID(groupID), requestedModel, len(routingAccountIDs), len(routingCandidates),
 				filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredWindowCost)
+			if len(modelScopeSkippedIDs) > 0 {
+				log.Printf("[ModelRoutingDebug] model_rate_limited accounts skipped: group_id=%v model=%s account_ids=%v",
+					derefGroupID(groupID), requestedModel, modelScopeSkippedIDs)
+			}
 		}
 
 		if len(routingCandidates) > 0 {

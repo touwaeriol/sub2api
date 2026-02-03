@@ -57,13 +57,18 @@ func resolveModelRateLimitScope(requestedModel string) (string, bool) {
 }
 
 func (a *Account) isModelRateLimited(requestedModel string) bool {
-	// 使用账户的模型映射获取上游实际使用的模型 ID
+	// 1. 使用账户的模型映射获取上游实际使用的模型 ID
 	mapped := a.GetMappedModel(requestedModel)
-	resetAt := a.modelRateLimitResetAt(mapped)
-	if resetAt == nil {
-		return false
+	if resetAt := a.modelRateLimitResetAt(mapped); resetAt != nil && time.Now().Before(*resetAt) {
+		return true
 	}
-	return time.Now().Before(*resetAt)
+	// 2. 回退到旧格式的 scope 键（兼容老数据）
+	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
+		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil && time.Now().Before(*resetAt) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Account) modelRateLimitResetAt(scope string) *time.Time {

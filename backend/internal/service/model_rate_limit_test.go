@@ -153,6 +153,20 @@ func TestIsModelRateLimited(t *testing.T) {
 			requestedModel: "gemini-3-pro-high",
 			expected:       true,
 		},
+		{
+			name: "fallback to old scope format - claude_sonnet",
+			account: &Account{
+				Extra: map[string]any{
+					modelRateLimitsKey: map[string]any{
+						"claude_sonnet": map[string]any{
+							"rate_limit_reset_at": future,
+						},
+					},
+				},
+			},
+			requestedModel: "claude-3-5-sonnet-20241022",
+			expected:       true,
+		},
 	}
 
 	for _, tt := range tests {

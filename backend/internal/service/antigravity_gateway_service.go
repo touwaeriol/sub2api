@@ -1761,12 +1761,14 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 			if !ok || delay == "" {
 				continue
 			}
-			// 只处理 "数字s" 格式
+			// 只处理 "数字s" 格式（如 "0.5s"、"10s"），不支持包含分钟的格式（如 "4m50s"）
 			if !strings.HasSuffix(delay, "s") || strings.Contains(delay, "m") {
+				log.Printf("[Antigravity] unsupported retryDelay format: %s (only pure seconds format supported)", delay)
 				continue
 			}
 			dur, err := time.ParseDuration(delay)
 			if err != nil {
+				log.Printf("[Antigravity] failed to parse retryDelay: %s error=%v", delay, err)
 				continue
 			}
 			retryDelay = dur
