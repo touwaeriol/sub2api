@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
@@ -2856,17 +2857,14 @@ func convertClaudeMessagesToGeminiContents(messages any, toolUseIDToName map[str
 					if strings.TrimSpace(id) != "" && strings.TrimSpace(name) != "" {
 						toolUseIDToName[id] = name
 					}
-					part := map[string]any{
+					parts = append(parts, map[string]any{
 						"functionCall": map[string]any{
 							"name": name,
 							"args": bm["input"],
 						},
-					}
-					// Gemini 3 函数调用必须传递 thoughtSignature
-					if sig, ok := bm["thoughtSignature"].(string); ok && sig != "" {
-						part["thoughtSignature"] = sig
-					}
-					parts = append(parts, part)
+						// Gemini 3 函数调用必须传递 thoughtSignature，统一使用 dummy signature
+						"thoughtSignature": antigravity.DummyThoughtSignature,
+					})
 				case "tool_result":
 					toolUseID, _ := bm["tool_use_id"].(string)
 					name := toolUseIDToName[toolUseID]
