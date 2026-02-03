@@ -329,9 +329,9 @@ func isInstructionsEmpty(reqBody map[string]any) bool {
 	return strings.TrimSpace(str) == ""
 }
 
-// EnsureInstructions 确保请求中存在 instructions 字段（仅在为空时添加默认值）
+// ensureInstructions 确保请求中存在 instructions 字段（仅在为空时添加默认值）
 // OpenAI Responses API 要求 instructions 必填，否则返回 400 "Instructions are required"
-func EnsureInstructions(reqBody map[string]any) bool {
+func ensureInstructions(reqBody map[string]any) bool {
 	existingInstructions, _ := reqBody["instructions"].(string)
 	if strings.TrimSpace(existingInstructions) != "" {
 		return false // 已有 instructions，不修改
@@ -351,8 +351,8 @@ func EnsureInstructions(reqBody map[string]any) bool {
 	return false
 }
 
-// ReplaceWithCodexInstructions 将请求 instructions 替换为内置 Codex 指令（必要时）。
-func ReplaceWithCodexInstructions(reqBody map[string]any) bool {
+// replaceWithCodexInstructions 将请求 instructions 替换为内置 Codex 指令（必要时）。
+func replaceWithCodexInstructions(reqBody map[string]any) bool {
 	codexInstructions := strings.TrimSpace(getCodexCLIInstructions())
 	if codexInstructions == "" {
 		return false
@@ -367,8 +367,8 @@ func ReplaceWithCodexInstructions(reqBody map[string]any) bool {
 	return false
 }
 
-// IsInstructionError 判断错误信息是否与指令格式/系统提示相关。
-func IsInstructionError(errorMessage string) bool {
+// isInstructionError 判断错误信息是否与指令格式/系统提示相关。
+func isInstructionError(errorMessage string) bool {
 	if errorMessage == "" {
 		return false
 	}
