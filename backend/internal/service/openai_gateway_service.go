@@ -806,6 +806,14 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		}
 	}
 
+	// OAuth 账号强制确保 instructions 字段存在（包括 Codex CLI 请求）
+	// OpenAI Responses API 要求 instructions 必填，否则返回 400
+	if account.Type == AccountTypeOAuth && account.Platform == PlatformOpenAI {
+		if EnsureInstructions(reqBody) {
+			bodyModified = true
+		}
+	}
+
 	// Handle max_output_tokens based on platform and account type
 	if !isCodexCLI {
 		if maxOutputTokens, hasMaxOutputTokens := reqBody["max_output_tokens"]; hasMaxOutputTokens {

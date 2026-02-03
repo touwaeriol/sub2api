@@ -276,6 +276,28 @@ func GetCodexCLIInstructions() string {
 	return getCodexCLIInstructions()
 }
 
+// EnsureInstructions 确保请求中存在 instructions 字段（仅在为空时添加默认值）
+// OpenAI Responses API 要求 instructions 必填，否则返回 400 "Instructions are required"
+func EnsureInstructions(reqBody map[string]any) bool {
+	existingInstructions, _ := reqBody["instructions"].(string)
+	if strings.TrimSpace(existingInstructions) != "" {
+		return false // 已有 instructions，不修改
+	}
+
+	// 优先使用 opencode 指令，否则回退到内置 Codex CLI 指令
+	instructions := strings.TrimSpace(getOpenCodeCodexHeader())
+	if instructions == "" {
+		instructions = strings.TrimSpace(getCodexCLIInstructions())
+	}
+
+	if instructions != "" {
+		reqBody["instructions"] = instructions
+		return true
+	}
+
+	return false
+}
+
 // ReplaceWithCodexInstructions 将请求 instructions 替换为内置 Codex 指令（必要时）。
 func ReplaceWithCodexInstructions(reqBody map[string]any) bool {
 	codexInstructions := strings.TrimSpace(getCodexCLIInstructions())
