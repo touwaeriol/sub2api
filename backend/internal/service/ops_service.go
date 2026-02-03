@@ -424,6 +424,24 @@ func isSensitiveKey(key string) bool {
 		return false
 	}
 
+	// Token 计数 / 预算字段不是凭据，应保留用于排错。
+	// 白名单保持尽量窄，避免误把真实敏感信息“反脱敏”。
+	switch k {
+	case "max_tokens",
+		"max_output_tokens",
+		"max_input_tokens",
+		"max_completion_tokens",
+		"max_tokens_to_sample",
+		"budget_tokens",
+		"prompt_tokens",
+		"completion_tokens",
+		"input_tokens",
+		"output_tokens",
+		"total_tokens",
+		"token_count":
+		return false
+	}
+
 	// Exact matches (common credential fields).
 	switch k {
 	case "authorization",
@@ -566,7 +584,18 @@ func trimArrayField(root map[string]any, field string, maxBytes int) (map[string
 
 func shrinkToEssentials(root map[string]any) map[string]any {
 	out := make(map[string]any)
-	for _, key := range []string{"model", "stream", "max_tokens", "temperature", "top_p", "top_k"} {
+	for _, key := range []string{
+		"model",
+		"stream",
+		"max_tokens",
+		"max_output_tokens",
+		"max_input_tokens",
+		"max_completion_tokens",
+		"thinking",
+		"temperature",
+		"top_p",
+		"top_k",
+	} {
 		if v, ok := root[key]; ok {
 			out[key] = v
 		}
