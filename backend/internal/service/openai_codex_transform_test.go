@@ -23,7 +23,7 @@ func TestApplyCodexOAuthTransform_ToolContinuationPreservesInput(t *testing.T) {
 		"tool_choice": "auto",
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	// 未显式设置 store=true，默认为 false。
 	store, ok := reqBody["store"].(bool)
@@ -59,7 +59,7 @@ func TestApplyCodexOAuthTransform_ExplicitStoreFalsePreserved(t *testing.T) {
 		"tool_choice": "auto",
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	store, ok := reqBody["store"].(bool)
 	require.True(t, ok)
@@ -79,7 +79,7 @@ func TestApplyCodexOAuthTransform_ExplicitStoreTrueForcedFalse(t *testing.T) {
 		"tool_choice": "auto",
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	store, ok := reqBody["store"].(bool)
 	require.True(t, ok)
@@ -97,7 +97,7 @@ func TestApplyCodexOAuthTransform_NonContinuationDefaultsStoreFalseAndStripsIDs(
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	store, ok := reqBody["store"].(bool)
 	require.True(t, ok)
@@ -148,7 +148,7 @@ func TestApplyCodexOAuthTransform_NormalizeCodexTools_PreservesResponsesFunction
 		},
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	tools, ok := reqBody["tools"].([]any)
 	require.True(t, ok)
@@ -169,7 +169,7 @@ func TestApplyCodexOAuthTransform_EmptyInput(t *testing.T) {
 		"input": []any{},
 	}
 
-	applyCodexOAuthTransform(reqBody)
+	applyCodexOAuthTransform(reqBody, false)
 
 	input, ok := reqBody["input"].([]any)
 	require.True(t, ok)
