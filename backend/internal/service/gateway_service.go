@@ -1453,6 +1453,7 @@ func filterByMinLoadRate(accounts []accountWithLoad) []accountWithLoad {
 }
 
 // selectByLRU 从集合中选择最久未用的账号
+// 如果有多个账号具有相同的最小 LastUsedAt，则随机选择一个
 func selectByLRU(accounts []accountWithLoad, preferOAuth bool) *accountWithLoad {
 	if len(accounts) == 0 {
 		return nil
@@ -1460,27 +1461,54 @@ func selectByLRU(accounts []accountWithLoad, preferOAuth bool) *accountWithLoad 
 	if len(accounts) == 1 {
 		return &accounts[0]
 	}
-	selectedIdx := 0
-	for i := 1; i < len(accounts); i++ {
-		current := accounts[i]
-		selected := accounts[selectedIdx]
-		switch {
-		case current.account.LastUsedAt == nil && selected.account.LastUsedAt != nil:
-			selectedIdx = i
-		case current.account.LastUsedAt != nil && selected.account.LastUsedAt == nil:
-			// selected 更优，保持不变
-		case current.account.LastUsedAt == nil && selected.account.LastUsedAt == nil:
-			if preferOAuth && current.account.Type != selected.account.Type {
-				if current.account.Type == AccountTypeOAuth {
-					selectedIdx = i
-				}
+
+	// 1. 找到最小的 LastUsedAt（nil 被视为最小）
+	var minTime *time.Time
+	hasNil := false
+	for _, acc := range accounts {
+		if acc.account.LastUsedAt == nil {
+			hasNil = true
+			break
+		}
+		if minTime == nil || acc.account.LastUsedAt.Before(*minTime) {
+			minTime = acc.account.LastUsedAt
+		}
+	}
+
+	// 2. 收集所有具有最小 LastUsedAt 的账号索引
+	var candidateIdxs []int
+	for i, acc := range accounts {
+		if hasNil {
+			if acc.account.LastUsedAt == nil {
+				candidateIdxs = append(candidateIdxs, i)
 			}
-		default:
-			if current.account.LastUsedAt.Before(*selected.account.LastUsedAt) {
-				selectedIdx = i
+		} else {
+			if acc.account.LastUsedAt != nil && acc.account.LastUsedAt.Equal(*minTime) {
+				candidateIdxs = append(candidateIdxs, i)
 			}
 		}
 	}
+
+	// 3. 如果只有一个候选，直接返回
+	if len(candidateIdxs) == 1 {
+		return &accounts[candidateIdxs[0]]
+	}
+
+	// 4. 如果有多个候选且 preferOAuth，优先选择 OAuth 类型
+	if preferOAuth {
+		var oauthIdxs []int
+		for _, idx := range candidateIdxs {
+			if accounts[idx].account.Type == AccountTypeOAuth {
+				oauthIdxs = append(oauthIdxs, idx)
+			}
+		}
+		if len(oauthIdxs) > 0 {
+			candidateIdxs = oauthIdxs
+		}
+	}
+
+	// 5. 随机选择一个
+	selectedIdx := candidateIdxs[mathrand.Intn(len(candidateIdxs))]
 	return &accounts[selectedIdx]
 }
 
