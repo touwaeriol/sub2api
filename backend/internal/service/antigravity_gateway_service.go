@@ -29,9 +29,13 @@ const (
 	antigravityRetryBaseDelay   = 1 * time.Second
 	antigravityRetryMaxDelay    = 16 * time.Second
 
-	// 智能重试相关常量
-	antigravitySmartRetryThreshold = 10 * time.Second // 智能重试阈值：retryDelay < 10s 时触发
-	antigravitySmartRetryMinWait   = 1 * time.Second  // 智能重试最小等待时间
+	// 限流相关常量
+	// antigravityRateLimitThreshold 限流等待/切换阈值
+	// - 智能重试：retryDelay < 此阈值时等待后重试，>= 此阈值时直接限流模型
+	// - 预检查：剩余限流时间 < 此阈值时等待，>= 此阈值时切换账号
+	antigravityRateLimitThreshold      = 10 * time.Second
+	antigravitySmartRetryMinWait       = 1 * time.Second  // 智能重试最小等待时间
+	antigravityDefaultRateLimitSeconds = 30 * time.Second // 默认限流时间（解析失败时使用）
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -46,9 +50,6 @@ const (
 	antigravityBillingModelEnv    = "GATEWAY_ANTIGRAVITY_BILL_WITH_MAPPED_MODEL"
 	antigravityFallbackSecondsEnv = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
 )
-
-// rateLimitWaitThreshold 限流等待阈值：小于此时间等待，大于等于此时间切换账号
-const rateLimitWaitThreshold = 10 * time.Second
 
 // AntigravityAccountSwitchError 账号切换信号
 // 当账号限流时间超过阈值时，通知上层切换账号
@@ -101,7 +102,7 @@ func antigravityRetryLoop(p antigravityRetryLoopParams) (*antigravityRetryLoopRe
 	// 预检查：如果账号已限流，根据剩余时间决定等待或切换
 	if p.requestedModel != "" {
 		if remaining := p.account.GetRateLimitRemainingTime(p.requestedModel); remaining > 0 {
-			if remaining < rateLimitWaitThreshold {
+			if remaining < antigravityRateLimitThreshold {
 				// 限流剩余时间较短，等待后继续
 				log.Printf("%s pre_check: rate_limit_wait remaining=%v model=%s account=%d",
 					p.prefix, remaining.Truncate(time.Millisecond), p.requestedModel, p.account.ID)
@@ -211,7 +212,7 @@ urlFallbackLoop:
 						p.prefix, resp.StatusCode, modelName, p.account.ID)
 
 					// 直接限流模型（按 scope 存储）
-					resetAt := time.Now().Add(30 * time.Second) // 默认 30 秒
+					resetAt := time.Now().Add(antigravityDefaultRateLimitSeconds)
 					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
 						// 无法映射 scope，fallback 到整个账户限流
 						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
@@ -267,7 +268,7 @@ urlFallbackLoop:
 					}
 
 					// 限流当前模型（直接使用官方模型 ID）
-					resetAt := time.Now().Add(30 * time.Second)
+					resetAt := time.Now().Add(antigravityDefaultRateLimitSeconds)
 					if p.accountRepo != nil && modelName != "" {
 						if err := p.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, modelName, resetAt); err != nil {
 							log.Printf("%s status=%d model_rate_limit_failed model=%s error=%v", p.prefix, resp.StatusCode, modelName, err)
@@ -1846,9 +1847,9 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 
 // shouldTriggerAntigravitySmartRetry 判断是否应该触发智能重试
 // 返回：
-//   - shouldRetry: 是否应该智能重试（retryDelay < 10s）
-//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= 10s，直接限流不重试）
-//   - waitDuration: 等待时间（智能重试时使用）
+//   - shouldRetry: 是否应该智能重试（retryDelay < antigravityRateLimitThreshold）
+//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= antigravityRateLimitThreshold，直接限流不重试）
+//   - waitDuration: 等待时间（智能重试时使用，shouldRateLimitModel=true 时为 0）
 //   - modelName: 限流的模型名称
 func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
 	if !account.IsOAuth() {
@@ -1860,12 +1861,12 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 		return false, false, 0, ""
 	}
 
-	// retryDelay >= 10s：直接限流模型，不重试
-	if info.RetryDelay >= antigravitySmartRetryThreshold {
+	// retryDelay >= 阈值：直接限流模型，不重试
+	if info.RetryDelay >= antigravityRateLimitThreshold {
 		return false, true, 0, info.ModelName
 	}
 
-	// retryDelay < 10s：智能重试
+	// retryDelay < 阈值：智能重试
 	waitDuration = info.RetryDelay
 	if waitDuration < antigravitySmartRetryMinWait {
 		waitDuration = antigravitySmartRetryMinWait
