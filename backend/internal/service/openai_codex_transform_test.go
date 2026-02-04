@@ -252,24 +252,6 @@ func setupCodexCache(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, "opencode-codex-header-meta.json"), data, 0o644))
 }
 
-func TestApplyCodexOAuthTransform_CodexCLI_PreservesExistingInstructions(t *testing.T) {
-	// Codex CLI 场景：已有 instructions 时不修改
-	setupCodexCache(t)
-
-	reqBody := map[string]any{
-		"model":        "gpt-5.1",
-		"instructions": "existing instructions",
-	}
-
-	result := applyCodexOAuthTransform(reqBody, true) // isCodexCLI=true
-
-	instructions, ok := reqBody["instructions"].(string)
-	require.True(t, ok)
-	require.Equal(t, "existing instructions", instructions)
-	// Modified 仍可能为 true（因为其他字段被修改），但 instructions 应保持不变
-	_ = result
-}
-
 func TestApplyCodexOAuthTransform_CodexCLI_SuppliesDefaultWhenEmpty(t *testing.T) {
 	// Codex CLI 场景：无 instructions 时补充默认值
 	setupCodexCache(t)

@@ -50,6 +50,10 @@ const (
 	claudeMimicDebugInfoKey = "claude_mimic_debug_info"
 )
 
+// stickySessionRateLimitThreshold 定义清除粘性会话的限流时间阈值。
+// 当账号模型限流剩余时间超过此阈值时，应清除粘性会话绑定。
+const stickySessionRateLimitThreshold = 10 * time.Second
+
 func (s *GatewayService) debugModelRoutingEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DEBUG_MODEL_ROUTING")))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
@@ -326,15 +330,17 @@ func derefGroupID(groupID *int64) int64 {
 }
 
 // shouldClearStickySession 检查账号是否处于不可调度状态，需要清理粘性会话绑定。
-// 当账号状态为错误、禁用、不可调度，或处于临时不可调度期间时，返回 true。
+// 当账号状态为错误、禁用、不可调度，处于临时不可调度期间，
+// 或模型限流剩余时间超过 stickySessionRateLimitThreshold 时，返回 true。
 // 这确保后续请求不会继续使用不可用的账号。
 //
 // shouldClearStickySession checks if an account is in an unschedulable state
 // and the sticky session binding should be cleared.
 // Returns true when account status is error/disabled, schedulable is false,
-// or within temporary unschedulable period.
+// within temporary unschedulable period, or when model rate limit remaining time
+// exceeds stickySessionRateLimitThreshold.
 // This ensures subsequent requests won't continue using unavailable accounts.
-func shouldClearStickySession(account *Account) bool {
+func shouldClearStickySession(account *Account, requestedModel string) bool {
 	if account == nil {
 		return false
 	}
@@ -342,6 +348,10 @@ func shouldClearStickySession(account *Account) bool {
 		return true
 	}
 	if account.TempUnschedulableUntil != nil && time.Now().Before(*account.TempUnschedulableUntil) {
+		return true
+	}
+	// 检查模型限流和 scope 限流，只在超过阈值时清除粘性会话
+	if remaining := account.GetRateLimitRemainingTime(requestedModel); remaining > stickySessionRateLimitThreshold {
 		return true
 	}
 	return false
@@ -1489,7 +1499,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if ok {
 				// 检查账户是否需要清理粘性会话绑定
 				// Check if the account needs sticky session cleanup
-				clearSticky := shouldClearStickySession(account)
+				clearSticky := shouldClearStickySession(account, requestedModel)
 				if clearSticky {
 					_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 				}
@@ -2163,7 +2173,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					account, err := s.getSchedulableAccount(ctx, accountID)
 					// 检查账号分组归属和平台匹配（确保粘性会话不会跨分组或跨平台）
 					if err == nil {
-						clearSticky := shouldClearStickySession(account)
+						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
@@ -2266,7 +2276,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和平台匹配（确保粘性会话不会跨分组或跨平台）
 				if err == nil {
-					clearSticky := shouldClearStickySession(account)
+					clearSticky := shouldClearStickySession(account, requestedModel)
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
@@ -2376,7 +2386,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					account, err := s.getSchedulableAccount(ctx, accountID)
 					// 检查账号分组归属和有效性：原生平台直接匹配，antigravity 需要启用混合调度
 					if err == nil {
-						clearSticky := shouldClearStickySession(account)
+						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
@@ -2481,7 +2491,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和有效性：原生平台直接匹配，antigravity 需要启用混合调度
 				if err == nil {
-					clearSticky := shouldClearStickySession(account)
+					clearSticky := shouldClearStickySession(account, requestedModel)
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
