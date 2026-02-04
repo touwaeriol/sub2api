@@ -48,7 +48,7 @@ func TestShouldClearStickySession(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, shouldClearStickySession(tt.account))
+			require.Equal(t, tt.want, shouldClearStickySession(tt.account, ""))
 		})
 	}
 }
