@@ -266,6 +266,10 @@ type GatewayConfig struct {
 
 	// Antigravity 429 fallback 限流时间（分钟），解析重置时间失败时使用
 	AntigravityFallbackCooldownMinutes int `mapstructure:"antigravity_fallback_cooldown_minutes"`
+	// AntigravityRateLimitWaitThresholdSeconds: Antigravity 限流等待阈值（秒）
+	// 当模型限流剩余时间或上游返回的 retryDelay 小于此阈值时，等待后重试
+	// 大于等于此阈值时，设置模型限流状态并切换到其他账号
+	AntigravityRateLimitWaitThresholdSeconds int `mapstructure:"antigravity_rate_limit_wait_threshold_seconds"`
 
 	// Scheduling: 账号调度相关配置
 	Scheduling GatewaySchedulingConfig `mapstructure:"scheduling"`
@@ -853,6 +857,7 @@ func setDefaults() {
 	viper.SetDefault("gateway.max_account_switches", 10)
 	viper.SetDefault("gateway.max_account_switches_gemini", 3)
 	viper.SetDefault("gateway.antigravity_fallback_cooldown_minutes", 1)
+	viper.SetDefault("gateway.antigravity_rate_limit_wait_threshold_seconds", 10)
 	viper.SetDefault("gateway.max_body_size", int64(100*1024*1024))
 	viper.SetDefault("gateway.connection_pool_isolation", ConnectionPoolIsolationAccountProxy)
 	// HTTP 上游连接池配置（针对 5000+ 并发用户优化）

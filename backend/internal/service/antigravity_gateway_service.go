@@ -29,9 +29,8 @@ const (
 	antigravityRetryBaseDelay   = 1 * time.Second
 	antigravityRetryMaxDelay    = 16 * time.Second
 
-	// 智能重试相关常量
-	antigravitySmartRetryThreshold = 10 * time.Second // 智能重试阈值：retryDelay < 10s 时触发
-	antigravitySmartRetryMinWait   = 1 * time.Second  // 智能重试最小等待时间
+	// 智能重试最小等待时间
+	antigravitySmartRetryMinWait = 1 * time.Second
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -43,26 +42,61 @@ const (
 )
 
 const (
-	antigravityScopeRateLimitEnv  = "GATEWAY_ANTIGRAVITY_429_SCOPE_LIMIT"
 	antigravityBillingModelEnv    = "GATEWAY_ANTIGRAVITY_BILL_WITH_MAPPED_MODEL"
 	antigravityFallbackSecondsEnv = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
 )
 
+// antigravityDefaultRateLimitWaitThreshold 默认限流等待阈值
+const antigravityDefaultRateLimitWaitThreshold = 10 * time.Second
+
+// getAntigravityRateLimitWaitThreshold 获取限流等待阈值
+// 优先从配置读取，未配置时使用默认值 10s
+func getAntigravityRateLimitWaitThreshold(settingService *SettingService) time.Duration {
+	if settingService != nil && settingService.cfg != nil && settingService.cfg.Gateway.AntigravityRateLimitWaitThresholdSeconds > 0 {
+		return time.Duration(settingService.cfg.Gateway.AntigravityRateLimitWaitThresholdSeconds) * time.Second
+	}
+	return antigravityDefaultRateLimitWaitThreshold
+}
+
+// AntigravityAccountSwitchError 账号切换信号
+// 当账号限流时间超过阈值时，通知上层切换账号
+type AntigravityAccountSwitchError struct {
+	OriginalAccountID int64
+	RateLimitedModel  string
+	IsStickySession   bool // 是否为粘性会话切换（决定是否缓存计费）
+}
+
+func (e *AntigravityAccountSwitchError) Error() string {
+	return fmt.Sprintf("account %d model %s rate limited, need switch",
+		e.OriginalAccountID, e.RateLimitedModel)
+}
+
+// IsAntigravityAccountSwitchError 检查错误是否为账号切换信号
+func IsAntigravityAccountSwitchError(err error) (*AntigravityAccountSwitchError, bool) {
+	var switchErr *AntigravityAccountSwitchError
+	if errors.As(err, &switchErr) {
+		return switchErr, true
+	}
+	return nil, false
+}
+
 // antigravityRetryLoopParams 重试循环的参数
 type antigravityRetryLoopParams struct {
-	ctx            context.Context
-	prefix         string
-	account        *Account
-	proxyURL       string
-	accessToken    string
-	action         string
-	body           []byte
-	quotaScope     AntigravityQuotaScope
-	c              *gin.Context
-	httpUpstream   HTTPUpstream
-	settingService *SettingService
-	accountRepo    AccountRepository // 用于智能重试的模型级别限流
-	handleError    func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope)
+	ctx             context.Context
+	prefix          string
+	account         *Account
+	proxyURL        string
+	accessToken     string
+	action          string
+	body            []byte
+	quotaScope      AntigravityQuotaScope
+	c               *gin.Context
+	httpUpstream    HTTPUpstream
+	settingService  *SettingService
+	accountRepo     AccountRepository // 用于智能重试的模型级别限流
+	handleError     func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope)
+	requestedModel  string // 用于限流检查的原始请求模型
+	isStickySession bool   // 是否为粘性会话（用于账号切换时的缓存计费判断）
 }
 
 // antigravityRetryLoopResult 重试循环的结果
@@ -72,6 +106,33 @@ type antigravityRetryLoopResult struct {
 
 // antigravityRetryLoop 执行带 URL fallback 的重试循环
 func antigravityRetryLoop(p antigravityRetryLoopParams) (*antigravityRetryLoopResult, error) {
+	threshold := getAntigravityRateLimitWaitThreshold(p.settingService)
+
+	// 预检查：如果账号已限流，根据剩余时间决定等待或切换
+	if p.requestedModel != "" {
+		if remaining := p.account.GetRateLimitRemainingTime(p.requestedModel); remaining > 0 {
+			if remaining < threshold {
+				// 限流剩余时间较短，等待后继续
+				log.Printf("%s pre_check: rate_limit_wait remaining=%v model=%s account=%d",
+					p.prefix, remaining.Truncate(time.Millisecond), p.requestedModel, p.account.ID)
+				select {
+				case <-p.ctx.Done():
+					return nil, p.ctx.Err()
+				case <-time.After(remaining):
+				}
+			} else {
+				// 限流剩余时间较长，返回账号切换信号
+				log.Printf("%s pre_check: rate_limit_switch remaining=%v model=%s account=%d",
+					p.prefix, remaining.Truncate(time.Second), p.requestedModel, p.account.ID)
+				return nil, &AntigravityAccountSwitchError{
+					OriginalAccountID: p.account.ID,
+					RateLimitedModel:  p.requestedModel,
+					IsStickySession:   p.isStickySession,
+				}
+			}
+		}
+	}
+
 	availableURLs := antigravity.DefaultURLAvailability.GetAvailableURLs()
 	if len(availableURLs) == 0 {
 		availableURLs = antigravity.BaseURLs
@@ -152,15 +213,32 @@ urlFallbackLoop:
 				}
 
 				// ===== 反重力 OAuth 账号智能重试（与默认重试互斥） =====
-				shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody)
+				shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody, threshold)
 
-				// 情况1: retryDelay >= 10s，直接限流模型，不重试
+				// 情况1: retryDelay >= threshold，直接限流模型，不重试
 				if shouldRateLimitModel {
-					log.Printf("%s status=%d oauth_long_delay model=%s account=%d (direct model rate limit)",
-						p.prefix, resp.StatusCode, modelName, p.account.ID)
+					// 向上取整到秒（不足 1s 按 1s 算）
+					rateLimitSeconds := int64(waitDuration.Seconds())
+					if waitDuration > time.Duration(rateLimitSeconds)*time.Second {
+						rateLimitSeconds++
+					}
+					if rateLimitSeconds < 1 {
+						rateLimitSeconds = 1
+					}
+					rateLimitDuration := time.Duration(rateLimitSeconds) * time.Second
 
-					// 直接限流模型（按 scope 存储）
-					resetAt := time.Now().Add(30 * time.Second) // 默认 30 秒
+					log.Printf("%s status=%d oauth_long_delay model=%s account=%d delay=%v (direct model rate limit)",
+						p.prefix, resp.StatusCode, modelName, p.account.ID, rateLimitDuration)
+
+					// 直接限流模型（使用实际的 retryDelay 向上取整）
+					// 注意：SetModelRateLimit 入库时会用 RFC3339（秒精度）格式化时间。
+					// 这里把 resetAt 对齐到秒并做保守上取整，避免因为格式化截断导致实际限流时间短于期望值。
+					now := time.Now().UTC()
+					baseUnix := now.Unix()
+					if now.Nanosecond() != 0 {
+						baseUnix++ // ceil to next second
+					}
+					resetAt := time.Unix(baseUnix+rateLimitSeconds, 0).UTC()
 					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
 						// 无法映射 scope，fallback 到整个账户限流
 						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
@@ -175,7 +253,7 @@ urlFallbackLoop:
 					break urlFallbackLoop
 				}
 
-				// 情况2: retryDelay < 10s，智能重试一次
+				// 情况2: retryDelay < threshold，智能重试一次
 				if shouldSmartRetry {
 					log.Printf("%s status=%d oauth_smart_retry delay=%v model=%s account=%d",
 						p.prefix, resp.StatusCode, waitDuration, modelName, p.account.ID)
@@ -797,7 +875,7 @@ func isModelNotFoundError(statusCode int, body []byte) bool {
 }
 
 // Forward 转发 Claude 协议请求（Claude → Gemini 转换）
-func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte) (*ForwardResult, error) {
+func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte, isStickySession bool) (*ForwardResult, error) {
 	startTime := time.Now()
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
@@ -850,19 +928,21 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	// 执行带重试的请求
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
-		ctx:            ctx,
-		prefix:         prefix,
-		account:        account,
-		proxyURL:       proxyURL,
-		accessToken:    accessToken,
-		action:         action,
-		body:           geminiBody,
-		quotaScope:     quotaScope,
-		c:              c,
-		httpUpstream:   s.httpUpstream,
-		settingService: s.settingService,
-		accountRepo:    s.accountRepo,
-		handleError:    s.handleUpstreamError,
+		ctx:             ctx,
+		prefix:          prefix,
+		account:         account,
+		proxyURL:        proxyURL,
+		accessToken:     accessToken,
+		action:          action,
+		body:            geminiBody,
+		quotaScope:      quotaScope,
+		c:               c,
+		httpUpstream:    s.httpUpstream,
+		settingService:  s.settingService,
+		accountRepo:     s.accountRepo,
+		handleError:     s.handleUpstreamError,
+		requestedModel:  originalModel,
+		isStickySession: isStickySession, // Forward 由上层判断粘性会话
 	})
 	if err != nil {
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
@@ -927,19 +1007,21 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					continue
 				}
 				retryResult, retryErr := antigravityRetryLoop(antigravityRetryLoopParams{
-					ctx:            ctx,
-					prefix:         prefix,
-					account:        account,
-					proxyURL:       proxyURL,
-					accessToken:    accessToken,
-					action:         action,
-					body:           retryGeminiBody,
-					quotaScope:     quotaScope,
-					c:              c,
-					httpUpstream:   s.httpUpstream,
-					settingService: s.settingService,
-					accountRepo:    s.accountRepo,
-					handleError:    s.handleUpstreamError,
+					ctx:             ctx,
+					prefix:          prefix,
+					account:         account,
+					proxyURL:        proxyURL,
+					accessToken:     accessToken,
+					action:          action,
+					body:            retryGeminiBody,
+					quotaScope:      quotaScope,
+					c:               c,
+					httpUpstream:    s.httpUpstream,
+					settingService:  s.settingService,
+					accountRepo:     s.accountRepo,
+					handleError:     s.handleUpstreamError,
+					requestedModel:  originalModel,
+					isStickySession: isStickySession,
 				})
 				if retryErr != nil {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1347,7 +1429,7 @@ func stripSignatureSensitiveBlocksFromClaudeRequest(req *antigravity.ClaudeReque
 }
 
 // ForwardGemini 转发 Gemini 协议请求
-func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte) (*ForwardResult, error) {
+func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool) (*ForwardResult, error) {
 	startTime := time.Now()
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
@@ -1430,19 +1512,21 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 
 	// 执行带重试的请求
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
-		ctx:            ctx,
-		prefix:         prefix,
-		account:        account,
-		proxyURL:       proxyURL,
-		accessToken:    accessToken,
-		action:         upstreamAction,
-		body:           wrappedBody,
-		quotaScope:     quotaScope,
-		c:              c,
-		httpUpstream:   s.httpUpstream,
-		settingService: s.settingService,
-		accountRepo:    s.accountRepo,
-		handleError:    s.handleUpstreamError,
+		ctx:             ctx,
+		prefix:          prefix,
+		account:         account,
+		proxyURL:        proxyURL,
+		accessToken:     accessToken,
+		action:          upstreamAction,
+		body:            wrappedBody,
+		quotaScope:      quotaScope,
+		c:               c,
+		httpUpstream:    s.httpUpstream,
+		settingService:  s.settingService,
+		accountRepo:     s.accountRepo,
+		handleError:     s.handleUpstreamError,
+		requestedModel:  originalModel,
+		isStickySession: isStickySession, // ForwardGemini 由上层判断粘性会话
 	})
 	if err != nil {
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
@@ -1654,14 +1738,6 @@ func setModelRateLimitByModelName(ctx context.Context, repo AccountRepository, a
 	return true
 }
 
-func antigravityUseScopeRateLimit() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(antigravityScopeRateLimitEnv)))
-	// 默认开启按配额域限流，只有明确设置为禁用值时才关闭
-	if v == "0" || v == "false" || v == "no" || v == "off" {
-		return false
-	}
-	return true
-}
 
 func antigravityFallbackCooldownSeconds() (time.Duration, bool) {
 	raw := strings.TrimSpace(os.Getenv(antigravityFallbackSecondsEnv))
@@ -1797,12 +1873,17 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 }
 
 // shouldTriggerAntigravitySmartRetry 判断是否应该触发智能重试
+// 参数：
+//   - account: 账号
+//   - respBody: 响应体
+//   - threshold: 限流等待阈值，retryDelay < threshold 时智能重试，>= threshold 时限流模型
+//
 // 返回：
-//   - shouldRetry: 是否应该智能重试（retryDelay < 10s）
-//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= 10s，直接限流不重试）
-//   - waitDuration: 等待时间（智能重试时使用）
+//   - shouldRetry: 是否应该智能重试
+//   - shouldRateLimitModel: 是否应该限流模型（直接限流不重试）
+//   - waitDuration: 等待时间（智能重试时使用，或限流时的实际 retryDelay）
 //   - modelName: 限流的模型名称
-func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
+func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte, threshold time.Duration) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
 	if !account.IsOAuth() {
 		return false, false, 0, ""
 	}
@@ -1812,12 +1893,13 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 		return false, false, 0, ""
 	}
 
-	// retryDelay >= 10s：直接限流模型，不重试
-	if info.RetryDelay >= antigravitySmartRetryThreshold {
-		return false, true, 0, info.ModelName
+	// retryDelay >= threshold：直接限流模型，不重试
+	// 返回实际的 retryDelay 用于设置限流时间
+	if info.RetryDelay >= threshold {
+		return false, true, info.RetryDelay, info.ModelName
 	}
 
-	// retryDelay < 10s：智能重试
+	// retryDelay < threshold：智能重试
 	waitDuration = info.RetryDelay
 	if waitDuration < antigravitySmartRetryMinWait {
 		waitDuration = antigravitySmartRetryMinWait
@@ -1829,7 +1911,7 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
 	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
 	if statusCode == 429 {
-		useScopeLimit := antigravityUseScopeRateLimit() && quotaScope != ""
+		useScopeLimit := quotaScope != ""
 		resetAt := ParseGeminiRateLimitResetTime(body)
 		if resetAt == nil {
 			// 解析失败：使用配置的 fallback 时间，直接限流整个账户

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/stretchr/testify/require"
 )
@@ -19,6 +20,23 @@ type stubAntigravityUpstream struct {
 	firstBase  string
 	secondBase string
 	calls      []string
+}
+
+type recordingOKUpstream struct {
+	calls int
+}
+
+func (r *recordingOKUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
+	r.calls++
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{},
+		Body:       io.NopCloser(strings.NewReader("ok")),
+	}, nil
+}
+
+func (r *recordingOKUpstream) DoWithTLS(req *http.Request, proxyURL string, accountID int64, accountConcurrency int, enableTLSFingerprint bool) (*http.Response, error) {
+	return r.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
 func (s *stubAntigravityUpstream) Do(req *http.Request, proxyURL string, accountID int64, accountConcurrency int) (*http.Response, error) {
@@ -106,15 +124,16 @@ func TestAntigravityRetryLoop_URLFallback_UsesLatestSuccess(t *testing.T) {
 
 	var handleErrorCalled bool
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
-		prefix:       "[test]",
-		ctx:          context.Background(),
-		account:      account,
-		proxyURL:     "",
-		accessToken:  "token",
-		action:       "generateContent",
-		body:         []byte(`{"input":"test"}`),
-		quotaScope:   AntigravityQuotaScopeClaude,
-		httpUpstream: upstream,
+		prefix:         "[test]",
+		ctx:            context.Background(),
+		account:        account,
+		proxyURL:       "",
+		accessToken:    "token",
+		action:         "generateContent",
+		body:           []byte(`{"input":"test"}`),
+		quotaScope:     AntigravityQuotaScopeClaude,
+		httpUpstream:   upstream,
+		requestedModel: "claude-sonnet-4-5",
 		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
 			handleErrorCalled = true
 		},
@@ -135,8 +154,8 @@ func TestAntigravityRetryLoop_URLFallback_UsesLatestSuccess(t *testing.T) {
 	require.Equal(t, base2, available[0])
 }
 
-func TestAntigravityHandleUpstreamError_UsesScopeLimitWhenEnabled(t *testing.T) {
-	t.Setenv(antigravityScopeRateLimitEnv, "true")
+func TestAntigravityHandleUpstreamError_UsesScopeLimit(t *testing.T) {
+	// 分区限流始终开启，不再支持通过环境变量关闭
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{accountRepo: repo}
 	account := &Account{ID: 9, Name: "acc-9", Platform: PlatformAntigravity}
@@ -150,22 +169,6 @@ func TestAntigravityHandleUpstreamError_UsesScopeLimitWhenEnabled(t *testing.T) 
 	require.Equal(t, account.ID, call.accountID)
 	require.Equal(t, AntigravityQuotaScopeClaude, call.scope)
 	require.WithinDuration(t, time.Now().Add(3*time.Second), call.resetAt, 2*time.Second)
-}
-
-func TestAntigravityHandleUpstreamError_UsesAccountLimitWhenScopeDisabled(t *testing.T) {
-	t.Setenv(antigravityScopeRateLimitEnv, "false")
-	repo := &stubAntigravityAccountRepo{}
-	svc := &AntigravityGatewayService{accountRepo: repo}
-	account := &Account{ID: 10, Name: "acc-10", Platform: PlatformAntigravity}
-
-	body := buildGeminiRateLimitBody("2s")
-	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude)
-
-	require.Len(t, repo.rateCalls, 1)
-	require.Empty(t, repo.scopeCalls)
-	call := repo.rateCalls[0]
-	require.Equal(t, account.ID, call.accountID)
-	require.WithinDuration(t, time.Now().Add(2*time.Second), call.resetAt, 2*time.Second)
 }
 
 func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
@@ -199,6 +202,22 @@ func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
 
 func buildGeminiRateLimitBody(delay string) []byte {
 	return []byte(fmt.Sprintf(`{"error":{"message":"too many requests","details":[{"metadata":{"quotaResetDelay":%q}}]}}`, delay))
+}
+
+func TestParseGeminiRateLimitResetTime_QuotaResetDelay_RoundsUp(t *testing.T) {
+	// Avoid flakiness around Unix second boundaries.
+	for {
+		now := time.Now()
+		if now.Nanosecond() < 800*1e6 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	baseUnix := time.Now().Unix()
+	ts := ParseGeminiRateLimitResetTime(buildGeminiRateLimitBody("0.1s"))
+	require.NotNil(t, ts)
+	require.Equal(t, baseUnix+1, *ts, "fractional seconds should be rounded up to the next second")
 }
 
 func TestParseAntigravitySmartRetryInfo(t *testing.T) {
@@ -486,7 +505,7 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shouldRetry, shouldRateLimit, wait, model := shouldTriggerAntigravitySmartRetry(tt.account, []byte(tt.body))
+			shouldRetry, shouldRateLimit, wait, model := shouldTriggerAntigravitySmartRetry(tt.account, []byte(tt.body), 10*time.Second)
 			if shouldRetry != tt.expectedShouldRetry {
 				t.Errorf("shouldRetry = %v, want %v", shouldRetry, tt.expectedShouldRetry)
 			}
@@ -496,6 +515,12 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			if shouldRetry {
 				if wait < tt.minWait {
 					t.Errorf("wait = %v, want >= %v", wait, tt.minWait)
+				}
+			}
+			// 当 shouldRateLimit 为 true 时，wait 应该返回实际的 retryDelay（>= threshold）
+			if shouldRateLimit {
+				if wait < 10*time.Second {
+					t.Errorf("wait = %v, want >= 10s when shouldRateLimit is true", wait)
 				}
 			}
 			if (shouldRetry || shouldRateLimit) && model != tt.modelName {
@@ -595,4 +620,119 @@ func TestSetModelRateLimitByModelName_NotConvertToScope(t *testing.T) {
 	// 关键断言：存储的应该是 "claude-sonnet-4-5"，而不是 "claude_sonnet"
 	require.Equal(t, "claude-sonnet-4-5", call.modelKey, "should NOT convert to scope like claude_sonnet")
 	require.NotEqual(t, "claude_sonnet", call.modelKey, "should NOT be scope")
+}
+
+func TestAntigravityRetryLoop_PreCheck_WaitsWhenRemainingBelowThreshold(t *testing.T) {
+	upstream := &recordingOKUpstream{}
+	account := &Account{
+		ID:          1,
+		Name:        "acc-1",
+		Platform:    PlatformAntigravity,
+		Schedulable: true,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Extra: map[string]any{
+			modelRateLimitsKey: map[string]any{
+				"claude-sonnet-4-5": map[string]any{
+					// RFC3339 here is second-precision; keep it safely in the future.
+					"rate_limit_reset_at": time.Now().Add(2 * time.Second).Format(time.RFC3339),
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+
+	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
+		ctx:            ctx,
+		prefix:         "[test]",
+		account:        account,
+		accessToken:    "token",
+		action:         "generateContent",
+		body:           []byte(`{"input":"test"}`),
+		requestedModel: "claude-sonnet-4-5",
+		httpUpstream:   upstream,
+		isStickySession: true,
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		},
+	})
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Nil(t, result)
+	require.Equal(t, 0, upstream.calls, "should not call upstream while waiting on pre-check")
+}
+
+func TestGetAntigravityRateLimitWaitThreshold(t *testing.T) {
+	t.Run("returns default when settingService is nil", func(t *testing.T) {
+		result := getAntigravityRateLimitWaitThreshold(nil)
+		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
+	})
+
+	t.Run("returns default when cfg is nil", func(t *testing.T) {
+		svc := &SettingService{cfg: nil}
+		result := getAntigravityRateLimitWaitThreshold(svc)
+		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
+	})
+
+	t.Run("returns default when threshold is 0", func(t *testing.T) {
+		svc := &SettingService{cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				AntigravityRateLimitWaitThresholdSeconds: 0,
+			},
+		}}
+		result := getAntigravityRateLimitWaitThreshold(svc)
+		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
+	})
+
+	t.Run("returns configured value when set", func(t *testing.T) {
+		svc := &SettingService{cfg: &config.Config{
+			Gateway: config.GatewayConfig{
+				AntigravityRateLimitWaitThresholdSeconds: 15,
+			},
+		}}
+		result := getAntigravityRateLimitWaitThreshold(svc)
+		require.Equal(t, 15*time.Second, result)
+	})
+}
+
+func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingAtOrAboveThreshold(t *testing.T) {
+	upstream := &recordingOKUpstream{}
+	account := &Account{
+		ID:          2,
+		Name:        "acc-2",
+		Platform:    PlatformAntigravity,
+		Schedulable: true,
+		Status:      StatusActive,
+		Concurrency: 1,
+		Extra: map[string]any{
+			modelRateLimitsKey: map[string]any{
+				"claude-sonnet-4-5": map[string]any{
+					"rate_limit_reset_at": time.Now().Add(11 * time.Second).Format(time.RFC3339),
+				},
+			},
+		},
+	}
+
+	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
+		ctx:             context.Background(),
+		prefix:          "[test]",
+		account:         account,
+		accessToken:     "token",
+		action:          "generateContent",
+		body:            []byte(`{"input":"test"}`),
+		requestedModel:  "claude-sonnet-4-5",
+		httpUpstream:    upstream,
+		isStickySession: true,
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		},
+	})
+
+	require.Nil(t, result)
+	var switchErr *AntigravityAccountSwitchError
+	require.ErrorAs(t, err, &switchErr)
+	require.Equal(t, account.ID, switchErr.OriginalAccountID)
+	require.Equal(t, "claude-sonnet-4-5", switchErr.RateLimitedModel)
+	require.True(t, switchErr.IsStickySession)
+	require.Equal(t, 0, upstream.calls, "should not call upstream when switching on pre-check")
 }
