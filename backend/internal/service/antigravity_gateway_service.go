@@ -1929,6 +1929,11 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 	isResourceExhausted := status == googleRPCStatusResourceExhausted
 	isUnavailable := status == googleRPCStatusUnavailable
 
+	// 调试日志：打印 RESOURCE_EXHAUSTED 的完整响应
+	if isResourceExhausted {
+		log.Printf("[Antigravity-Debug] 429 RESOURCE_EXHAUSTED full body: %s", string(body))
+	}
+
 	if !isResourceExhausted && !isUnavailable {
 		return nil
 	}
