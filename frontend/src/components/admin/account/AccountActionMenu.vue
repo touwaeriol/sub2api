@@ -28,12 +28,12 @@
                 {{ t('admin.accounts.refreshToken') }}
               </button>
             </template>
-            <div v-if="account.status === 'error' || isRateLimited || isOverloaded" class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
+            <div v-if="account.status === 'error' || hasAnyRateLimit" class="my-1 border-t border-gray-100 dark:border-dark-700"></div>
             <button v-if="account.status === 'error'" @click="$emit('reset-status', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-yellow-600 hover:bg-gray-100 dark:hover:bg-dark-700">
               <Icon name="sync" size="sm" />
               {{ t('admin.accounts.resetStatus') }}
             </button>
-            <button v-if="isRateLimited || isOverloaded" @click="$emit('clear-rate-limit', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-amber-600 hover:bg-gray-100 dark:hover:bg-dark-700">
+            <button v-if="hasAnyRateLimit" @click="$emit('clear-rate-limit', account); $emit('close')" class="flex w-full items-center gap-2 px-4 py-2 text-sm text-amber-600 hover:bg-gray-100 dark:hover:bg-dark-700">
               <Icon name="clock" size="sm" />
               {{ t('admin.accounts.clearRateLimit') }}
             </button>
@@ -55,6 +55,28 @@ const emit = defineEmits(['close', 'test', 'stats', 'reauth', 'refresh-token', '
 const { t } = useI18n()
 const isRateLimited = computed(() => props.account?.rate_limit_reset_at && new Date(props.account.rate_limit_reset_at) > new Date())
 const isOverloaded = computed(() => props.account?.overload_until && new Date(props.account.overload_until) > new Date())
+
+// Check if account has any scope rate limits (Antigravity)
+const hasScopeRateLimits = computed(() => {
+  const scopeLimits = props.account?.scope_rate_limits
+  if (!scopeLimits || Object.keys(scopeLimits).length === 0) return false
+  const now = new Date()
+  return Object.values(scopeLimits).some((info) => new Date(info.reset_at) > now)
+})
+
+// Check if account has any model rate limits (Antigravity)
+const hasModelRateLimits = computed(() => {
+  const extra = props.account?.extra as { model_rate_limits?: Record<string, { rate_limit_reset_at: string }> } | undefined
+  const modelLimits = extra?.model_rate_limits
+  if (!modelLimits || Object.keys(modelLimits).length === 0) return false
+  const now = new Date()
+  return Object.values(modelLimits).some((info) => new Date(info.rate_limit_reset_at) > now)
+})
+
+// Combined check: has any rate limit (429, overload, scope, or model)
+const hasAnyRateLimit = computed(() => {
+  return isRateLimited.value || isOverloaded.value || hasScopeRateLimits.value || hasModelRateLimits.value
+})
 
 const handleKeydown = (event: KeyboardEvent) => {
   if (event.key === 'Escape') emit('close')
