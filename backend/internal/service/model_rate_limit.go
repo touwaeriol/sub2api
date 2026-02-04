@@ -71,6 +71,30 @@ func (a *Account) isModelRateLimited(requestedModel string) bool {
 	return false
 }
 
+// GetModelRateLimitRemainingTime 获取模型限流剩余时间
+// 返回 0 表示未限流或已过期
+func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Duration {
+	if a == nil {
+		return 0
+	}
+	// 1. 使用账户的模型映射获取上游实际使用的模型 ID
+	mapped := a.GetMappedModel(requestedModel)
+	if resetAt := a.modelRateLimitResetAt(mapped); resetAt != nil {
+		if remaining := time.Until(*resetAt); remaining > 0 {
+			return remaining
+		}
+	}
+	// 2. 回退到旧格式的 scope 键（兼容老数据）
+	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
+		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil {
+			if remaining := time.Until(*resetAt); remaining > 0 {
+				return remaining
+			}
+		}
+	}
+	return 0
+}
+
 func (a *Account) modelRateLimitResetAt(scope string) *time.Time {
 	if a == nil || a.Extra == nil || scope == "" {
 		return nil

@@ -29,8 +29,9 @@ const (
 	antigravityRetryBaseDelay   = 1 * time.Second
 	antigravityRetryMaxDelay    = 16 * time.Second
 
-	// 智能重试最小等待时间
-	antigravitySmartRetryMinWait = 1 * time.Second
+	// 智能重试相关常量
+	antigravitySmartRetryThreshold = 10 * time.Second // 智能重试阈值：retryDelay < 10s 时触发
+	antigravitySmartRetryMinWait   = 1 * time.Second  // 智能重试最小等待时间
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -46,17 +47,8 @@ const (
 	antigravityFallbackSecondsEnv = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
 )
 
-// antigravityDefaultRateLimitWaitThreshold 默认限流等待阈值
-const antigravityDefaultRateLimitWaitThreshold = 10 * time.Second
-
-// getAntigravityRateLimitWaitThreshold 获取限流等待阈值
-// 优先从配置读取，未配置时使用默认值 10s
-func getAntigravityRateLimitWaitThreshold(settingService *SettingService) time.Duration {
-	if settingService != nil && settingService.cfg != nil && settingService.cfg.Gateway.AntigravityRateLimitWaitThresholdSeconds > 0 {
-		return time.Duration(settingService.cfg.Gateway.AntigravityRateLimitWaitThresholdSeconds) * time.Second
-	}
-	return antigravityDefaultRateLimitWaitThreshold
-}
+// rateLimitWaitThreshold 限流等待阈值：小于此时间等待，大于等于此时间切换账号
+const rateLimitWaitThreshold = 10 * time.Second
 
 // AntigravityAccountSwitchError 账号切换信号
 // 当账号限流时间超过阈值时，通知上层切换账号
@@ -106,12 +98,10 @@ type antigravityRetryLoopResult struct {
 
 // antigravityRetryLoop 执行带 URL fallback 的重试循环
 func antigravityRetryLoop(p antigravityRetryLoopParams) (*antigravityRetryLoopResult, error) {
-	threshold := getAntigravityRateLimitWaitThreshold(p.settingService)
-
 	// 预检查：如果账号已限流，根据剩余时间决定等待或切换
 	if p.requestedModel != "" {
 		if remaining := p.account.GetRateLimitRemainingTime(p.requestedModel); remaining > 0 {
-			if remaining < threshold {
+			if remaining < rateLimitWaitThreshold {
 				// 限流剩余时间较短，等待后继续
 				log.Printf("%s pre_check: rate_limit_wait remaining=%v model=%s account=%d",
 					p.prefix, remaining.Truncate(time.Millisecond), p.requestedModel, p.account.ID)
@@ -213,32 +203,15 @@ urlFallbackLoop:
 				}
 
 				// ===== 反重力 OAuth 账号智能重试（与默认重试互斥） =====
-				shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody, threshold)
+				shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody)
 
-				// 情况1: retryDelay >= threshold，直接限流模型，不重试
+				// 情况1: retryDelay >= 10s，直接限流模型，不重试
 				if shouldRateLimitModel {
-					// 向上取整到秒（不足 1s 按 1s 算）
-					rateLimitSeconds := int64(waitDuration.Seconds())
-					if waitDuration > time.Duration(rateLimitSeconds)*time.Second {
-						rateLimitSeconds++
-					}
-					if rateLimitSeconds < 1 {
-						rateLimitSeconds = 1
-					}
-					rateLimitDuration := time.Duration(rateLimitSeconds) * time.Second
+					log.Printf("%s status=%d oauth_long_delay model=%s account=%d (direct model rate limit)",
+						p.prefix, resp.StatusCode, modelName, p.account.ID)
 
-					log.Printf("%s status=%d oauth_long_delay model=%s account=%d delay=%v (direct model rate limit)",
-						p.prefix, resp.StatusCode, modelName, p.account.ID, rateLimitDuration)
-
-					// 直接限流模型（使用实际的 retryDelay 向上取整）
-					// 注意：SetModelRateLimit 入库时会用 RFC3339（秒精度）格式化时间。
-					// 这里把 resetAt 对齐到秒并做保守上取整，避免因为格式化截断导致实际限流时间短于期望值。
-					now := time.Now().UTC()
-					baseUnix := now.Unix()
-					if now.Nanosecond() != 0 {
-						baseUnix++ // ceil to next second
-					}
-					resetAt := time.Unix(baseUnix+rateLimitSeconds, 0).UTC()
+					// 直接限流模型（按 scope 存储）
+					resetAt := time.Now().Add(30 * time.Second) // 默认 30 秒
 					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
 						// 无法映射 scope，fallback 到整个账户限流
 						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
@@ -253,7 +226,7 @@ urlFallbackLoop:
 					break urlFallbackLoop
 				}
 
-				// 情况2: retryDelay < threshold，智能重试一次
+				// 情况2: retryDelay < 10s，智能重试一次
 				if shouldSmartRetry {
 					log.Printf("%s status=%d oauth_smart_retry delay=%v model=%s account=%d",
 						p.prefix, resp.StatusCode, waitDuration, modelName, p.account.ID)
@@ -1873,17 +1846,12 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 }
 
 // shouldTriggerAntigravitySmartRetry 判断是否应该触发智能重试
-// 参数：
-//   - account: 账号
-//   - respBody: 响应体
-//   - threshold: 限流等待阈值，retryDelay < threshold 时智能重试，>= threshold 时限流模型
-//
 // 返回：
-//   - shouldRetry: 是否应该智能重试
-//   - shouldRateLimitModel: 是否应该限流模型（直接限流不重试）
-//   - waitDuration: 等待时间（智能重试时使用，或限流时的实际 retryDelay）
+//   - shouldRetry: 是否应该智能重试（retryDelay < 10s）
+//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= 10s，直接限流不重试）
+//   - waitDuration: 等待时间（智能重试时使用）
 //   - modelName: 限流的模型名称
-func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte, threshold time.Duration) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
+func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
 	if !account.IsOAuth() {
 		return false, false, 0, ""
 	}
@@ -1893,13 +1861,12 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte, thres
 		return false, false, 0, ""
 	}
 
-	// retryDelay >= threshold：直接限流模型，不重试
-	// 返回实际的 retryDelay 用于设置限流时间
-	if info.RetryDelay >= threshold {
-		return false, true, info.RetryDelay, info.ModelName
+	// retryDelay >= 10s：直接限流模型，不重试
+	if info.RetryDelay >= antigravitySmartRetryThreshold {
+		return false, true, 0, info.ModelName
 	}
 
-	// retryDelay < threshold：智能重试
+	// retryDelay < 10s：智能重试
 	waitDuration = info.RetryDelay
 	if waitDuration < antigravitySmartRetryMinWait {
 		waitDuration = antigravitySmartRetryMinWait

@@ -116,3 +116,37 @@ func (a *Account) GetAntigravityScopeRateLimits() map[string]int64 {
 	}
 	return result
 }
+
+// GetQuotaScopeRateLimitRemainingTime 获取模型域限流剩余时间
+// 返回 0 表示未限流或已过期
+func (a *Account) GetQuotaScopeRateLimitRemainingTime(requestedModel string) time.Duration {
+	if a == nil || a.Platform != PlatformAntigravity {
+		return 0
+	}
+	scope, ok := resolveAntigravityQuotaScope(requestedModel)
+	if !ok {
+		return 0
+	}
+	resetAt := a.antigravityQuotaScopeResetAt(scope)
+	if resetAt == nil {
+		return 0
+	}
+	if remaining := time.Until(*resetAt); remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
+// GetRateLimitRemainingTime 获取限流剩余时间（模型限流和模型域限流取最大值）
+// 返回 0 表示未限流或已过期
+func (a *Account) GetRateLimitRemainingTime(requestedModel string) time.Duration {
+	if a == nil {
+		return 0
+	}
+	modelRemaining := a.GetModelRateLimitRemainingTime(requestedModel)
+	scopeRemaining := a.GetQuotaScopeRateLimitRemainingTime(requestedModel)
+	if modelRemaining > scopeRemaining {
+		return modelRemaining
+	}
+	return scopeRemaining
+}

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/stretchr/testify/require"
 )
@@ -505,7 +504,7 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			shouldRetry, shouldRateLimit, wait, model := shouldTriggerAntigravitySmartRetry(tt.account, []byte(tt.body), 10*time.Second)
+			shouldRetry, shouldRateLimit, wait, model := shouldTriggerAntigravitySmartRetry(tt.account, []byte(tt.body))
 			if shouldRetry != tt.expectedShouldRetry {
 				t.Errorf("shouldRetry = %v, want %v", shouldRetry, tt.expectedShouldRetry)
 			}
@@ -515,12 +514,6 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			if shouldRetry {
 				if wait < tt.minWait {
 					t.Errorf("wait = %v, want >= %v", wait, tt.minWait)
-				}
-			}
-			// 当 shouldRateLimit 为 true 时，wait 应该返回实际的 retryDelay（>= threshold）
-			if shouldRateLimit {
-				if wait < 10*time.Second {
-					t.Errorf("wait = %v, want >= 10s when shouldRateLimit is true", wait)
 				}
 			}
 			if (shouldRetry || shouldRateLimit) && model != tt.modelName {
@@ -661,39 +654,6 @@ func TestAntigravityRetryLoop_PreCheck_WaitsWhenRemainingBelowThreshold(t *testi
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Nil(t, result)
 	require.Equal(t, 0, upstream.calls, "should not call upstream while waiting on pre-check")
-}
-
-func TestGetAntigravityRateLimitWaitThreshold(t *testing.T) {
-	t.Run("returns default when settingService is nil", func(t *testing.T) {
-		result := getAntigravityRateLimitWaitThreshold(nil)
-		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
-	})
-
-	t.Run("returns default when cfg is nil", func(t *testing.T) {
-		svc := &SettingService{cfg: nil}
-		result := getAntigravityRateLimitWaitThreshold(svc)
-		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
-	})
-
-	t.Run("returns default when threshold is 0", func(t *testing.T) {
-		svc := &SettingService{cfg: &config.Config{
-			Gateway: config.GatewayConfig{
-				AntigravityRateLimitWaitThresholdSeconds: 0,
-			},
-		}}
-		result := getAntigravityRateLimitWaitThreshold(svc)
-		require.Equal(t, antigravityDefaultRateLimitWaitThreshold, result)
-	})
-
-	t.Run("returns configured value when set", func(t *testing.T) {
-		svc := &SettingService{cfg: &config.Config{
-			Gateway: config.GatewayConfig{
-				AntigravityRateLimitWaitThresholdSeconds: 15,
-			},
-		}}
-		result := getAntigravityRateLimitWaitThreshold(svc)
-		require.Equal(t, 15*time.Second, result)
-	})
 }
 
 func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingAtOrAboveThreshold(t *testing.T) {

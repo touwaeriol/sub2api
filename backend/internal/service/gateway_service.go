@@ -41,6 +41,23 @@ const (
 	maxCacheControlBlocks   = 4 // Anthropic API 允许的最大 cache_control 块数量
 )
 
+// ForceCacheBillingContextKey 强制缓存计费上下文键
+// 用于粘性会话切换时，将 input_tokens 转为 cache_read_input_tokens 计费
+type forceCacheBillingKeyType struct{}
+
+var ForceCacheBillingContextKey = forceCacheBillingKeyType{}
+
+// IsForceCacheBilling 检查是否启用强制缓存计费
+func IsForceCacheBilling(ctx context.Context) bool {
+	v, _ := ctx.Value(ForceCacheBillingContextKey).(bool)
+	return v
+}
+
+// WithForceCacheBilling 返回带有强制缓存计费标记的上下文
+func WithForceCacheBilling(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ForceCacheBillingContextKey, true)
+}
+
 func (s *GatewayService) debugModelRoutingEnabled() bool {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("SUB2API_DEBUG_MODEL_ROUTING")))
 	return v == "1" || v == "true" || v == "yes" || v == "on"
@@ -3460,13 +3477,14 @@ func (s *GatewayService) replaceModelInResponseBody(body []byte, fromModel, toMo
 
 // RecordUsageInput 记录使用量的输入参数
 type RecordUsageInput struct {
-	Result       *ForwardResult
-	APIKey       *APIKey
-	User         *User
-	Account      *Account
-	Subscription *UserSubscription // 可选：订阅信息
-	UserAgent    string            // 请求的 User-Agent
-	IPAddress    string            // 请求的客户端 IP 地址
+	Result            *ForwardResult
+	APIKey            *APIKey
+	User              *User
+	Account           *Account
+	Subscription      *UserSubscription // 可选：订阅信息
+	UserAgent         string            // 请求的 User-Agent
+	IPAddress         string            // 请求的客户端 IP 地址
+	ForceCacheBilling bool              // 强制缓存计费：将 input_tokens 转为 cache_read 计费（用于粘性会话切换）
 }
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
@@ -3476,6 +3494,15 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	user := input.User
 	account := input.Account
 	subscription := input.Subscription
+
+	// 强制缓存计费：将 input_tokens 转为 cache_read_input_tokens
+	// 用于粘性会话切换时的特殊计费处理
+	if input.ForceCacheBilling && result.Usage.InputTokens > 0 {
+		log.Printf("force_cache_billing: %d input_tokens → cache_read_input_tokens (account=%d)",
+			result.Usage.InputTokens, account.ID)
+		result.Usage.CacheReadInputTokens += result.Usage.InputTokens
+		result.Usage.InputTokens = 0
+	}
 
 	// 获取费率倍数
 	multiplier := s.cfg.Default.RateMultiplier

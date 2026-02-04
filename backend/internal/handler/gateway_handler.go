@@ -198,6 +198,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		switchCount := 0
 		failedAccountIDs := make(map[int64]struct{})
 		lastFailoverStatus := 0
+		forceCacheBilling := false // 跟踪是否需要缓存计费（粘性会话切换时）
 
 		for {
 			selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionKey, reqModel, failedAccountIDs, "") // Gemini 不使用会话限制
@@ -282,7 +283,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 转发请求 - 根据账号平台分流
 			var result *service.ForwardResult
 			if account.Platform == service.PlatformAntigravity {
-				result, err = h.antigravityGatewayService.ForwardGemini(c.Request.Context(), c, account, reqModel, "generateContent", reqStream, body)
+				result, err = h.antigravityGatewayService.ForwardGemini(c.Request.Context(), c, account, reqModel, "generateContent", reqStream, body, sessionKey != "")
 			} else {
 				result, err = h.geminiCompatService.Forward(c.Request.Context(), c, account, body)
 			}
@@ -290,6 +291,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				accountReleaseFunc()
 			}
 			if err != nil {
+				// 处理 Antigravity 账号切换信号
+				if switchErr, ok := service.IsAntigravityAccountSwitchError(err); ok {
+					failedAccountIDs[account.ID] = struct{}{}
+					if switchCount >= maxAccountSwitches {
+						h.handleFailoverExhausted(c, http.StatusTooManyRequests, streamStarted)
+						return
+					}
+					switchCount++
+					log.Printf("Account %d: rate limited on model %s, switching account %d/%d (sticky=%v)",
+						account.ID, switchErr.RateLimitedModel, switchCount, maxAccountSwitches, switchErr.IsStickySession)
+					// 粘性会话切换时启用缓存计费
+					if switchErr.IsStickySession {
+						forceCacheBilling = true
+					}
+					continue
+				}
+
 				var failoverErr *service.UpstreamFailoverError
 				if errors.As(err, &failoverErr) {
 					failedAccountIDs[account.ID] = struct{}{}
@@ -312,21 +330,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			clientIP := ip.GetClientIP(c)
 
 			// 异步记录使用量（subscription已在函数开头获取）
-			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string) {
+			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string, cacheBilling bool) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:       result,
-					APIKey:       apiKey,
-					User:         apiKey.User,
-					Account:      usedAccount,
-					Subscription: subscription,
-					UserAgent:    ua,
-					IPAddress:    clientIP,
+					Result:            result,
+					APIKey:            apiKey,
+					User:              apiKey.User,
+					Account:           usedAccount,
+					Subscription:      subscription,
+					UserAgent:         ua,
+					IPAddress:         clientIP,
+					ForceCacheBilling: cacheBilling,
 				}); err != nil {
 					log.Printf("Record usage failed: %v", err)
 				}
-			}(result, account, userAgent, clientIP)
+			}(result, account, userAgent, clientIP, forceCacheBilling)
 			return
 		}
 	}
@@ -335,6 +354,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	switchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	lastFailoverStatus := 0
+	forceCacheBilling := false // 跟踪是否需要缓存计费（粘性会话切换时）
 
 	for {
 		// 选择支持该模型的账号
@@ -418,7 +438,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		// 转发请求 - 根据账号平台分流
 		var result *service.ForwardResult
 		if account.Platform == service.PlatformAntigravity {
-			result, err = h.antigravityGatewayService.Forward(c.Request.Context(), c, account, body)
+			result, err = h.antigravityGatewayService.Forward(c.Request.Context(), c, account, body, sessionKey != "")
 		} else {
 			result, err = h.gatewayService.Forward(c.Request.Context(), c, account, parsedReq)
 		}
@@ -426,6 +446,23 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			accountReleaseFunc()
 		}
 		if err != nil {
+			// 处理 Antigravity 账号切换信号
+			if switchErr, ok := service.IsAntigravityAccountSwitchError(err); ok {
+				failedAccountIDs[account.ID] = struct{}{}
+				if switchCount >= maxAccountSwitches {
+					h.handleFailoverExhausted(c, http.StatusTooManyRequests, streamStarted)
+					return
+				}
+				switchCount++
+				log.Printf("Account %d: rate limited on model %s, switching account %d/%d (sticky=%v)",
+					account.ID, switchErr.RateLimitedModel, switchCount, maxAccountSwitches, switchErr.IsStickySession)
+				// 粘性会话切换时启用缓存计费
+				if switchErr.IsStickySession {
+					forceCacheBilling = true
+				}
+				continue
+			}
+
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				failedAccountIDs[account.ID] = struct{}{}
@@ -448,21 +485,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		clientIP := ip.GetClientIP(c)
 
 		// 异步记录使用量（subscription已在函数开头获取）
-		go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string) {
+		go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string, cacheBilling bool) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-				Result:       result,
-				APIKey:       apiKey,
-				User:         apiKey.User,
-				Account:      usedAccount,
-				Subscription: subscription,
-				UserAgent:    ua,
-				IPAddress:    clientIP,
+				Result:            result,
+				APIKey:            apiKey,
+				User:              apiKey.User,
+				Account:           usedAccount,
+				Subscription:      subscription,
+				UserAgent:         ua,
+				IPAddress:         clientIP,
+				ForceCacheBilling: cacheBilling,
 			}); err != nil {
 				log.Printf("Record usage failed: %v", err)
 			}
-		}(result, account, userAgent, clientIP)
+		}(result, account, userAgent, clientIP, forceCacheBilling)
 		return
 	}
 }
