@@ -281,3 +281,32 @@ export function formatRelativeWithDateTime(date: string | Date | null | undefine
 
   return `${relativeTime} · ${dateTime}`
 }
+
+/**
+ * 格式化 reasoning effort（推理强度）
+ * @param effort 推理强度值
+ * @returns 格式化后的字符串
+ */
+export function formatReasoningEffort(effort: string | null | undefined): string {
+  const raw = (effort ?? '').toString().trim()
+  if (!raw) return '-'
+
+  const normalized = raw.toLowerCase().replace(/[-_\s]/g, '')
+  switch (normalized) {
+    case 'low':
+      return 'Low'
+    case 'medium':
+      return 'Medium'
+    case 'high':
+      return 'High'
+    case 'xhigh':
+    case 'extrahigh':
+      return 'Xhigh'
+    case 'none':
+    case 'minimal':
+      return '-'
+    default:
+      // best-effort: Title-case first letter
+      return raw.length > 1 ? raw[0].toUpperCase() + raw.slice(1) : raw.toUpperCase()
+  }
+}
