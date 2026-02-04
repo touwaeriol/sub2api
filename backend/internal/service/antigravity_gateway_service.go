@@ -87,9 +87,11 @@ type antigravityRetryLoopParams struct {
 	httpUpstream    HTTPUpstream
 	settingService  *SettingService
 	accountRepo     AccountRepository // 用于智能重试的模型级别限流
-	handleError     func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope)
+	handleError     func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult
 	requestedModel  string // 用于限流检查的原始请求模型
 	isStickySession bool   // 是否为粘性会话（用于账号切换时的缓存计费判断）
+	groupID         int64  // 用于模型级限流时清除粘性会话
+	sessionHash     string // 用于模型级限流时清除粘性会话
 }
 
 // antigravityRetryLoopResult 重试循环的结果
@@ -215,7 +217,7 @@ urlFallbackLoop:
 					resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
 					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
 						// 无法映射 scope，fallback 到整个账户限流
-						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
 						log.Printf("%s status=%d rate_limited account=%d (no scope mapping)", p.prefix, resp.StatusCode, p.account.ID)
 					}
 
@@ -244,7 +246,7 @@ urlFallbackLoop:
 					if err != nil {
 						log.Printf("%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
 						// 请求构建失败，fallback 到默认限流
-						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
 						resp = &http.Response{
 							StatusCode: resp.StatusCode,
 							Header:     resp.Header.Clone(),
@@ -309,7 +311,7 @@ urlFallbackLoop:
 				}
 
 				// 重试用尽，标记账户限流
-				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
 				log.Printf("%s status=%d rate_limited base_url=%s body=%s", p.prefix, resp.StatusCode, baseURL, truncateForLog(respBody, 200))
 				resp = &http.Response{
 					StatusCode: resp.StatusCode,
@@ -469,11 +471,12 @@ type AntigravityGatewayService struct {
 	rateLimitService *RateLimitService
 	httpUpstream     HTTPUpstream
 	settingService   *SettingService
+	cache            GatewayCache // 用于模型级限流时清除粘性会话绑定
 }
 
 func NewAntigravityGatewayService(
 	accountRepo AccountRepository,
-	_ GatewayCache,
+	cache GatewayCache,
 	tokenProvider *AntigravityTokenProvider,
 	rateLimitService *RateLimitService,
 	httpUpstream HTTPUpstream,
@@ -485,6 +488,7 @@ func NewAntigravityGatewayService(
 		rateLimitService: rateLimitService,
 		httpUpstream:     httpUpstream,
 		settingService:   settingService,
+		cache:            cache,
 	}
 }
 
@@ -917,6 +921,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		handleError:     s.handleUpstreamError,
 		requestedModel:  originalModel,
 		isStickySession: isStickySession, // Forward 由上层判断粘性会话
+		groupID:         0,               // Forward 方法没有 groupID，由上层处理粘性会话清除
+		sessionHash:     "",              // Forward 方法没有 sessionHash，由上层处理粘性会话清除
 	})
 	if err != nil {
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
@@ -996,6 +1002,8 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					handleError:     s.handleUpstreamError,
 					requestedModel:  originalModel,
 					isStickySession: isStickySession,
+					groupID:         0,  // Forward 方法没有 groupID，由上层处理粘性会话清除
+					sessionHash:     "", // Forward 方法没有 sessionHash，由上层处理粘性会话清除
 				})
 				if retryErr != nil {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -1071,7 +1079,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 		// 处理错误响应（重试后仍失败或不触发重试）
 		if resp.StatusCode >= 400 {
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope, 0, "", isStickySession)
 
 			if s.shouldFailoverUpstreamError(resp.StatusCode) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
@@ -1501,6 +1509,8 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		handleError:     s.handleUpstreamError,
 		requestedModel:  originalModel,
 		isStickySession: isStickySession, // ForwardGemini 由上层判断粘性会话
+		groupID:         0,               // ForwardGemini 方法没有 groupID，由上层处理粘性会话清除
+		sessionHash:     "",              // ForwardGemini 方法没有 sessionHash，由上层处理粘性会话清除
 	})
 	if err != nil {
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
@@ -1557,7 +1567,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		if unwrapErr != nil || len(unwrappedForOps) == 0 {
 			unwrappedForOps = respBody
 		}
-		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope, 0, "", isStickySession)
 		upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(unwrappedForOps))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 
@@ -1875,7 +1885,105 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 	return true, false, waitDuration, info.ModelName
 }
 
-func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+// handleModelRateLimitParams 模型级限流处理参数
+type handleModelRateLimitParams struct {
+	ctx             context.Context
+	prefix          string
+	account         *Account
+	statusCode      int
+	body            []byte
+	cache           GatewayCache
+	groupID         int64
+	sessionHash     string
+	isStickySession bool
+}
+
+// handleModelRateLimitResult 模型级限流处理结果
+type handleModelRateLimitResult struct {
+	Handled      bool                           // 是否已处理
+	ShouldRetry  bool                           // 是否等待后重试
+	WaitDuration time.Duration                  // 等待时间
+	SwitchError  *AntigravityAccountSwitchError // 账号切换错误
+}
+
+// handleModelRateLimit 处理模型级限流（在原有逻辑之前调用）
+// 仅处理 429/503，解析模型名和 retryDelay
+// - retryDelay < 10s: 返回 ShouldRetry=true，由调用方等待后重试
+// - retryDelay >= 10s: 设置模型限流 + 清除粘性会话 + 返回 SwitchError
+func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimitParams) *handleModelRateLimitResult {
+	if p.statusCode != 429 && p.statusCode != 503 {
+		return &handleModelRateLimitResult{Handled: false}
+	}
+
+	info := parseAntigravitySmartRetryInfo(p.body)
+	if info == nil || info.ModelName == "" {
+		return &handleModelRateLimitResult{Handled: false}
+	}
+
+	// < 10s: 等待后重试
+	if info.RetryDelay < antigravityRateLimitThreshold {
+		log.Printf("%s status=%d model_rate_limit_wait model=%s wait=%v",
+			p.prefix, p.statusCode, info.ModelName, info.RetryDelay)
+		return &handleModelRateLimitResult{
+			Handled:      true,
+			ShouldRetry:  true,
+			WaitDuration: info.RetryDelay,
+		}
+	}
+
+	// >= 10s: 设置限流 + 清除粘性会话 + 切换账号
+	s.setModelRateLimitAndClearSession(p, info)
+
+	return &handleModelRateLimitResult{
+		Handled: true,
+		SwitchError: &AntigravityAccountSwitchError{
+			OriginalAccountID: p.account.ID,
+			RateLimitedModel:  info.ModelName,
+			IsStickySession:   p.isStickySession,
+		},
+	}
+}
+
+// setModelRateLimitAndClearSession 设置模型限流并清除粘性会话
+func (s *AntigravityGatewayService) setModelRateLimitAndClearSession(p *handleModelRateLimitParams, info *antigravitySmartRetryInfo) {
+	resetAt := time.Now().Add(info.RetryDelay)
+	log.Printf("%s status=%d model_rate_limited model=%s account=%d reset_in=%v",
+		p.prefix, p.statusCode, info.ModelName, p.account.ID, info.RetryDelay)
+
+	// 设置模型限流状态
+	if err := s.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, info.ModelName, resetAt); err != nil {
+		log.Printf("%s model_rate_limit_failed model=%s error=%v", p.prefix, info.ModelName, err)
+	}
+
+	// 清除粘性会话绑定
+	if p.cache != nil && p.sessionHash != "" {
+		_ = p.cache.DeleteSessionAccountID(p.ctx, p.groupID, p.sessionHash)
+	}
+}
+
+func (s *AntigravityGatewayService) handleUpstreamError(
+	ctx context.Context, prefix string, account *Account,
+	statusCode int, headers http.Header, body []byte,
+	quotaScope AntigravityQuotaScope,
+	groupID int64, sessionHash string, isStickySession bool,
+) *handleModelRateLimitResult {
+	// ✨ 新增：模型级限流处理（在原有逻辑之前）
+	result := s.handleModelRateLimit(&handleModelRateLimitParams{
+		ctx:             ctx,
+		prefix:          prefix,
+		account:         account,
+		statusCode:      statusCode,
+		body:            body,
+		cache:           s.cache,
+		groupID:         groupID,
+		sessionHash:     sessionHash,
+		isStickySession: isStickySession,
+	})
+	if result.Handled {
+		return result
+	}
+
+	// ========== 原有逻辑，保持不变 ==========
 	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
 	if statusCode == 429 {
 		useScopeLimit := quotaScope != ""
@@ -1904,7 +2012,7 @@ func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, pre
 					log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
 				}
 			}
-			return
+			return nil
 		}
 		resetTime := time.Unix(*resetAt, 0)
 		if useScopeLimit {
@@ -1918,16 +2026,17 @@ func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, pre
 				log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
 			}
 		}
-		return
+		return nil
 	}
 	// 其他错误码继续使用 rateLimitService
 	if s.rateLimitService == nil {
-		return
+		return nil
 	}
 	shouldDisable := s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
 	if shouldDisable {
 		log.Printf("%s status=%d marked_error", prefix, statusCode)
 	}
+	return nil
 }
 
 type antigravityStreamResult struct {
