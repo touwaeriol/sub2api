@@ -97,4 +97,3 @@ func TestShrinkToEssentials_IncludesThinking(t *testing.T) {
 		t.Fatalf("expected thinking to be included in essentials: %#v", out)
 	}
 }
-

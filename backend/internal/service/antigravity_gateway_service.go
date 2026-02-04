@@ -1711,7 +1711,6 @@ func setModelRateLimitByModelName(ctx context.Context, repo AccountRepository, a
 	return true
 }
 
-
 func antigravityFallbackCooldownSeconds() (time.Duration, bool) {
 	raw := strings.TrimSpace(os.Getenv(antigravityFallbackSecondsEnv))
 	if raw == "" {
