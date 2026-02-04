@@ -1659,7 +1659,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					}
 					availableWithModelLoad = append(availableWithModelLoad, accountWithModelLoad{
 						account:       acc.account,
-						loadInfo:      acc.loadInfo,
 						modelLoadInfo: mli,
 					})
 				}

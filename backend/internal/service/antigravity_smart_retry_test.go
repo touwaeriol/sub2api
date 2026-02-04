@@ -608,7 +608,7 @@ func TestHandleSmartRetry_NetworkError_ContinuesRetry(t *testing.T) {
 	require.Len(t, upstream.calls, 2, "should have made two retry calls")
 }
 
-// TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit 测试无 retryDelay 时使用默认 5 分钟限流
+// TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit 测试无 retryDelay 时使用默认 1 分钟限流
 func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	account := &Account{
@@ -618,7 +618,7 @@ func TestHandleSmartRetry_NoRetryDelay_UsesDefaultRateLimit(t *testing.T) {
 		Platform: PlatformAntigravity,
 	}
 
-	// 429 + RATE_LIMIT_EXCEEDED + 无 retryDelay → 使用默认 5 分钟限流
+	// 429 + RATE_LIMIT_EXCEEDED + 无 retryDelay → 使用默认 1 分钟限流
 	respBody := []byte(`{
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
