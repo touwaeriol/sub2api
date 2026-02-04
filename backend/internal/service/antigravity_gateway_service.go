@@ -3338,7 +3338,13 @@ func calculateLoadScores(accounts []accountWithModelLoad) {
 // calculateEffectivePriority 计算有效优先级（返回整数）
 // 公式：有效优先级 = max(1, ceil(优先级 × 0.8^未使用分钟数))
 // 这样长时间未使用的账号会获得更低的有效优先级，从而更容易被调度
+// 特殊情况：priority = 0 时返回 0（最高优先）
 func calculateEffectivePriority(priority int, lastUsedAt time.Time) int {
+	// priority = 0 表示最高优先级，始终返回 0
+	if priority == 0 {
+		return 0
+	}
+
 	if lastUsedAt.IsZero() {
 		// 从未使用过的账号，有效优先级为 1（最高优先）
 		return 1
