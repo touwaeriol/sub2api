@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 )
 
 // ParsedRequest 保存网关请求的预解析结果
@@ -466,7 +468,7 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
 					signature, _ := blockMap["signature"].(string)
-					if signature != "" && signature != "skip_thought_signature_validator" {
+					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
 						continue
 					}

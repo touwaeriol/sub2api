@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
@@ -200,7 +201,7 @@ func (s *GeminiMessagesCompatService) tryStickySessionHit(
 
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
-	if shouldClearStickySession(account) {
+	if shouldClearStickySession(account, requestedModel) {
 		_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
 		return nil
 	}
@@ -2636,7 +2637,9 @@ func ParseGeminiRateLimitResetTime(body []byte) *int64 {
 					if meta, ok := dm["metadata"].(map[string]any); ok {
 						if v, ok := meta["quotaResetDelay"].(string); ok {
 							if dur, err := time.ParseDuration(v); err == nil {
-								ts := time.Now().Unix() + int64(dur.Seconds())
+								// Use ceil to avoid undercounting fractional seconds (e.g. 10.1s should not become 10s),
+								// which can affect scheduling decisions around thresholds (like 10s).
+								ts := time.Now().Unix() + int64(math.Ceil(dur.Seconds()))
 								return &ts
 							}
 						}
@@ -2934,6 +2937,8 @@ func convertClaudeMessagesToGeminiContents(messages any, toolUseIDToName map[str
 							"name": name,
 							"args": bm["input"],
 						},
+						// Gemini 3 函数调用必须传递 thoughtSignature，统一使用 dummy signature
+						"thoughtSignature": antigravity.DummyThoughtSignature,
 					})
 				case "tool_result":
 					toolUseID, _ := bm["tool_use_id"].(string)
