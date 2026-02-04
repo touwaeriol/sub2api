@@ -31,6 +31,12 @@ const (
 	antigravityRetryMaxDelay     = 16 * time.Second
 )
 
+// antigravityPassthroughErrorMessages 透传给客户端的错误消息白名单（小写）
+// 匹配时使用 strings.Contains，无需完全匹配
+var antigravityPassthroughErrorMessages = []string{
+	"prompt is too long",
+}
+
 const (
 	antigravityMaxRetriesEnv            = "GATEWAY_ANTIGRAVITY_MAX_RETRIES"
 	antigravityMaxRetriesAfterSwitchEnv = "GATEWAY_ANTIGRAVITY_AFTER_SWITCHMAX_RETRIES"
@@ -1183,6 +1189,25 @@ func isPromptTooLongError(respBody []byte) bool {
 		msg = strings.ToLower(string(respBody))
 	}
 	return strings.Contains(msg, "prompt is too long")
+}
+
+// isPassthroughErrorMessage 检查错误消息是否在透传白名单中
+func isPassthroughErrorMessage(msg string) bool {
+	lower := strings.ToLower(msg)
+	for _, pattern := range antigravityPassthroughErrorMessages {
+		if strings.Contains(lower, pattern) {
+			return true
+		}
+	}
+	return false
+}
+
+// getPassthroughOrDefault 若消息在白名单内则返回原始消息，否则返回默认消息
+func getPassthroughOrDefault(upstreamMsg, defaultMsg string) string {
+	if isPassthroughErrorMessage(upstreamMsg) {
+		return upstreamMsg
+	}
+	return defaultMsg
 }
 
 func extractAntigravityErrorMessage(body []byte) string {
@@ -2659,7 +2684,7 @@ func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, accou
 	case 400:
 		statusCode = http.StatusBadRequest
 		errType = "invalid_request_error"
-		errMsg = "Invalid request"
+		errMsg = getPassthroughOrDefault(upstreamMsg, "Invalid request")
 	case 401:
 		statusCode = http.StatusBadGateway
 		errType = "authentication_error"
