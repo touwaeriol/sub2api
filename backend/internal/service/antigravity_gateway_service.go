@@ -33,7 +33,7 @@ const (
 	// antigravityRateLimitThreshold 限流等待/切换阈值
 	// - 智能重试：retryDelay < 此阈值时等待后重试，>= 此阈值时直接限流模型
 	// - 预检查：剩余限流时间 < 此阈值时等待，>= 此阈值时切换账号
-	antigravityRateLimitThreshold       = 10 * time.Second
+	antigravityRateLimitThreshold       = 5 * time.Second
 	antigravitySmartRetryMinWait        = 1 * time.Second  // 智能重试最小等待时间
 	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（解析失败时使用）
 
