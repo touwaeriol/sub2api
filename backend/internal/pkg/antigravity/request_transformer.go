@@ -44,6 +44,8 @@ type TransformOptions struct {
 	// IdentityPatch 可选：自定义注入到 systemInstruction 开头的身份防护提示词；
 	// 为空时使用默认模板（包含 [IDENTITY_PATCH] 及 SYSTEM_PROMPT_BEGIN 标记）。
 	IdentityPatch string
+	// EnableMCPXML 是否注入 MCP XML 工具调用协议
+	EnableMCPXML bool
 }
 
 func DefaultTransformOptions() TransformOptions {
