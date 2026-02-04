@@ -133,8 +133,9 @@ func TestAntigravityRetryLoop_URLFallback_UsesLatestSuccess(t *testing.T) {
 		quotaScope:     AntigravityQuotaScopeClaude,
 		httpUpstream:   upstream,
 		requestedModel: "claude-sonnet-4-5",
-		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
 			handleErrorCalled = true
+			return nil
 		},
 	})
 
@@ -160,7 +161,7 @@ func TestAntigravityHandleUpstreamError_UsesScopeLimit(t *testing.T) {
 	account := &Account{ID: 9, Name: "acc-9", Platform: PlatformAntigravity}
 
 	body := buildGeminiRateLimitBody("3s")
-	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude)
+	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude, 0, "", false)
 
 	require.Len(t, repo.scopeCalls, 1)
 	require.Empty(t, repo.rateCalls)
@@ -168,6 +169,124 @@ func TestAntigravityHandleUpstreamError_UsesScopeLimit(t *testing.T) {
 	require.Equal(t, account.ID, call.accountID)
 	require.Equal(t, AntigravityQuotaScopeClaude, call.scope)
 	require.WithinDuration(t, time.Now().Add(3*time.Second), call.resetAt, 2*time.Second)
+}
+
+// TestHandleUpstreamError_429_ModelRateLimit 测试 429 模型限流场景
+func TestHandleUpstreamError_429_ModelRateLimit(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 1, Name: "acc-1", Platform: PlatformAntigravity}
+
+	// 429 + RATE_LIMIT_EXCEEDED + 模型名 → 模型限流
+	body := []byte(`{
+		"error": {
+			"status": "RESOURCE_EXHAUSTED",
+			"details": [
+				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-sonnet-4-5"}, "reason": "RATE_LIMIT_EXCEEDED"},
+				{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "15s"}
+			]
+		}
+	}`)
+
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude, 0, "", false)
+
+	// 应该触发模型限流
+	require.NotNil(t, result)
+	require.True(t, result.Handled)
+	require.NotNil(t, result.SwitchError)
+	require.Equal(t, "claude-sonnet-4-5", result.SwitchError.RateLimitedModel)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "claude-sonnet-4-5", repo.modelRateLimitCalls[0].modelKey)
+}
+
+// TestHandleUpstreamError_429_NonModelRateLimit 测试 429 非模型限流场景（走 scope 限流）
+func TestHandleUpstreamError_429_NonModelRateLimit(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 2, Name: "acc-2", Platform: PlatformAntigravity}
+
+	// 429 + 普通限流响应（无 RATE_LIMIT_EXCEEDED reason）→ scope 限流
+	body := buildGeminiRateLimitBody("5s")
+
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude, 0, "", false)
+
+	// 不应该触发模型限流，应该走 scope 限流
+	require.Nil(t, result)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.Len(t, repo.scopeCalls, 1)
+	require.Equal(t, AntigravityQuotaScopeClaude, repo.scopeCalls[0].scope)
+}
+
+// TestHandleUpstreamError_503_ModelRateLimit 测试 503 模型限流场景
+func TestHandleUpstreamError_503_ModelRateLimit(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 3, Name: "acc-3", Platform: PlatformAntigravity}
+
+	// 503 + MODEL_CAPACITY_EXHAUSTED → 模型限流
+	body := []byte(`{
+		"error": {
+			"status": "UNAVAILABLE",
+			"details": [
+				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-3-pro-high"}, "reason": "MODEL_CAPACITY_EXHAUSTED"},
+				{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "30s"}
+			]
+		}
+	}`)
+
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusServiceUnavailable, http.Header{}, body, AntigravityQuotaScopeGeminiText, 0, "", false)
+
+	// 应该触发模型限流
+	require.NotNil(t, result)
+	require.True(t, result.Handled)
+	require.NotNil(t, result.SwitchError)
+	require.Equal(t, "gemini-3-pro-high", result.SwitchError.RateLimitedModel)
+	require.Len(t, repo.modelRateLimitCalls, 1)
+	require.Equal(t, "gemini-3-pro-high", repo.modelRateLimitCalls[0].modelKey)
+}
+
+// TestHandleUpstreamError_503_NonModelRateLimit 测试 503 非模型限流场景（不处理）
+func TestHandleUpstreamError_503_NonModelRateLimit(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 4, Name: "acc-4", Platform: PlatformAntigravity}
+
+	// 503 + 普通错误（非 MODEL_CAPACITY_EXHAUSTED）→ 不做任何处理
+	body := []byte(`{
+		"error": {
+			"status": "UNAVAILABLE",
+			"message": "Service temporarily unavailable",
+			"details": [
+				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "reason": "SERVICE_UNAVAILABLE"}
+			]
+		}
+	}`)
+
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusServiceUnavailable, http.Header{}, body, AntigravityQuotaScopeGeminiText, 0, "", false)
+
+	// 503 非模型限流不应该做任何处理
+	require.Nil(t, result)
+	require.Empty(t, repo.modelRateLimitCalls, "503 non-model rate limit should not trigger model rate limit")
+	require.Empty(t, repo.scopeCalls, "503 non-model rate limit should not trigger scope rate limit")
+	require.Empty(t, repo.rateCalls, "503 non-model rate limit should not trigger account rate limit")
+}
+
+// TestHandleUpstreamError_503_EmptyBody 测试 503 空响应体（不处理）
+func TestHandleUpstreamError_503_EmptyBody(t *testing.T) {
+	repo := &stubAntigravityAccountRepo{}
+	svc := &AntigravityGatewayService{accountRepo: repo}
+	account := &Account{ID: 5, Name: "acc-5", Platform: PlatformAntigravity}
+
+	// 503 + 空响应体 → 不做任何处理
+	body := []byte(`{}`)
+
+	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusServiceUnavailable, http.Header{}, body, AntigravityQuotaScopeGeminiText, 0, "", false)
+
+	// 503 空响应不应该做任何处理
+	require.Nil(t, result)
+	require.Empty(t, repo.modelRateLimitCalls)
+	require.Empty(t, repo.scopeCalls)
+	require.Empty(t, repo.rateCalls)
 }
 
 func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
@@ -331,18 +450,34 @@ func TestParseAntigravitySmartRetryInfo(t *testing.T) {
 			expectedNil: true,
 		},
 		{
-			name: "ignore milliseconds format",
+			name: "milliseconds format is now supported",
 			body: `{
 				"error": {
 					"code": 429,
 					"status": "RESOURCE_EXHAUSTED",
 					"details": [
-						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "test"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "test-model"}, "reason": "RATE_LIMIT_EXCEEDED"},
 						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "500ms"}
 					]
 				}
 			}`,
-			expectedNil: true,
+			expectedDelay: 500 * time.Millisecond,
+			expectedModel: "test-model",
+		},
+		{
+			name: "minutes format is supported",
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-3-pro"}, "reason": "RATE_LIMIT_EXCEEDED"},
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "4m50s"}
+					]
+				}
+			}`,
+			expectedDelay: 4*time.Minute + 50*time.Second,
+			expectedModel: "gemini-3-pro",
 		},
 		{
 			name: "missing model name - should return nil",
@@ -638,16 +773,17 @@ func TestAntigravityRetryLoop_PreCheck_WaitsWhenRemainingBelowThreshold(t *testi
 	defer cancel()
 
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
-		ctx:            ctx,
-		prefix:         "[test]",
-		account:        account,
-		accessToken:    "token",
-		action:         "generateContent",
-		body:           []byte(`{"input":"test"}`),
-		requestedModel: "claude-sonnet-4-5",
-		httpUpstream:   upstream,
+		ctx:             ctx,
+		prefix:          "[test]",
+		account:         account,
+		accessToken:     "token",
+		action:          "generateContent",
+		body:            []byte(`{"input":"test"}`),
+		requestedModel:  "claude-sonnet-4-5",
+		httpUpstream:    upstream,
 		isStickySession: true,
-		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+			return nil
 		},
 	})
 
@@ -684,7 +820,8 @@ func TestAntigravityRetryLoop_PreCheck_SwitchesWhenRemainingAtOrAboveThreshold(t
 		requestedModel:  "claude-sonnet-4-5",
 		httpUpstream:    upstream,
 		isStickySession: true,
-		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult {
+			return nil
 		},
 	})
 
