@@ -486,6 +486,8 @@ var antigravitySupportedModels = map[string]bool{
 	"claude-opus-4-5-thinking":   true,
 	"claude-sonnet-4-5":          true,
 	"claude-sonnet-4-5-thinking": true,
+	"gemini-2.5-flash":           true,
+	"gemini-2.5-pro":             true,
 	"gemini-3-flash":             true,
 	"gemini-3-pro-low":           true,
 	"gemini-3-pro-high":          true,
@@ -502,14 +504,9 @@ var antigravityPrefixMapping = []struct {
 	{"gemini-3-pro-image", "gemini-3-pro-image"}, // gemini-3-pro-image-preview 等
 	{"gemini-3-flash", "gemini-3-flash"},         // gemini-3-flash-preview 等 → gemini-3-flash
 	{"gemini-3-pro", "gemini-3-pro-high"},        // gemini-3-pro, gemini-3-pro-preview 等
-	// gemini-2.5 前缀映射（映射到 gemini-3 系列）
-	{"gemini-2.5-flash-thinking", "gemini-3-flash"},  // gemini-2.5-flash-thinking → gemini-3-flash
-	{"gemini-2.5-flash-image", "gemini-3-pro-image"}, // gemini-2.5-flash-image → gemini-3-pro-image
-	{"gemini-2.5-flash-lite", "gemini-3-flash"},      // gemini-2.5-flash-lite → gemini-3-flash
-	{"gemini-2.5-flash", "gemini-3-flash"},           // gemini-2.5-flash → gemini-3-flash
-	{"gemini-2.5-pro-preview", "gemini-3-pro-high"},  // gemini-2.5-pro-preview → gemini-3-pro-high
-	{"gemini-2.5-pro-exp", "gemini-3-pro-high"},      // gemini-2.5-pro-exp → gemini-3-pro-high
-	{"gemini-2.5-pro", "gemini-3-pro-high"},          // gemini-2.5-pro → gemini-3-pro-high
+	// gemini-2.5 前缀映射（直接透传）
+	{"gemini-2.5-flash", "gemini-2.5-flash"}, // gemini-2.5-flash-xxx → gemini-2.5-flash
+	{"gemini-2.5-pro", "gemini-2.5-pro"},     // gemini-2.5-pro-xxx → gemini-2.5-pro
 	// Claude 映射
 	{"claude-3-5-sonnet", "claude-sonnet-4-5"}, // 旧版 claude-3-5-sonnet-xxx
 	{"claude-sonnet-4-5", "claude-sonnet-4-5"}, // claude-sonnet-4-5-xxx
