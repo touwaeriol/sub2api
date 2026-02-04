@@ -305,7 +305,7 @@ func TestGetQuotaScopeRateLimitRemainingTime(t *testing.T) {
 		{
 			name: "non-antigravity platform",
 			account: &Account{
-				Platform: PlatformClaude,
+				Platform: PlatformAnthropic,
 				Extra: map[string]any{
 					antigravityQuotaScopesKey: map[string]any{
 						"claude": map[string]any{
