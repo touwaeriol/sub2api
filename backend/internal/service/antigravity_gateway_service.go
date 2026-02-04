@@ -2156,6 +2156,9 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 	// ========== 原有逻辑，保持不变 ==========
 	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
 	if statusCode == 429 {
+		// 调试日志：打印 429 响应的完整 body
+		log.Printf("[Antigravity-Debug] 429 response full body: %s", string(body))
+
 		useScopeLimit := quotaScope != ""
 		resetAt := ParseGeminiRateLimitResetTime(body)
 		if resetAt == nil {
