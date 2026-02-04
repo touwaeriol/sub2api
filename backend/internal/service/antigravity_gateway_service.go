@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	mathrand "math/rand"
 	"net"
 	"net/http"
@@ -33,9 +34,10 @@ const (
 	// antigravityRateLimitThreshold 限流等待/切换阈值
 	// - 智能重试：retryDelay < 此阈值时等待后重试，>= 此阈值时直接限流模型
 	// - 预检查：剩余限流时间 < 此阈值时等待，>= 此阈值时切换账号
-	antigravityRateLimitThreshold       = 5 * time.Second
-	antigravitySmartRetryMinWait        = 1 * time.Second  // 智能重试最小等待时间
-	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（解析失败时使用）
+	antigravityRateLimitThreshold       = 7 * time.Second
+	antigravitySmartRetryMinWait        = 1 * time.Second   // 智能重试最小等待时间
+	antigravitySmartRetryMaxAttempts    = 3                 // 智能重试最大次数
+	antigravityDefaultRateLimitDuration = 5 * time.Minute   // 默认限流时间（无 retryDelay 时使用）
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -127,9 +129,10 @@ const (
 
 // smartRetryResult 智能重试的结果
 type smartRetryResult struct {
-	action smartRetryAction
-	resp   *http.Response
-	err    error
+	action      smartRetryAction
+	resp        *http.Response
+	err         error
+	switchError *AntigravityAccountSwitchError // 模型限流时返回账号切换信号
 }
 
 // handleSmartRetry 处理 OAuth 账号的智能重试逻辑
@@ -144,9 +147,9 @@ func handleSmartRetry(p antigravityRetryLoopParams, resp *http.Response, respBod
 	// 判断是否触发智能重试
 	shouldSmartRetry, shouldRateLimitModel, waitDuration, modelName := shouldTriggerAntigravitySmartRetry(p.account, respBody)
 
-	// 情况1: retryDelay >= 阈值，直接限流模型，不重试
+	// 情况1: retryDelay >= 阈值，限流模型并切换账号
 	if shouldRateLimitModel {
-		log.Printf("%s status=%d oauth_long_delay model=%s account=%d (direct model rate limit)",
+		log.Printf("%s status=%d oauth_long_delay model=%s account=%d (model rate limit, switch account)",
 			p.prefix, resp.StatusCode, modelName, p.account.ID)
 
 		resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
@@ -155,54 +158,82 @@ func handleSmartRetry(p antigravityRetryLoopParams, resp *http.Response, respBod
 			log.Printf("%s status=%d rate_limited account=%d (no scope mapping)", p.prefix, resp.StatusCode, p.account.ID)
 		}
 
+		// 返回账号切换信号，让上层切换账号重试
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
-			resp: &http.Response{
-				StatusCode: resp.StatusCode,
-				Header:     resp.Header.Clone(),
-				Body:       io.NopCloser(bytes.NewReader(respBody)),
+			switchError: &AntigravityAccountSwitchError{
+				OriginalAccountID: p.account.ID,
+				RateLimitedModel:  modelName,
+				IsStickySession:   p.isStickySession,
 			},
 		}
 	}
 
-	// 情况2: retryDelay < 阈值，智能重试一次
+	// 情况2: retryDelay < 阈值，智能重试（最多 antigravitySmartRetryMaxAttempts 次）
 	if shouldSmartRetry {
-		log.Printf("%s status=%d oauth_smart_retry delay=%v model=%s account=%d",
-			p.prefix, resp.StatusCode, waitDuration, modelName, p.account.ID)
+		var lastRetryResp *http.Response
+		var lastRetryBody []byte
 
-		select {
-		case <-p.ctx.Done():
-			log.Printf("%s status=context_canceled_during_smart_retry", p.prefix)
-			return &smartRetryResult{action: smartRetryActionBreakWithResp, err: p.ctx.Err()}
-		case <-time.After(waitDuration):
-		}
+		for attempt := 1; attempt <= antigravitySmartRetryMaxAttempts; attempt++ {
+			log.Printf("%s status=%d oauth_smart_retry attempt=%d/%d delay=%v model=%s account=%d",
+				p.prefix, resp.StatusCode, attempt, antigravitySmartRetryMaxAttempts, waitDuration, modelName, p.account.ID)
 
-		// 智能重试一次：创建新请求
-		retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
-		if err != nil {
-			log.Printf("%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
-			p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
-			return &smartRetryResult{
-				action: smartRetryActionBreakWithResp,
-				resp: &http.Response{
-					StatusCode: resp.StatusCode,
-					Header:     resp.Header.Clone(),
-					Body:       io.NopCloser(bytes.NewReader(respBody)),
-				},
+			select {
+			case <-p.ctx.Done():
+				log.Printf("%s status=context_canceled_during_smart_retry", p.prefix)
+				return &smartRetryResult{action: smartRetryActionBreakWithResp, err: p.ctx.Err()}
+			case <-time.After(waitDuration):
+			}
+
+			// 智能重试：创建新请求
+			retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
+			if err != nil {
+				log.Printf("%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
+				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
+				return &smartRetryResult{
+					action: smartRetryActionBreakWithResp,
+					resp: &http.Response{
+						StatusCode: resp.StatusCode,
+						Header:     resp.Header.Clone(),
+						Body:       io.NopCloser(bytes.NewReader(respBody)),
+					},
+				}
+			}
+
+			retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			if retryErr == nil && retryResp != nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
+				log.Printf("%s status=%d smart_retry_success attempt=%d/%d", p.prefix, retryResp.StatusCode, attempt, antigravitySmartRetryMaxAttempts)
+				return &smartRetryResult{action: smartRetryActionBreakWithResp, resp: retryResp}
+			}
+
+			// 网络错误时，继续重试
+			if retryErr != nil || retryResp == nil {
+				log.Printf("%s status=smart_retry_network_error attempt=%d/%d error=%v", p.prefix, attempt, antigravitySmartRetryMaxAttempts, retryErr)
+				continue
+			}
+
+			// 重试失败，关闭之前的响应
+			if lastRetryResp != nil {
+				_ = lastRetryResp.Body.Close()
+			}
+			lastRetryResp = retryResp
+			if retryResp != nil {
+				lastRetryBody, _ = io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
+				_ = retryResp.Body.Close()
+			}
+
+			// 解析新的重试信息，用于下次重试的等待时间
+			if attempt < antigravitySmartRetryMaxAttempts && lastRetryBody != nil {
+				newShouldRetry, _, newWaitDuration, _ := shouldTriggerAntigravitySmartRetry(p.account, lastRetryBody)
+				if newShouldRetry && newWaitDuration > 0 {
+					waitDuration = newWaitDuration
+				}
 			}
 		}
 
-		retryResp, retryErr := p.httpUpstream.Do(retryReq, p.proxyURL, p.account.ID, p.account.Concurrency)
-		if retryErr == nil && retryResp.StatusCode != http.StatusTooManyRequests && retryResp.StatusCode != http.StatusServiceUnavailable {
-			log.Printf("%s status=%d smart_retry_success", p.prefix, retryResp.StatusCode)
-			return &smartRetryResult{action: smartRetryActionBreakWithResp, resp: retryResp}
-		}
-
-		// 智能重试失败，限流当前模型
-		log.Printf("%s status=%d smart_retry_failed", p.prefix, resp.StatusCode)
-		if retryResp != nil {
-			_ = retryResp.Body.Close()
-		}
+		// 所有重试都失败，限流当前模型并切换账号
+		log.Printf("%s status=%d smart_retry_exhausted attempts=%d model=%s account=%d (switch account)",
+			p.prefix, resp.StatusCode, antigravitySmartRetryMaxAttempts, modelName, p.account.ID)
 
 		resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
 		if p.accountRepo != nil && modelName != "" {
@@ -214,12 +245,13 @@ func handleSmartRetry(p antigravityRetryLoopParams, resp *http.Response, respBod
 			}
 		}
 
+		// 返回账号切换信号，让上层切换账号重试
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
-			resp: &http.Response{
-				StatusCode: resp.StatusCode,
-				Header:     resp.Header.Clone(),
-				Body:       io.NopCloser(bytes.NewReader(respBody)),
+			switchError: &AntigravityAccountSwitchError{
+				OriginalAccountID: p.account.ID,
+				RateLimitedModel:  modelName,
+				IsStickySession:   p.isStickySession,
 			},
 		}
 	}
@@ -336,6 +368,10 @@ urlFallbackLoop:
 				case smartRetryActionBreakWithResp:
 					if smartResult.err != nil {
 						return nil, smartResult.err
+					}
+					// 模型限流时返回切换账号信号
+					if smartResult.switchError != nil {
+						return nil, smartResult.switchError
 					}
 					resp = smartResult.resp
 					break urlFallbackLoop
@@ -981,6 +1017,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后转换返回
 	action := "streamGenerateContent"
 
+	// 统计模型调用次数（包括粘性会话，用于负载均衡调度）
+	if s.cache != nil {
+		_, _ = s.cache.IncrModelCallCount(ctx, account.ID, mappedModel)
+	}
+
 	// 执行带重试的请求
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
 		ctx:             ctx,
@@ -1611,6 +1652,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后返回
 	upstreamAction := "streamGenerateContent"
 
+	// 统计模型调用次数（包括粘性会话，用于负载均衡调度）
+	if s.cache != nil {
+		_, _ = s.cache.IncrModelCallCount(ctx, account.ID, mappedModel)
+	}
+
 	// 执行带重试的请求
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
 		ctx:             ctx,
@@ -1952,8 +1998,13 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 	}
 
 	// 必须有模型名才返回有效结果
-	if retryDelay <= 0 || modelName == "" {
+	if modelName == "" {
 		return nil
+	}
+
+	// 如果上游未提供 retryDelay，使用默认限流时间
+	if retryDelay <= 0 {
+		retryDelay = antigravityDefaultRateLimitDuration
 	}
 
 	return &antigravitySmartRetryInfo{
@@ -1965,7 +2016,7 @@ func parseAntigravitySmartRetryInfo(body []byte) *antigravitySmartRetryInfo {
 // shouldTriggerAntigravitySmartRetry 判断是否应该触发智能重试
 // 返回：
 //   - shouldRetry: 是否应该智能重试（retryDelay < antigravityRateLimitThreshold）
-//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= antigravityRateLimitThreshold，直接限流不重试）
+//   - shouldRateLimitModel: 是否应该限流模型（retryDelay >= antigravityRateLimitThreshold）
 //   - waitDuration: 等待时间（智能重试时使用，shouldRateLimitModel=true 时为 0）
 //   - modelName: 限流的模型名称
 func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shouldRetry bool, shouldRateLimitModel bool, waitDuration time.Duration, modelName string) {
@@ -1979,6 +2030,7 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 	}
 
 	// retryDelay >= 阈值：直接限流模型，不重试
+	// 注意：如果上游未提供 retryDelay，parseAntigravitySmartRetryInfo 已设置为默认 5 分钟
 	if info.RetryDelay >= antigravityRateLimitThreshold {
 		return false, true, 0, info.ModelName
 	}
@@ -2015,8 +2067,8 @@ type handleModelRateLimitResult struct {
 
 // handleModelRateLimit 处理模型级限流（在原有逻辑之前调用）
 // 仅处理 429/503，解析模型名和 retryDelay
-// - retryDelay < 10s: 返回 ShouldRetry=true，由调用方等待后重试
-// - retryDelay >= 10s: 设置模型限流 + 清除粘性会话 + 返回 SwitchError
+// - retryDelay < antigravityRateLimitThreshold: 返回 ShouldRetry=true，由调用方等待后重试
+// - retryDelay >= antigravityRateLimitThreshold: 设置模型限流 + 清除粘性会话 + 返回 SwitchError
 func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimitParams) *handleModelRateLimitResult {
 	if p.statusCode != 429 && p.statusCode != 503 {
 		return &handleModelRateLimitResult{Handled: false}
@@ -2027,7 +2079,7 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 		return &handleModelRateLimitResult{Handled: false}
 	}
 
-	// < 10s: 等待后重试
+	// < antigravityRateLimitThreshold: 等待后重试
 	if info.RetryDelay < antigravityRateLimitThreshold {
 		log.Printf("%s status=%d model_rate_limit_wait model=%s wait=%v",
 			p.prefix, p.statusCode, info.ModelName, info.RetryDelay)
@@ -2038,7 +2090,7 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 		}
 	}
 
-	// >= 10s: 设置限流 + 清除粘性会话 + 切换账号
+	// >= antigravityRateLimitThreshold: 设置限流 + 清除粘性会话 + 切换账号
 	s.setModelRateLimitAndClearSession(p, info)
 
 	return &handleModelRateLimitResult{
@@ -3223,4 +3275,207 @@ func filterEmptyPartsFromGeminiRequest(body []byte) ([]byte, error) {
 
 	payload["contents"] = filtered
 	return json.Marshal(payload)
+}
+
+// ============ Antigravity 模型负载调度算法 ============
+
+// accountWithModelLoad 账号与模型负载信息的组合（Antigravity 专用调度）
+type accountWithModelLoad struct {
+	account       *Account
+	loadInfo      *AccountLoadInfo // 并发负载（现有）
+	modelLoadInfo *ModelLoadInfo   // 模型负载（新增）
+	loadScore     int64            // 计算后的负载分
+}
+
+// selectByModelLoad 基于模型负载选择账号（Antigravity 专用）
+// 选择优先级：负载分 → 优先级 → 模型LRU → 随机
+func selectByModelLoad(accounts []accountWithModelLoad, preferOAuth bool) *accountWithModelLoad {
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	// 1. 计算负载分
+	calculateLoadScores(accounts)
+
+	// 2. 筛选最小负载分的账号
+	minScoreAccounts := filterByMinLoadScore(accounts)
+	if len(minScoreAccounts) == 1 {
+		return &minScoreAccounts[0]
+	}
+
+	// 3. 负载分相同，按优先级筛选
+	minPriorityAccounts := filterByMinPriorityFromModelLoad(minScoreAccounts)
+	if len(minPriorityAccounts) == 1 {
+		return &minPriorityAccounts[0]
+	}
+
+	// 4. 优先级相同，按模型 LRU 选择
+	return selectByModelLRU(minPriorityAccounts, preferOAuth)
+}
+
+// antigravityPriorityDecayRate 优先级衰减率（每分钟未使用降低的比例）
+// 例如 0.8 表示每分钟未使用后有效优先级变为原来的 80%
+const antigravityPriorityDecayRate = 0.8
+
+// calculateLoadScores 计算所有账号的负载分
+// 公式：负载分 = 有效优先级 × (1 + 模型调用次数)
+// 有效优先级 = max(1, 优先级 × 0.8^未使用分钟数)
+// 这确保了低优先级账号在长时间未使用后也能被调度到
+func calculateLoadScores(accounts []accountWithModelLoad) {
+	for i := range accounts {
+		callCount := int64(0)
+		var lastUsedAt time.Time
+		if accounts[i].modelLoadInfo != nil {
+			callCount = accounts[i].modelLoadInfo.CallCount
+			lastUsedAt = accounts[i].modelLoadInfo.LastUsedAt
+		}
+
+		// 计算有效优先级（考虑未使用时间的衰减）
+		effectivePriority := calculateEffectivePriority(accounts[i].account.Priority, lastUsedAt)
+		accounts[i].loadScore = int64(effectivePriority) * (1 + callCount)
+	}
+}
+
+// calculateEffectivePriority 计算有效优先级（返回整数）
+// 公式：有效优先级 = max(1, ceil(优先级 × 0.8^未使用分钟数))
+// 这样长时间未使用的账号会获得更低的有效优先级，从而更容易被调度
+func calculateEffectivePriority(priority int, lastUsedAt time.Time) int {
+	if lastUsedAt.IsZero() {
+		// 从未使用过的账号，有效优先级为 1（最高优先）
+		return 1
+	}
+
+	unusedMinutes := time.Since(lastUsedAt).Minutes()
+	if unusedMinutes <= 0 {
+		return priority
+	}
+
+	// 有效优先级 = 优先级 × 0.8^未使用分钟数
+	effectivePriority := float64(priority) * math.Pow(antigravityPriorityDecayRate, unusedMinutes)
+
+	// 向上取整，确保是整数，最低为 1
+	result := int(math.Ceil(effectivePriority))
+	if result < 1 {
+		return 1
+	}
+	return result
+}
+
+// filterByMinLoadScore 筛选最小负载分的账号
+func filterByMinLoadScore(accounts []accountWithModelLoad) []accountWithModelLoad {
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	minScore := accounts[0].loadScore
+	for _, acc := range accounts[1:] {
+		if acc.loadScore < minScore {
+			minScore = acc.loadScore
+		}
+	}
+
+	result := make([]accountWithModelLoad, 0, len(accounts))
+	for _, acc := range accounts {
+		if acc.loadScore == minScore {
+			result = append(result, acc)
+		}
+	}
+	return result
+}
+
+// filterByMinPriorityFromModelLoad 从模型负载账号中筛选最小优先级
+func filterByMinPriorityFromModelLoad(accounts []accountWithModelLoad) []accountWithModelLoad {
+	if len(accounts) == 0 {
+		return nil
+	}
+
+	minPriority := accounts[0].account.Priority
+	for _, acc := range accounts[1:] {
+		if acc.account.Priority < minPriority {
+			minPriority = acc.account.Priority
+		}
+	}
+
+	result := make([]accountWithModelLoad, 0, len(accounts))
+	for _, acc := range accounts {
+		if acc.account.Priority == minPriority {
+			result = append(result, acc)
+		}
+	}
+	return result
+}
+
+// selectByModelLRU 按模型最后调度时间选择
+func selectByModelLRU(accounts []accountWithModelLoad, preferOAuth bool) *accountWithModelLoad {
+	candidates := collectModelLRUCandidates(accounts)
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+
+	// preferOAuth 处理
+	if preferOAuth {
+		oauthCandidates := filterOAuthCandidatesFromModelLoad(candidates)
+		if len(oauthCandidates) > 0 {
+			candidates = oauthCandidates
+		}
+	}
+
+	// 随机选择
+	return candidates[mathrand.Intn(len(candidates))]
+}
+
+// collectModelLRUCandidates 收集 LRU 候选账号（最早调度时间的账号）
+func collectModelLRUCandidates(accounts []accountWithModelLoad) []*accountWithModelLoad {
+	var zeroTimeAccounts []*accountWithModelLoad
+	var earliest *accountWithModelLoad
+	var earliestTime time.Time
+
+	for i := range accounts {
+		acc := &accounts[i]
+		lastUsed := getModelLastUsedAt(acc)
+
+		if lastUsed.IsZero() {
+			zeroTimeAccounts = append(zeroTimeAccounts, acc)
+			continue
+		}
+		if earliest == nil || lastUsed.Before(earliestTime) {
+			earliest = acc
+			earliestTime = lastUsed
+		}
+	}
+
+	// 零值（从未调度过）最优先
+	if len(zeroTimeAccounts) > 0 {
+		return zeroTimeAccounts
+	}
+
+	// 收集相同最早时间的账号
+	var candidates []*accountWithModelLoad
+	for i := range accounts {
+		acc := &accounts[i]
+		lastUsed := getModelLastUsedAt(acc)
+		if lastUsed.Equal(earliestTime) {
+			candidates = append(candidates, acc)
+		}
+	}
+	return candidates
+}
+
+// getModelLastUsedAt 获取账号的模型最后调度时间
+func getModelLastUsedAt(acc *accountWithModelLoad) time.Time {
+	if acc.modelLoadInfo == nil {
+		return time.Time{}
+	}
+	return acc.modelLoadInfo.LastUsedAt
+}
+
+// filterOAuthCandidatesFromModelLoad 筛选 OAuth 类型的账号
+func filterOAuthCandidatesFromModelLoad(candidates []*accountWithModelLoad) []*accountWithModelLoad {
+	var result []*accountWithModelLoad
+	for _, acc := range candidates {
+		if acc.account.Type == AccountTypeOAuth {
+			result = append(result, acc)
+		}
+	}
+	return result
 }

@@ -216,6 +216,14 @@ func (m *mockGatewayCacheForPlatform) DeleteSessionAccountID(ctx context.Context
 	return nil
 }
 
+func (m *mockGatewayCacheForPlatform) IncrModelCallCount(ctx context.Context, accountID int64, model string) (int64, error) {
+	return 0, nil
+}
+
+func (m *mockGatewayCacheForPlatform) GetModelLoadBatch(ctx context.Context, accountIDs []int64, model string) (map[int64]*ModelLoadInfo, error) {
+	return nil, nil
+}
+
 type mockGroupRepoForGateway struct {
 	groups           map[int64]*Group
 	getByIDCalls     int

@@ -538,7 +538,7 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 		modelName               string
 	}{
 		{
-			name:    "OAuth account with short delay (< 10s) - smart retry",
+			name:    "OAuth account with short delay (< 7s) - smart retry",
 			account: oauthAccount,
 			body: `{
 				"error": {
@@ -572,7 +572,7 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			modelName:               "gemini-3-flash",
 		},
 		{
-			name:    "OAuth account with long delay (>= 10s) - direct rate limit",
+			name:    "OAuth account with long delay (>= 7s) - direct rate limit",
 			account: oauthAccount,
 			body: `{
 				"error": {
@@ -603,14 +603,14 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			expectedShouldRateLimit: false,
 		},
 		{
-			name:    "OAuth account with exactly 10s delay - direct rate limit",
+			name:    "OAuth account with exactly 7s delay - direct rate limit",
 			account: oauthAccount,
 			body: `{
 				"error": {
 					"status": "RESOURCE_EXHAUSTED",
 					"details": [
 						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-pro"}, "reason": "RATE_LIMIT_EXCEEDED"},
-						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "10s"}
+						{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "7s"}
 					]
 				}
 			}`,
@@ -634,6 +634,40 @@ func TestShouldTriggerAntigravitySmartRetry(t *testing.T) {
 			expectedShouldRetry:     false,
 			expectedShouldRateLimit: true,
 			modelName:               "gemini-3-pro-high",
+		},
+		{
+			name:    "503 UNAVAILABLE with MODEL_CAPACITY_EXHAUSTED - no retryDelay - use default rate limit",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"code": 503,
+					"status": "UNAVAILABLE",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "gemini-2.5-flash"}, "reason": "MODEL_CAPACITY_EXHAUSTED"}
+					],
+					"message": "No capacity available for model gemini-2.5-flash on the server"
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: true,
+			modelName:               "gemini-2.5-flash",
+		},
+		{
+			name:    "429 RESOURCE_EXHAUSTED with RATE_LIMIT_EXCEEDED - no retryDelay - use default rate limit",
+			account: oauthAccount,
+			body: `{
+				"error": {
+					"code": 429,
+					"status": "RESOURCE_EXHAUSTED",
+					"details": [
+						{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-sonnet-4-5"}, "reason": "RATE_LIMIT_EXCEEDED"}
+					],
+					"message": "You have exhausted your capacity on this model."
+				}
+			}`,
+			expectedShouldRetry:     false,
+			expectedShouldRateLimit: true,
+			modelName:               "claude-sonnet-4-5",
 		},
 	}
 

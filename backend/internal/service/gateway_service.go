@@ -308,6 +308,13 @@ var allowedHeaders = map[string]bool{
 // GatewayCache 定义网关服务的缓存操作接口。
 // 提供粘性会话（Sticky Session）的存储、查询、刷新和删除功能。
 //
+// ModelLoadInfo 模型负载信息（用于 Antigravity 调度）
+// Model load info for Antigravity scheduling
+type ModelLoadInfo struct {
+	CallCount  int64     // 当前分钟调用次数 / Call count in current minute
+	LastUsedAt time.Time // 最后调度时间（零值表示未调度过）/ Last scheduling time (zero means never scheduled)
+}
+
 // GatewayCache defines cache operations for gateway service.
 // Provides sticky session storage, retrieval, refresh and deletion capabilities.
 type GatewayCache interface {
@@ -323,6 +330,15 @@ type GatewayCache interface {
 	// DeleteSessionAccountID 删除粘性会话绑定，用于账号不可用时主动清理
 	// Delete sticky session binding, used to proactively clean up when account becomes unavailable
 	DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error
+
+	// IncrModelCallCount 增加模型调用次数并更新最后调度时间（Antigravity 专用）
+	// Increment model call count and update last scheduling time (Antigravity only)
+	// 返回更新后的调用次数
+	IncrModelCallCount(ctx context.Context, accountID int64, model string) (int64, error)
+
+	// GetModelLoadBatch 批量获取账号的模型负载信息（Antigravity 专用）
+	// Batch get model load info for accounts (Antigravity only)
+	GetModelLoadBatch(ctx context.Context, accountIDs []int64, model string) (map[int64]*ModelLoadInfo, error)
 }
 
 // derefGroupID safely dereferences *int64 to int64, returning 0 if nil
@@ -1606,6 +1622,17 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			return result, nil
 		}
 	} else {
+		// Antigravity 平台：获取模型负载信息
+		var modelLoadMap map[int64]*ModelLoadInfo
+		isAntigravity := platform == PlatformAntigravity
+		if isAntigravity && requestedModel != "" && s.cache != nil {
+			candidateIDs := make([]int64, 0, len(candidates))
+			for _, acc := range candidates {
+				candidateIDs = append(candidateIDs, acc.ID)
+			}
+			modelLoadMap, _ = s.cache.GetModelLoadBatch(ctx, candidateIDs, requestedModel)
+		}
+
 		var available []accountWithLoad
 		for _, acc := range candidates {
 			loadInfo := loadMap[acc.ID]
@@ -1620,44 +1647,96 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// 分层过滤选择：优先级 → 负载率 → LRU
-		for len(available) > 0 {
-			// 1. 取优先级最小的集合
-			candidates := filterByMinPriority(available)
-			// 2. 取负载率最低的集合
-			candidates = filterByMinLoadRate(candidates)
-			// 3. LRU 选择最久未用的账号
-			selected := selectByLRU(candidates, preferOAuth)
-			if selected == nil {
-				break
-			}
-
-			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
-			if err == nil && result.Acquired {
-				// 会话数量限制检查
-				if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
-					result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
-				} else {
-					if sessionHash != "" && s.cache != nil {
-						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
+		// Antigravity 平台：使用模型负载调度算法
+		if isAntigravity && requestedModel != "" {
+			for len(available) > 0 {
+				// 转换为 accountWithModelLoad
+				availableWithModelLoad := make([]accountWithModelLoad, 0, len(available))
+				for _, acc := range available {
+					var mli *ModelLoadInfo
+					if modelLoadMap != nil {
+						mli = modelLoadMap[acc.account.ID]
 					}
-					return &AccountSelectionResult{
-						Account:     selected.account,
-						Acquired:    true,
-						ReleaseFunc: result.ReleaseFunc,
-					}, nil
+					availableWithModelLoad = append(availableWithModelLoad, accountWithModelLoad{
+						account:       acc.account,
+						loadInfo:      acc.loadInfo,
+						modelLoadInfo: mli,
+					})
 				}
-			}
 
-			// 移除已尝试的账号，重新进行分层过滤
-			selectedID := selected.account.ID
-			newAvailable := make([]accountWithLoad, 0, len(available)-1)
-			for _, acc := range available {
-				if acc.account.ID != selectedID {
-					newAvailable = append(newAvailable, acc)
+				// 基于模型负载选择账号
+				selected := selectByModelLoad(availableWithModelLoad, preferOAuth)
+				if selected == nil {
+					break
 				}
+
+				result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
+				if err == nil && result.Acquired {
+					// 会话数量限制检查
+					if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
+						result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
+					} else {
+						if sessionHash != "" && s.cache != nil {
+							_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
+						}
+						return &AccountSelectionResult{
+							Account:     selected.account,
+							Acquired:    true,
+							ReleaseFunc: result.ReleaseFunc,
+						}, nil
+					}
+				}
+
+				// 移除已尝试的账号，重新选择
+				selectedID := selected.account.ID
+				newAvailable := make([]accountWithLoad, 0, len(available)-1)
+				for _, acc := range available {
+					if acc.account.ID != selectedID {
+						newAvailable = append(newAvailable, acc)
+					}
+				}
+				available = newAvailable
 			}
-			available = newAvailable
+		} else {
+			// 非 Antigravity 平台：分层过滤选择：优先级 → 负载率 → LRU
+			for len(available) > 0 {
+				// 1. 取优先级最小的集合
+				candidates := filterByMinPriority(available)
+				// 2. 取负载率最低的集合
+				candidates = filterByMinLoadRate(candidates)
+				// 3. LRU 选择最久未用的账号
+				selected := selectByLRU(candidates, preferOAuth)
+				if selected == nil {
+					break
+				}
+
+				result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
+				if err == nil && result.Acquired {
+					// 会话数量限制检查
+					if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
+						result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
+					} else {
+						if sessionHash != "" && s.cache != nil {
+							_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
+						}
+						return &AccountSelectionResult{
+							Account:     selected.account,
+							Acquired:    true,
+							ReleaseFunc: result.ReleaseFunc,
+						}, nil
+					}
+				}
+
+				// 移除已尝试的账号，重新进行分层过滤
+				selectedID := selected.account.ID
+				newAvailable := make([]accountWithLoad, 0, len(available)-1)
+				for _, acc := range available {
+					if acc.account.ID != selectedID {
+						newAvailable = append(newAvailable, acc)
+					}
+				}
+				available = newAvailable
+			}
 		}
 	}
 
