@@ -35,7 +35,7 @@ const (
 	// - 预检查：剩余限流时间 < 此阈值时等待，>= 此阈值时切换账号
 	antigravityRateLimitThreshold      = 10 * time.Second
 	antigravitySmartRetryMinWait       = 1 * time.Second  // 智能重试最小等待时间
-	antigravityDefaultRateLimitSeconds = 30 * time.Second // 默认限流时间（解析失败时使用）
+	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（解析失败时使用）
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
@@ -212,7 +212,7 @@ urlFallbackLoop:
 						p.prefix, resp.StatusCode, modelName, p.account.ID)
 
 					// 直接限流模型（按 scope 存储）
-					resetAt := time.Now().Add(antigravityDefaultRateLimitSeconds)
+					resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
 					if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
 						// 无法映射 scope，fallback 到整个账户限流
 						p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
@@ -268,7 +268,7 @@ urlFallbackLoop:
 					}
 
 					// 限流当前模型（直接使用官方模型 ID）
-					resetAt := time.Now().Add(antigravityDefaultRateLimitSeconds)
+					resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
 					if p.accountRepo != nil && modelName != "" {
 						if err := p.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, modelName, resetAt); err != nil {
 							log.Printf("%s status=%d model_rate_limit_failed model=%s error=%v", p.prefix, resp.StatusCode, modelName, err)
