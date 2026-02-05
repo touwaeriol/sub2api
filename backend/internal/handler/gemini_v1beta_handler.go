@@ -293,14 +293,19 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 					log.Printf("[Gemini] Digest fallback matched: uuid=%s, accountID=%d, chain=%s",
 						foundUUID[:8], foundAccountID, truncateDigestChain(geminiDigestChain))
 
-					// 关键：将摘要链匹配的账号同步到 sessionKey 缓存，
-					// 这样 SelectAccountWithLoadAwareness 的粘性会话逻辑会优先使用这个账号
-					if sessionKey != "" {
-						_ = h.gatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionKey, foundAccountID)
+					// 关键：如果原 sessionKey 为空，使用摘要链的 hash 作为 sessionKey
+					// 这样 SelectAccountWithLoadAwareness 的粘性会话逻辑会优先使用匹配到的账号
+					if sessionKey == "" {
+						sessionKey = "gemini:digest:" + geminiPrefixHash[:8]
 					}
+					_ = h.gatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionKey, foundAccountID)
 				} else {
 					// 生成新的会话 UUID
 					geminiSessionUUID = uuid.New().String()
+					// 为新会话也生成 sessionKey（用于后续请求的粘性会话）
+					if sessionKey == "" {
+						sessionKey = "gemini:digest:" + geminiPrefixHash[:8]
+					}
 				}
 			}
 		}
