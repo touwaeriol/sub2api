@@ -1013,13 +1013,6 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		return nil, fmt.Errorf("transform request: %w", err)
 	}
 
-	// 仅 OAuth 账号替换 sessionId，确保不同账号使用不同的 session
-	if account.IsOAuth() {
-		if replaced, replaceErr := antigravity.ReplaceSessionIDForOAuth(geminiBody, account.ID); replaceErr == nil {
-			geminiBody = replaced
-		}
-	}
-
 	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
 	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后转换返回
 	action := "streamGenerateContent"
@@ -1653,13 +1646,6 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	wrappedBody, err := s.wrapV1InternalRequest(projectID, mappedModel, injectedBody)
 	if err != nil {
 		return nil, err
-	}
-
-	// 仅 OAuth 账号替换 sessionId，确保不同账号使用不同的 session
-	if account.IsOAuth() {
-		if replaced, replaceErr := antigravity.ReplaceSessionIDForOAuth(wrappedBody, account.ID); replaceErr == nil {
-			wrappedBody = replaced
-		}
 	}
 
 	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
