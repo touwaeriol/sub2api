@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"math"
 	mathrand "math/rand"
 	"net"
 	"net/http"
@@ -3322,136 +3321,52 @@ func filterEmptyPartsFromGeminiRequest(body []byte) ([]byte, error) {
 type accountWithModelLoad struct {
 	account       *Account
 	modelLoadInfo *ModelLoadInfo // 模型负载
-	loadScore     int64          // 计算后的负载分
+	loadRatio     float64        // 计算后的负载比（调用次数 / 权重）
 }
 
-// selectByModelLoad 基于模型负载选择账号（Antigravity 专用）
-// 选择优先级：负载分 → 优先级 → 模型LRU → 随机
-func selectByModelLoad(accounts []accountWithModelLoad, preferOAuth bool) *accountWithModelLoad {
+// selectByLoadRatio 基于负载比选择账号（Antigravity 专用）
+// 核心公式：负载比 = 调用次数 / 权重
+// 解决冷启动问题：新账号使用平均负载比
+func selectByLoadRatio(accounts []accountWithModelLoad, preferOAuth bool) *accountWithModelLoad {
 	if len(accounts) == 0 {
 		return nil
 	}
 
-	// 1. 计算负载分
-	calculateLoadScores(accounts)
+	// 1. 计算平均负载比（排除 callCount=0 的账号）
+	avgLoadRatio := calculateAvgLoadRatio(accounts)
 
-	// 2. 筛选最小负载分的账号
-	minScoreAccounts := filterByMinLoadScore(accounts)
-	if len(minScoreAccounts) == 1 {
-		return &minScoreAccounts[0]
-	}
-
-	// 3. 负载分相同，按优先级筛选
-	minPriorityAccounts := filterByMinPriorityFromModelLoad(minScoreAccounts)
-	if len(minPriorityAccounts) == 1 {
-		return &minPriorityAccounts[0]
-	}
-
-	// 4. 优先级相同，按模型 LRU 选择
-	return selectByModelLRU(minPriorityAccounts, preferOAuth)
-}
-
-// antigravityPriorityDecayRate 优先级衰减率（每分钟未使用降低的比例）
-// 例如 0.8 表示每分钟未使用后有效优先级变为原来的 80%
-const antigravityPriorityDecayRate = 0.8
-
-// calculateLoadScores 计算所有账号的负载分
-// 公式：负载分 = 有效优先级 × (1 + 模型调用次数)
-// 有效优先级 = max(1, 优先级 × 0.8^未使用分钟数)
-// 这确保了低优先级账号在长时间未使用后也能被调度到
-func calculateLoadScores(accounts []accountWithModelLoad) {
+	// 2. 计算每个账号的负载比
 	for i := range accounts {
 		callCount := int64(0)
-		var lastUsedAt time.Time
 		if accounts[i].modelLoadInfo != nil {
 			callCount = accounts[i].modelLoadInfo.CallCount
-			lastUsedAt = accounts[i].modelLoadInfo.LastUsedAt
 		}
+		weight := calculatePriorityWeight(accounts[i].account.Priority)
 
-		// 计算有效优先级（考虑未使用时间的衰减）
-		effectivePriority := calculateEffectivePriority(accounts[i].account.Priority, lastUsedAt)
-		accounts[i].loadScore = int64(effectivePriority) * (1 + callCount)
-	}
-}
-
-// calculateEffectivePriority 计算有效优先级（返回整数）
-// 公式：有效优先级 = max(1, ceil(优先级 × 0.8^未使用分钟数))
-// 这样长时间未使用的账号会获得更低的有效优先级，从而更容易被调度
-// 特殊情况：priority = 0 时返回 0（最高优先）
-func calculateEffectivePriority(priority int, lastUsedAt time.Time) int {
-	// priority = 0 表示最高优先级，始终返回 0
-	if priority == 0 {
-		return 0
+		if callCount == 0 {
+			accounts[i].loadRatio = avgLoadRatio // 冷启动：使用平均值
+		} else {
+			accounts[i].loadRatio = float64(callCount) / weight
+		}
 	}
 
-	if lastUsedAt.IsZero() {
-		// 从未使用过的账号，有效优先级为 1（最高优先）
-		return 1
-	}
-
-	unusedMinutes := time.Since(lastUsedAt).Minutes()
-	if unusedMinutes <= 0 {
-		return priority
-	}
-
-	// 有效优先级 = 优先级 × 0.8^未使用分钟数
-	effectivePriority := float64(priority) * math.Pow(antigravityPriorityDecayRate, unusedMinutes)
-
-	// 向上取整，确保是整数，最低为 1
-	result := int(math.Ceil(effectivePriority))
-	if result < 1 {
-		return 1
-	}
-	return result
-}
-
-// filterByMinLoadScore 筛选最小负载分的账号
-func filterByMinLoadScore(accounts []accountWithModelLoad) []accountWithModelLoad {
-	if len(accounts) == 0 {
-		return nil
-	}
-
-	minScore := accounts[0].loadScore
+	// 3. 筛选最小负载比
+	minRatio := accounts[0].loadRatio
 	for _, acc := range accounts[1:] {
-		if acc.loadScore < minScore {
-			minScore = acc.loadScore
+		if acc.loadRatio < minRatio {
+			minRatio = acc.loadRatio
 		}
 	}
 
-	result := make([]accountWithModelLoad, 0, len(accounts))
-	for _, acc := range accounts {
-		if acc.loadScore == minScore {
-			result = append(result, acc)
-		}
-	}
-	return result
-}
-
-// filterByMinPriorityFromModelLoad 从模型负载账号中筛选最小优先级
-func filterByMinPriorityFromModelLoad(accounts []accountWithModelLoad) []accountWithModelLoad {
-	if len(accounts) == 0 {
-		return nil
-	}
-
-	minPriority := accounts[0].account.Priority
-	for _, acc := range accounts[1:] {
-		if acc.account.Priority < minPriority {
-			minPriority = acc.account.Priority
+	// 4. 收集相同最小负载比的账号
+	var candidates []*accountWithModelLoad
+	for i := range accounts {
+		if accounts[i].loadRatio == minRatio {
+			candidates = append(candidates, &accounts[i])
 		}
 	}
 
-	result := make([]accountWithModelLoad, 0, len(accounts))
-	for _, acc := range accounts {
-		if acc.account.Priority == minPriority {
-			result = append(result, acc)
-		}
-	}
-	return result
-}
-
-// selectByModelLRU 按模型最后调度时间选择
-func selectByModelLRU(accounts []accountWithModelLoad, preferOAuth bool) *accountWithModelLoad {
-	candidates := collectModelLRUCandidates(accounts)
+	// 5. 相同负载比时随机选择
 	if len(candidates) == 1 {
 		return candidates[0]
 	}
@@ -3464,53 +3379,41 @@ func selectByModelLRU(accounts []accountWithModelLoad, preferOAuth bool) *accoun
 		}
 	}
 
-	// 随机选择
 	return candidates[mathrand.Intn(len(candidates))]
 }
 
-// collectModelLRUCandidates 收集 LRU 候选账号（最早调度时间的账号）
-func collectModelLRUCandidates(accounts []accountWithModelLoad) []*accountWithModelLoad {
-	var zeroTimeAccounts []*accountWithModelLoad
-	var earliest *accountWithModelLoad
-	var earliestTime time.Time
-
-	for i := range accounts {
-		acc := &accounts[i]
-		lastUsed := getModelLastUsedAt(acc)
-
-		if lastUsed.IsZero() {
-			zeroTimeAccounts = append(zeroTimeAccounts, acc)
-			continue
-		}
-		if earliest == nil || lastUsed.Before(earliestTime) {
-			earliest = acc
-			earliestTime = lastUsed
-		}
+// calculatePriorityWeight 根据优先级计算权重
+// priority=0/1 → weight=10（最高权重）
+// priority=5 → weight=2
+// priority=10 → weight=1
+func calculatePriorityWeight(priority int) float64 {
+	if priority <= 1 {
+		return 10.0 // 最高权重
 	}
-
-	// 零值（从未调度过）最优先
-	if len(zeroTimeAccounts) > 0 {
-		return zeroTimeAccounts
-	}
-
-	// 收集相同最早时间的账号
-	var candidates []*accountWithModelLoad
-	for i := range accounts {
-		acc := &accounts[i]
-		lastUsed := getModelLastUsedAt(acc)
-		if lastUsed.Equal(earliestTime) {
-			candidates = append(candidates, acc)
-		}
-	}
-	return candidates
+	return 10.0 / float64(priority)
 }
 
-// getModelLastUsedAt 获取账号的模型最后调度时间
-func getModelLastUsedAt(acc *accountWithModelLoad) time.Time {
-	if acc.modelLoadInfo == nil {
-		return time.Time{}
+// calculateAvgLoadRatio 计算所有非新账号的平均负载比
+func calculateAvgLoadRatio(accounts []accountWithModelLoad) float64 {
+	var total float64
+	var count int
+
+	for _, acc := range accounts {
+		callCount := int64(0)
+		if acc.modelLoadInfo != nil {
+			callCount = acc.modelLoadInfo.CallCount
+		}
+		if callCount > 0 {
+			weight := calculatePriorityWeight(acc.account.Priority)
+			total += float64(callCount) / weight
+			count++
+		}
 	}
-	return acc.modelLoadInfo.LastUsedAt
+
+	if count == 0 {
+		return 0 // 全是新账号，都从 0 开始
+	}
+	return total / float64(count)
 }
 
 // filterOAuthCandidatesFromModelLoad 筛选 OAuth 类型的账号
