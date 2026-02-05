@@ -422,13 +422,13 @@ watch(
         <div v-for="row in (displayRows as UserRow[])" :key="row.key" class="rounded-lg bg-gray-50 p-2.5 dark:bg-dark-900">
           <!-- 用户信息和并发 -->
           <div class="mb-1.5 flex items-center justify-between gap-2">
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-[11px] font-bold text-gray-900 dark:text-white" :title="row.username || row.user_email">
+            <div class="flex min-w-0 flex-1 items-center gap-1.5">
+              <span class="truncate text-[11px] font-bold text-gray-900 dark:text-white" :title="row.username || row.user_email">
                 {{ row.username || row.user_email }}
-              </div>
-              <div v-if="row.username" class="mt-0.5 truncate text-[9px] text-gray-400 dark:text-gray-500" :title="row.user_email">
+              </span>
+              <span v-if="row.username" class="shrink-0 truncate text-[10px] text-gray-400 dark:text-gray-500" :title="row.user_email">
                 {{ row.user_email }}
-              </div>
+              </span>
             </div>
             <div class="flex shrink-0 items-center gap-2 text-[10px]">
               <span class="font-mono font-bold text-gray-900 dark:text-white"> {{ row.current_in_use }}/{{ row.max_capacity }} </span>
