@@ -362,11 +362,59 @@ func TestDigestChainTamperedMiddleContent(t *testing.T) {
 	// 验证第一个 user 的 hash 相同
 	parts1 := splitChain(chain1)
 	parts2 := splitChain(chain2)
-	
+
 	if parts1[0] != parts2[0] {
 		t.Error("First user message hash should be the same")
 	}
 	if parts1[1] == parts2[1] {
 		t.Error("Model reply hash should be different")
 	}
+}
+
+func TestGenerateGeminiDigestSessionKey(t *testing.T) {
+	tests := []struct {
+		name       string
+		prefixHash string
+		want       string
+	}{
+		{
+			name:       "normal 16 char hash",
+			prefixHash: "abcdefgh12345678",
+			want:       "gemini:digest:abcdefgh",
+		},
+		{
+			name:       "exactly 8 chars",
+			prefixHash: "12345678",
+			want:       "gemini:digest:12345678",
+		},
+		{
+			name:       "short hash (less than 8)",
+			prefixHash: "abc",
+			want:       "gemini:digest:abc",
+		},
+		{
+			name:       "empty hash",
+			prefixHash: "",
+			want:       "gemini:digest:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateGeminiDigestSessionKey(tt.prefixHash)
+			if got != tt.want {
+				t.Errorf("GenerateGeminiDigestSessionKey(%q) = %q, want %q", tt.prefixHash, got, tt.want)
+			}
+		})
+	}
+
+	// 验证确定性：相同输入产生相同输出
+	t.Run("deterministic", func(t *testing.T) {
+		hash := "testprefix123456"
+		result1 := GenerateGeminiDigestSessionKey(hash)
+		result2 := GenerateGeminiDigestSessionKey(hash)
+		if result1 != result2 {
+			t.Errorf("GenerateGeminiDigestSessionKey not deterministic: %s vs %s", result1, result2)
+		}
+	})
 }

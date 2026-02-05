@@ -135,3 +135,16 @@ func ParseGeminiSessionValue(value string) (uuid string, accountID int64, ok boo
 func FormatGeminiSessionValue(uuid string, accountID int64) string {
 	return uuid + ":" + strconv.FormatInt(accountID, 10)
 }
+
+// geminiDigestSessionKeyPrefix Gemini 摘要 fallback 会话 key 前缀
+const geminiDigestSessionKeyPrefix = "gemini:digest:"
+
+// GenerateGeminiDigestSessionKey 生成 Gemini 摘要 fallback 的 sessionKey
+// 当原有会话标识无效时，使用 prefixHash 前 8 位生成 sessionKey
+// 用于在 SelectAccountWithLoadAwareness 中保持粘性会话
+func GenerateGeminiDigestSessionKey(prefixHash string) string {
+	if len(prefixHash) < 8 {
+		return geminiDigestSessionKeyPrefix + prefixHash
+	}
+	return geminiDigestSessionKeyPrefix + prefixHash[:8]
+}

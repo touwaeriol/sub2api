@@ -296,7 +296,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 					// 关键：如果原 sessionKey 为空，使用摘要链的 hash 作为 sessionKey
 					// 这样 SelectAccountWithLoadAwareness 的粘性会话逻辑会优先使用匹配到的账号
 					if sessionKey == "" {
-						sessionKey = "gemini:digest:" + geminiPrefixHash[:8]
+						sessionKey = service.GenerateGeminiDigestSessionKey(geminiPrefixHash)
 					}
 					_ = h.gatewayService.BindStickySession(c.Request.Context(), apiKey.GroupID, sessionKey, foundAccountID)
 				} else {
@@ -304,7 +304,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 					geminiSessionUUID = uuid.New().String()
 					// 为新会话也生成 sessionKey（用于后续请求的粘性会话）
 					if sessionKey == "" {
-						sessionKey = "gemini:digest:" + geminiPrefixHash[:8]
+						sessionKey = service.GenerateGeminiDigestSessionKey(geminiPrefixHash)
 					}
 				}
 			}
