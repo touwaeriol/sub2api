@@ -41,6 +41,7 @@ type AccountConcurrencyInfo struct {
 type UserConcurrencyInfo struct {
 	UserID         int64   `json:"user_id"`
 	UserEmail      string  `json:"user_email"`
+	Username       string  `json:"username"`
 	CurrentInUse   int64   `json:"current_in_use"`
 	MaxCapacity    int64   `json:"max_capacity"`
 	LoadPercentage float64 `json:"load_percentage"`

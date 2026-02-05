@@ -340,6 +340,7 @@ export interface OpsConcurrencyStatsResponse {
 export interface UserConcurrencyInfo {
   user_id: number
   user_email: string
+  username: string
   current_in_use: number
   max_capacity: number
   load_percentage: number

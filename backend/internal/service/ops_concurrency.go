@@ -381,6 +381,7 @@ func (s *OpsService) GetUserConcurrencyStats(ctx context.Context) (map[int64]*Us
 		info := &UserConcurrencyInfo{
 			UserID:         u.ID,
 			UserEmail:      u.Email,
+			Username:       u.Username,
 			CurrentInUse:   currentInUse,
 			MaxCapacity:    int64(u.Concurrency),
 			WaitingInQueue: waiting,

@@ -93,6 +93,7 @@ interface UserRow {
   key: string
   user_id: number
   user_email: string
+  username: string
   current_in_use: number
   max_capacity: number
   waiting_in_queue: number
@@ -234,13 +235,14 @@ const userRows = computed((): UserRow[] => {
         key: uid,
         user_id: safeNumber(u.user_id),
         user_email: u.user_email || `User ${uid}`,
+        username: u.username || '',
         current_in_use: safeNumber(u.current_in_use),
         max_capacity: safeNumber(u.max_capacity),
         waiting_in_queue: safeNumber(u.waiting_in_queue),
         load_percentage: safeNumber(u.load_percentage)
       }
     })
-    .sort((a, b) => b.load_percentage - a.load_percentage)
+    .sort((a, b) => b.current_in_use - a.current_in_use || b.load_percentage - a.load_percentage)
 })
 
 // 根据维度选择数据
@@ -418,10 +420,13 @@ watch(
       <!-- 用户视图 -->
       <div v-else-if="displayDimension === 'user'" class="custom-scrollbar max-h-[360px] flex-1 space-y-2 overflow-y-auto p-3">
         <div v-for="row in (displayRows as UserRow[])" :key="row.key" class="rounded-lg bg-gray-50 p-2.5 dark:bg-dark-900">
-          <!-- 用户邮箱和并发 -->
+          <!-- 用户信息和并发 -->
           <div class="mb-1.5 flex items-center justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <div class="truncate text-[11px] font-bold text-gray-900 dark:text-white" :title="row.user_email">
+              <div class="truncate text-[11px] font-bold text-gray-900 dark:text-white" :title="row.username || row.user_email">
+                {{ row.username || row.user_email }}
+              </div>
+              <div v-if="row.username" class="mt-0.5 truncate text-[9px] text-gray-400 dark:text-gray-500" :title="row.user_email">
                 {{ row.user_email }}
               </div>
             </div>
