@@ -3,6 +3,7 @@ package service
 
 import (
 	"encoding/json"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -367,24 +368,39 @@ func (a *Account) GetModelMapping() map[string]string {
 	return nil
 }
 
+// IsModelSupported 检查模型是否在 model_mapping 中（支持通配符）
+// 如果未配置 mapping，返回 true（允许所有模型）
 func (a *Account) IsModelSupported(requestedModel string) bool {
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
+		return true // 无映射 = 允许所有
+	}
+	// 精确匹配
+	if _, exists := mapping[requestedModel]; exists {
 		return true
 	}
-	_, exists := mapping[requestedModel]
-	return exists
+	// 通配符匹配
+	for pattern := range mapping {
+		if matchWildcard(pattern, requestedModel) {
+			return true
+		}
+	}
+	return false
 }
 
+// GetMappedModel 获取映射后的模型名（支持通配符，最长优先匹配）
+// 如果未配置 mapping，返回原始模型名
 func (a *Account) GetMappedModel(requestedModel string) string {
 	mapping := a.GetModelMapping()
 	if len(mapping) == 0 {
 		return requestedModel
 	}
+	// 精确匹配优先
 	if mappedModel, exists := mapping[requestedModel]; exists {
 		return mappedModel
 	}
-	return requestedModel
+	// 通配符匹配（最长优先）
+	return matchWildcardMapping(mapping, requestedModel)
 }
 
 func (a *Account) GetBaseURL() string {
@@ -424,6 +440,159 @@ func (a *Account) GetClaudeUserID() string {
 		return v
 	}
 	return ""
+}
+
+// =====================
+// Antigravity 模型白名单和映射配置
+// =====================
+
+// GetAntigravityModelWhitelist 获取 Antigravity 模型白名单配置
+// 返回 nil 表示未配置白名单（允许所有模型）
+func (a *Account) GetAntigravityModelWhitelist() []string {
+	if a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["model_whitelist"]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	// 解析字符串数组
+	switch v := raw.(type) {
+	case []string:
+		if len(v) == 0 {
+			return nil
+		}
+		return v
+	case []any:
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				result = append(result, strings.TrimSpace(s))
+			}
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
+	}
+	return nil
+}
+
+// IsModelInAntigravityWhitelist 检查模型是否在 Antigravity 白名单中（支持通配符）
+// 如果白名单为空，返回 true（允许所有模型）
+func (a *Account) IsModelInAntigravityWhitelist(requestedModel string) bool {
+	whitelist := a.GetAntigravityModelWhitelist()
+	if len(whitelist) == 0 {
+		return true // 未配置白名单，允许所有
+	}
+	for _, pattern := range whitelist {
+		if matchAntigravityWildcard(pattern, requestedModel) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetAntigravityModelMapping 获取 Antigravity 自定义模型映射配置
+// 返回 nil 表示未配置自定义映射（使用系统默认映射）
+func (a *Account) GetAntigravityModelMapping() map[string]string {
+	if a.Credentials == nil {
+		return nil
+	}
+	raw, ok := a.Credentials["antigravity_model_mapping"]
+	if !ok || raw == nil {
+		return nil
+	}
+	if m, ok := raw.(map[string]any); ok {
+		result := make(map[string]string)
+		for k, v := range m {
+			if s, ok := v.(string); ok {
+				result[k] = s
+			}
+		}
+		if len(result) > 0 {
+			return result
+		}
+	}
+	return nil
+}
+
+// GetAntigravityMappedModel 获取 Antigravity 映射后的模型名（支持通配符）
+// 按 pattern 长度降序匹配（最长优先）
+// 返回空字符串表示未找到匹配的映射
+func (a *Account) GetAntigravityMappedModel(requestedModel string) string {
+	mapping := a.GetAntigravityModelMapping()
+	if len(mapping) == 0 {
+		return ""
+	}
+
+	// 收集所有匹配的 pattern，按长度降序排序（最长优先）
+	type patternMatch struct {
+		pattern string
+		target  string
+	}
+	var matches []patternMatch
+
+	for pattern, target := range mapping {
+		if matchAntigravityWildcard(pattern, requestedModel) {
+			matches = append(matches, patternMatch{pattern, target})
+		}
+	}
+
+	if len(matches) == 0 {
+		return ""
+	}
+
+	// 按 pattern 长度降序排序
+	sort.Slice(matches, func(i, j int) bool {
+		return len(matches[i].pattern) > len(matches[j].pattern)
+	})
+
+	return matches[0].target
+}
+
+// matchAntigravityWildcard 通配符匹配（仅支持末尾 *）
+func matchAntigravityWildcard(pattern, str string) bool {
+	if strings.HasSuffix(pattern, "*") {
+		prefix := pattern[:len(pattern)-1]
+		return strings.HasPrefix(str, prefix)
+	}
+	return pattern == str
+}
+
+// matchWildcard 通用通配符匹配（仅支持末尾 *）
+// 复用 Antigravity 的通配符逻辑，供其他平台使用
+func matchWildcard(pattern, str string) bool {
+	return matchAntigravityWildcard(pattern, str)
+}
+
+// matchWildcardMapping 通配符映射匹配（最长优先）
+// 如果没有匹配，返回原始字符串
+func matchWildcardMapping(mapping map[string]string, requestedModel string) string {
+	// 收集所有匹配的 pattern，按长度降序排序（最长优先）
+	type patternMatch struct {
+		pattern string
+		target  string
+	}
+	var matches []patternMatch
+
+	for pattern, target := range mapping {
+		if matchWildcard(pattern, requestedModel) {
+			matches = append(matches, patternMatch{pattern, target})
+		}
+	}
+
+	if len(matches) == 0 {
+		return requestedModel // 无匹配，返回原始模型名
+	}
+
+	// 按 pattern 长度降序排序
+	sort.Slice(matches, func(i, j int) bool {
+		return len(matches[i].pattern) > len(matches[j].pattern)
+	})
+
+	return matches[0].target
 }
 
 func (a *Account) IsCustomErrorCodesEnabled() bool {

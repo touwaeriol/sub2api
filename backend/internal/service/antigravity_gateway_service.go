@@ -628,32 +628,55 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 }
 
 // getMappedModel 获取映射后的模型名
-// 逻辑：账户映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
+// 逻辑：白名单检查 → 账户自定义映射（通配符）→ 账户精确映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
+// 返回空字符串表示模型被白名单阻止
 func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
-	// 1. 账户级映射（用户自定义优先）
+	// 0. 白名单检查（如果配置了白名单）
+	if !account.IsModelInAntigravityWhitelist(requestedModel) {
+		return "" // 被白名单阻止
+	}
+
+	// 1. 账户级自定义映射（支持通配符，用户自定义优先）
+	if mapped := account.GetAntigravityMappedModel(requestedModel); mapped != "" {
+		return mapped
+	}
+
+	// 2. 账户级精确映射（旧版 model_mapping 兼容）
 	if mapped := account.GetMappedModel(requestedModel); mapped != requestedModel {
 		return mapped
 	}
 
-	// 2. 直接支持的模型透传
+	// 3. 直接支持的模型透传
 	if antigravitySupportedModels[requestedModel] {
 		return requestedModel
 	}
 
-	// 3. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
+	// 4. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
 	for _, pm := range antigravityPrefixMapping {
 		if strings.HasPrefix(requestedModel, pm.prefix) {
 			return pm.target
 		}
 	}
 
-	// 4. Gemini 模型透传（未匹配到前缀的 gemini 模型）
+	// 5. Gemini 模型透传（未匹配到前缀的 gemini 模型）
 	if strings.HasPrefix(requestedModel, "gemini-") {
 		return requestedModel
 	}
 
-	// 5. 默认值
+	// 6. 默认值
 	return "claude-sonnet-4-5"
+}
+
+// applyThinkingModelSuffix 根据 thinking 配置调整模型名
+// 当映射结果是 claude-sonnet-4-5 且请求开启了 thinking 时，改为 claude-sonnet-4-5-thinking
+func applyThinkingModelSuffix(mappedModel string, thinkingEnabled bool) string {
+	if !thinkingEnabled {
+		return mappedModel
+	}
+	if mappedModel == "claude-sonnet-4-5" {
+		return "claude-sonnet-4-5-thinking"
+	}
+	return mappedModel
 }
 
 // IsModelSupported 检查模型是否被支持
@@ -686,6 +709,9 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 
 	// 模型映射
 	mappedModel := s.getMappedModel(account, modelID)
+	if mappedModel == "" {
+		return nil, fmt.Errorf("model %s not in whitelist", modelID)
+	}
 
 	// 构建请求体
 	var requestBody []byte
@@ -999,6 +1025,12 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	originalModel := claudeReq.Model
 	mappedModel := s.getMappedModel(account, claudeReq.Model)
+	if mappedModel == "" {
+		return nil, fmt.Errorf("model %s not in whitelist", claudeReq.Model)
+	}
+	// 应用 thinking 模式自动后缀：如果 thinking 开启且目标是 claude-sonnet-4-5，自动改为 thinking 版本
+	thinkingEnabled := claudeReq.Thinking != nil && claudeReq.Thinking.Type == "enabled"
+	mappedModel = applyThinkingModelSuffix(mappedModel, thinkingEnabled)
 	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 获取 access_token
@@ -1633,6 +1665,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	}
 
 	mappedModel := s.getMappedModel(account, originalModel)
+	if mappedModel == "" {
+		return nil, s.writeGoogleError(c, http.StatusForbidden, fmt.Sprintf("model %s not in whitelist", originalModel))
+	}
 
 	// 获取 access_token
 	if s.tokenProvider == nil {
