@@ -1043,6 +1043,13 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		sessionHash:     "",              // Forward 方法没有 sessionHash，由上层处理粘性会话清除
 	})
 	if err != nil {
+		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
+		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
+			return nil, &UpstreamFailoverError{
+				StatusCode:        http.StatusServiceUnavailable,
+				ForceCacheBilling: switchErr.IsStickySession,
+			}
+		}
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
 	}
 	resp := result.resp
@@ -1678,6 +1685,13 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		sessionHash:     "",              // ForwardGemini 方法没有 sessionHash，由上层处理粘性会话清除
 	})
 	if err != nil {
+		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
+		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
+			return nil, &UpstreamFailoverError{
+				StatusCode:        http.StatusServiceUnavailable,
+				ForceCacheBilling: switchErr.IsStickySession,
+			}
+		}
 		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
 	}
 	resp := result.resp
