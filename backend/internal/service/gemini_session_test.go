@@ -301,3 +301,72 @@ func splitChain(chain string) []string {
 	}
 	return parts
 }
+
+func TestDigestChainDifferentSysInstruction(t *testing.T) {
+	req1 := &antigravity.GeminiRequest{
+		SystemInstruction: &antigravity.GeminiContent{
+			Parts: []antigravity.GeminiPart{{Text: "SYS_ORIGINAL"}},
+		},
+		Contents: []antigravity.GeminiContent{
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "hello"}}},
+		},
+	}
+
+	req2 := &antigravity.GeminiRequest{
+		SystemInstruction: &antigravity.GeminiContent{
+			Parts: []antigravity.GeminiPart{{Text: "SYS_MODIFIED"}},
+		},
+		Contents: []antigravity.GeminiContent{
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "hello"}}},
+		},
+	}
+
+	chain1 := BuildGeminiDigestChain(req1)
+	chain2 := BuildGeminiDigestChain(req2)
+
+	t.Logf("Chain1: %s", chain1)
+	t.Logf("Chain2: %s", chain2)
+
+	if chain1 == chain2 {
+		t.Error("Different systemInstruction should produce different chains")
+	}
+}
+
+func TestDigestChainTamperedMiddleContent(t *testing.T) {
+	req1 := &antigravity.GeminiRequest{
+		Contents: []antigravity.GeminiContent{
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "hello"}}},
+			{Role: "model", Parts: []antigravity.GeminiPart{{Text: "ORIGINAL_REPLY"}}},
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "next"}}},
+		},
+	}
+
+	req2 := &antigravity.GeminiRequest{
+		Contents: []antigravity.GeminiContent{
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "hello"}}},
+			{Role: "model", Parts: []antigravity.GeminiPart{{Text: "TAMPERED_REPLY"}}},
+			{Role: "user", Parts: []antigravity.GeminiPart{{Text: "next"}}},
+		},
+	}
+
+	chain1 := BuildGeminiDigestChain(req1)
+	chain2 := BuildGeminiDigestChain(req2)
+
+	t.Logf("Chain1: %s", chain1)
+	t.Logf("Chain2: %s", chain2)
+
+	if chain1 == chain2 {
+		t.Error("Tampered middle content should produce different chains")
+	}
+
+	// 验证第一个 user 的 hash 相同
+	parts1 := splitChain(chain1)
+	parts2 := splitChain(chain2)
+	
+	if parts1[0] != parts2[0] {
+		t.Error("First user message hash should be the same")
+	}
+	if parts1[1] == parts2[1] {
+		t.Error("Model reply hash should be different")
+	}
+}
