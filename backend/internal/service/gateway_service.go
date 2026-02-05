@@ -339,6 +339,15 @@ type GatewayCache interface {
 	// GetModelLoadBatch 批量获取账号的模型负载信息（Antigravity 专用）
 	// Batch get model load info for accounts (Antigravity only)
 	GetModelLoadBatch(ctx context.Context, accountIDs []int64, model string) (map[int64]*ModelLoadInfo, error)
+
+	// FindGeminiSession 查找 Gemini 会话（MGET 倒序匹配）
+	// Find Gemini session using MGET reverse order matching
+	// 返回最长匹配的会话信息（uuid, accountID）
+	FindGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain string) (uuid string, accountID int64, found bool)
+
+	// SaveGeminiSession 保存 Gemini 会话
+	// Save Gemini session binding
+	SaveGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain, uuid string, accountID int64) error
 }
 
 // derefGroupID safely dereferences *int64 to int64, returning 0 if nil
@@ -550,6 +559,23 @@ func (s *GatewayService) GetCachedSessionAccountID(ctx context.Context, groupID 
 		return 0, err
 	}
 	return accountID, nil
+}
+
+// FindGeminiSession 查找 Gemini 会话（基于内容摘要链的 Fallback 匹配）
+// 返回最长匹配的会话信息（uuid, accountID）
+func (s *GatewayService) FindGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain string) (uuid string, accountID int64, found bool) {
+	if digestChain == "" || s.cache == nil {
+		return "", 0, false
+	}
+	return s.cache.FindGeminiSession(ctx, groupID, prefixHash, digestChain)
+}
+
+// SaveGeminiSession 保存 Gemini 会话
+func (s *GatewayService) SaveGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain, uuid string, accountID int64) error {
+	if digestChain == "" || s.cache == nil {
+		return nil
+	}
+	return s.cache.SaveGeminiSession(ctx, groupID, prefixHash, digestChain, uuid, accountID)
 }
 
 func (s *GatewayService) extractCacheableContent(parsed *ParsedRequest) string {

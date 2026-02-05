@@ -224,6 +224,14 @@ func (m *mockGatewayCacheForPlatform) GetModelLoadBatch(ctx context.Context, acc
 	return nil, nil
 }
 
+func (m *mockGatewayCacheForPlatform) FindGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain string) (uuid string, accountID int64, found bool) {
+	return "", 0, false
+}
+
+func (m *mockGatewayCacheForPlatform) SaveGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain, uuid string, accountID int64) error {
+	return nil
+}
+
 type mockGroupRepoForGateway struct {
 	groups           map[int64]*Group
 	getByIDCalls     int
@@ -1876,6 +1884,19 @@ func (m *mockConcurrencyCache) GetAccountsLoadBatch(ctx context.Context, account
 
 func (m *mockConcurrencyCache) CleanupExpiredAccountSlots(ctx context.Context, accountID int64) error {
 	return nil
+}
+
+func (m *mockConcurrencyCache) GetUsersLoadBatch(ctx context.Context, users []UserWithConcurrency) (map[int64]*UserLoadInfo, error) {
+	result := make(map[int64]*UserLoadInfo, len(users))
+	for _, user := range users {
+		result[user.ID] = &UserLoadInfo{
+			UserID:             user.ID,
+			CurrentConcurrency: 0,
+			WaitingCount:       0,
+			LoadRate:           0,
+		}
+	}
+	return result, nil
 }
 
 // TestGatewayService_SelectAccountWithLoadAwareness tests load-aware account selection

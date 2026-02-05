@@ -62,7 +62,15 @@ func (a *Account) isModelRateLimited(requestedModel string) bool {
 	if resetAt := a.modelRateLimitResetAt(mapped); resetAt != nil && time.Now().Before(*resetAt) {
 		return true
 	}
-	// 2. 回退到旧格式的 scope 键（兼容老数据）
+	// 2. Antigravity 平台：使用全局前缀映射（如 gemini-3-pro-preview → gemini-3-pro-high）
+	if a.Platform == PlatformAntigravity {
+		if antigravityMapped := resolveAntigravityModelMapping(requestedModel); antigravityMapped != requestedModel {
+			if resetAt := a.modelRateLimitResetAt(antigravityMapped); resetAt != nil && time.Now().Before(*resetAt) {
+				return true
+			}
+		}
+	}
+	// 3. 回退到旧格式的 scope 键（兼容老数据）
 	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
 		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil && time.Now().Before(*resetAt) {
 			return true
@@ -84,7 +92,17 @@ func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Dur
 			return remaining
 		}
 	}
-	// 2. 回退到旧格式的 scope 键（兼容老数据）
+	// 2. Antigravity 平台：使用全局前缀映射（如 gemini-3-pro-preview → gemini-3-pro-high）
+	if a.Platform == PlatformAntigravity {
+		if antigravityMapped := resolveAntigravityModelMapping(requestedModel); antigravityMapped != requestedModel {
+			if resetAt := a.modelRateLimitResetAt(antigravityMapped); resetAt != nil {
+				if remaining := time.Until(*resetAt); remaining > 0 {
+					return remaining
+				}
+			}
+		}
+	}
+	// 3. 回退到旧格式的 scope 键（兼容老数据）
 	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
 		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil {
 			if remaining := time.Until(*resetAt); remaining > 0 {

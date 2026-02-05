@@ -154,6 +154,36 @@ func TestIsModelRateLimited(t *testing.T) {
 			expected:       true,
 		},
 		{
+			name: "antigravity platform - gemini-3-pro-preview mapped to gemini-3-pro-high",
+			account: &Account{
+				Platform: PlatformAntigravity,
+				Extra: map[string]any{
+					modelRateLimitsKey: map[string]any{
+						"gemini-3-pro-high": map[string]any{
+							"rate_limit_reset_at": future,
+						},
+					},
+				},
+			},
+			requestedModel: "gemini-3-pro-preview",
+			expected:       true,
+		},
+		{
+			name: "non-antigravity platform - gemini-3-pro-preview NOT mapped",
+			account: &Account{
+				Platform: PlatformGemini,
+				Extra: map[string]any{
+					modelRateLimitsKey: map[string]any{
+						"gemini-3-pro-high": map[string]any{
+							"rate_limit_reset_at": future,
+						},
+					},
+				},
+			},
+			requestedModel: "gemini-3-pro-preview",
+			expected:       false, // gemini 平台不走 antigravity 映射
+		},
+		{
 			name: "fallback to old scope format - claude_sonnet",
 			account: &Account{
 				Extra: map[string]any{

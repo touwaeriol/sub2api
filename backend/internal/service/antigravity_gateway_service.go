@@ -554,6 +554,24 @@ var antigravityPrefixMapping = []struct {
 	{"claude-opus-4", "claude-opus-4-5-thinking"},
 }
 
+// resolveAntigravityModelMapping 解析 Antigravity 平台的模型映射
+// 仅使用前缀映射表，不包含账户级映射和默认值逻辑
+// 用于模型限流检查时，将请求模型名映射到上游实际使用的模型名
+func resolveAntigravityModelMapping(requestedModel string) string {
+	// 1. 直接支持的模型透传
+	if antigravitySupportedModels[requestedModel] {
+		return requestedModel
+	}
+	// 2. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
+	for _, pm := range antigravityPrefixMapping {
+		if strings.HasPrefix(requestedModel, pm.prefix) {
+			return pm.target
+		}
+	}
+	// 3. 未匹配，返回原样
+	return requestedModel
+}
+
 // AntigravityGatewayService 处理 Antigravity 平台的 API 转发
 type AntigravityGatewayService struct {
 	accountRepo      AccountRepository
@@ -611,31 +629,24 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 }
 
 // getMappedModel 获取映射后的模型名
-// 逻辑：账户映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
+// 逻辑：账户映射 → 全局映射 → gemini透传 → 默认值
 func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
 	// 1. 账户级映射（用户自定义优先）
 	if mapped := account.GetMappedModel(requestedModel); mapped != requestedModel {
 		return mapped
 	}
 
-	// 2. 直接支持的模型透传
-	if antigravitySupportedModels[requestedModel] {
-		return requestedModel
+	// 2. 全局映射（直接支持 + 前缀映射）
+	if mapped := resolveAntigravityModelMapping(requestedModel); mapped != requestedModel {
+		return mapped
 	}
 
-	// 3. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
-	for _, pm := range antigravityPrefixMapping {
-		if strings.HasPrefix(requestedModel, pm.prefix) {
-			return pm.target
-		}
-	}
-
-	// 4. Gemini 模型透传（未匹配到前缀的 gemini 模型）
+	// 3. Gemini 模型透传（未匹配到前缀的 gemini 模型）
 	if strings.HasPrefix(requestedModel, "gemini-") {
 		return requestedModel
 	}
 
-	// 5. 默认值
+	// 4. 默认值
 	return "claude-sonnet-4-5"
 }
 

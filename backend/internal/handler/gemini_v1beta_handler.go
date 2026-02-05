@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"log"
@@ -20,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ip"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/google/uuid"
 
 	"github.com/gin-gonic/gin"
 )
@@ -247,6 +249,57 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if sessionKey != "" {
 		sessionBoundAccountID, _ = h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, sessionKey)
 	}
+
+	// === Gemini 内容摘要会话 Fallback 逻辑 ===
+	// 当原有会话标识无效时（sessionBoundAccountID == 0），尝试基于内容摘要链匹配
+	var geminiDigestChain string
+	var geminiPrefixHash string
+	var geminiSessionUUID string
+	useDigestFallback := sessionBoundAccountID == 0
+
+	if useDigestFallback {
+		// 解析 Gemini 请求体
+		var geminiReq antigravity.GeminiRequest
+		if err := json.Unmarshal(body, &geminiReq); err == nil && len(geminiReq.Contents) > 0 {
+			// 生成摘要链
+			geminiDigestChain = service.BuildGeminiDigestChain(&geminiReq)
+			if geminiDigestChain != "" {
+				// 生成前缀 hash
+				userAgent := c.GetHeader("User-Agent")
+				clientIP := ip.GetClientIP(c)
+				platform := ""
+				if apiKey.Group != nil {
+					platform = apiKey.Group.Platform
+				}
+				geminiPrefixHash = service.GenerateGeminiPrefixHash(
+					authSubject.UserID,
+					apiKey.ID,
+					clientIP,
+					userAgent,
+					platform,
+					modelName,
+				)
+
+				// 查找会话
+				foundUUID, foundAccountID, found := h.gatewayService.FindGeminiSession(
+					c.Request.Context(),
+					derefGroupID(apiKey.GroupID),
+					geminiPrefixHash,
+					geminiDigestChain,
+				)
+				if found {
+					sessionBoundAccountID = foundAccountID
+					geminiSessionUUID = foundUUID
+					log.Printf("[Gemini] Digest fallback matched: uuid=%s, accountID=%d, chain=%s",
+						foundUUID[:8], foundAccountID, truncateDigestChain(geminiDigestChain))
+				} else {
+					// 生成新的会话 UUID
+					geminiSessionUUID = uuid.New().String()
+				}
+			}
+		}
+	}
+
 	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 	isCLI := isGeminiCLIRequest(c, body)
@@ -376,6 +429,20 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		// 捕获请求信息（用于异步记录，避免在 goroutine 中访问 gin.Context）
 		userAgent := c.GetHeader("User-Agent")
 		clientIP := ip.GetClientIP(c)
+
+		// 保存 Gemini 内容摘要会话（用于 Fallback 匹配）
+		if useDigestFallback && geminiDigestChain != "" && geminiPrefixHash != "" {
+			if err := h.gatewayService.SaveGeminiSession(
+				c.Request.Context(),
+				derefGroupID(apiKey.GroupID),
+				geminiPrefixHash,
+				geminiDigestChain,
+				geminiSessionUUID,
+				account.ID,
+			); err != nil {
+				log.Printf("[Gemini] Failed to save digest session: %v", err)
+			}
+		}
 
 		// 6) record usage async (Gemini 使用长上下文双倍计费)
 		go func(result *service.ForwardResult, usedAccount *service.Account, ua, ip string, fcb bool) {
@@ -530,4 +597,20 @@ func extractGeminiCLISessionHash(c *gin.Context, body []byte) string {
 
 	// 如果没有 privileged-user-id，直接使用 tmp 目录哈希
 	return tmpDirHash
+}
+
+// truncateDigestChain 截断摘要链用于日志显示
+func truncateDigestChain(chain string) string {
+	if len(chain) <= 50 {
+		return chain
+	}
+	return chain[:50] + "..."
+}
+
+// derefGroupID 安全解引用 *int64，nil 返回 0
+func derefGroupID(groupID *int64) int64 {
+	if groupID == nil {
+		return 0
+	}
+	return *groupID
 }

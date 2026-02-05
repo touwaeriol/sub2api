@@ -156,3 +156,48 @@ func getTimeOrZero(cmd *redis.StringCmd) time.Time {
 	}
 	return time.Unix(val, 0)
 }
+
+// ============ Gemini 会话 Fallback 方法 ============
+
+// FindGeminiSession 查找 Gemini 会话（MGET 倒序匹配）
+// 返回最长匹配的会话信息
+func (c *gatewayCache) FindGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain string) (uuid string, accountID int64, found bool) {
+	// 生成所有可能的前缀 key
+	prefixes := service.GenerateDigestChainPrefixes(digestChain)
+	if len(prefixes) == 0 {
+		return "", 0, false
+	}
+
+	// 构建所有 key
+	keys := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		keys[i] = service.BuildGeminiSessionKey(groupID, prefixHash, p)
+	}
+
+	// 一次 MGET
+	vals, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return "", 0, false
+	}
+
+	// 第一个非空 = 最长匹配
+	for _, v := range vals {
+		if v != nil {
+			if s, ok := v.(string); ok && s != "" {
+				uuid, accountID, ok := service.ParseGeminiSessionValue(s)
+				if ok {
+					return uuid, accountID, true
+				}
+			}
+		}
+	}
+
+	return "", 0, false
+}
+
+// SaveGeminiSession 保存 Gemini 会话
+func (c *gatewayCache) SaveGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain, uuid string, accountID int64) error {
+	key := service.BuildGeminiSessionKey(groupID, prefixHash, digestChain)
+	value := service.FormatGeminiSessionValue(uuid, accountID)
+	return c.rdb.Set(ctx, key, value, service.GeminiSessionTTL()).Err()
+}
