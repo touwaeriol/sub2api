@@ -2162,13 +2162,12 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		useScopeLimit := quotaScope != ""
 		resetAt := ParseGeminiRateLimitResetTime(body)
 		if resetAt == nil {
-			// 解析失败：使用配置的 fallback 时间，直接限流整个账户
-			// 默认 30 秒，可通过配置覆盖（配置单位为分钟）
-			fallbackSeconds := 30
+			// 解析失败：使用默认限流时间（与临时限流保持一致）
+			// 可通过配置或环境变量覆盖
+			defaultDur := antigravityDefaultRateLimitDuration
 			if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes > 0 {
-				fallbackSeconds = s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes * 60
+				defaultDur = time.Duration(s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes) * time.Minute
 			}
-			defaultDur := time.Duration(fallbackSeconds) * time.Second
 			// 秒级环境变量优先级最高
 			if override, ok := antigravityFallbackCooldownSeconds(); ok {
 				defaultDur = override
