@@ -56,26 +56,44 @@ func resolveModelRateLimitScope(requestedModel string) (string, bool) {
 	return "", false
 }
 
+// isRateLimitActiveForKey 检查指定 key 的限流是否生效
+func (a *Account) isRateLimitActiveForKey(key string) bool {
+	resetAt := a.modelRateLimitResetAt(key)
+	return resetAt != nil && time.Now().Before(*resetAt)
+}
+
+// getRateLimitRemainingForKey 获取指定 key 的限流剩余时间，0 表示未限流或已过期
+func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
+	resetAt := a.modelRateLimitResetAt(key)
+	if resetAt == nil {
+		return 0
+	}
+	remaining := time.Until(*resetAt)
+	if remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
 func (a *Account) isModelRateLimited(requestedModel string) bool {
-	// 1. 使用账户的模型映射获取上游实际使用的模型 ID
-	mapped := a.GetMappedModel(requestedModel)
-	if resetAt := a.modelRateLimitResetAt(mapped); resetAt != nil && time.Now().Before(*resetAt) {
+	// 1. 账户级映射
+	if a.isRateLimitActiveForKey(a.GetMappedModel(requestedModel)) {
 		return true
 	}
-	// 2. Antigravity 平台：使用全局前缀映射（如 gemini-3-pro-preview → gemini-3-pro-high）
+
+	// 2. Antigravity 全局映射
 	if a.Platform == PlatformAntigravity {
-		if antigravityMapped := resolveAntigravityModelMapping(requestedModel); antigravityMapped != requestedModel {
-			if resetAt := a.modelRateLimitResetAt(antigravityMapped); resetAt != nil && time.Now().Before(*resetAt) {
-				return true
-			}
-		}
-	}
-	// 3. 回退到旧格式的 scope 键（兼容老数据）
-	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
-		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil && time.Now().Before(*resetAt) {
+		antigravityMapped := resolveAntigravityModelMapping(requestedModel)
+		if antigravityMapped != requestedModel && a.isRateLimitActiveForKey(antigravityMapped) {
 			return true
 		}
 	}
+
+	// 3. 旧格式 scope 兼容
+	if scope, ok := resolveModelRateLimitScope(requestedModel); ok && a.isRateLimitActiveForKey(scope) {
+		return true
+	}
+
 	return false
 }
 
@@ -85,31 +103,29 @@ func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Dur
 	if a == nil {
 		return 0
 	}
-	// 1. 使用账户的模型映射获取上游实际使用的模型 ID
-	mapped := a.GetMappedModel(requestedModel)
-	if resetAt := a.modelRateLimitResetAt(mapped); resetAt != nil {
-		if remaining := time.Until(*resetAt); remaining > 0 {
-			return remaining
-		}
+
+	// 1. 账户级映射
+	if remaining := a.getRateLimitRemainingForKey(a.GetMappedModel(requestedModel)); remaining > 0 {
+		return remaining
 	}
-	// 2. Antigravity 平台：使用全局前缀映射（如 gemini-3-pro-preview → gemini-3-pro-high）
+
+	// 2. Antigravity 全局映射
 	if a.Platform == PlatformAntigravity {
-		if antigravityMapped := resolveAntigravityModelMapping(requestedModel); antigravityMapped != requestedModel {
-			if resetAt := a.modelRateLimitResetAt(antigravityMapped); resetAt != nil {
-				if remaining := time.Until(*resetAt); remaining > 0 {
-					return remaining
-				}
-			}
-		}
-	}
-	// 3. 回退到旧格式的 scope 键（兼容老数据）
-	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
-		if resetAt := a.modelRateLimitResetAt(scope); resetAt != nil {
-			if remaining := time.Until(*resetAt); remaining > 0 {
+		antigravityMapped := resolveAntigravityModelMapping(requestedModel)
+		if antigravityMapped != requestedModel {
+			if remaining := a.getRateLimitRemainingForKey(antigravityMapped); remaining > 0 {
 				return remaining
 			}
 		}
 	}
+
+	// 3. 旧格式 scope 兼容
+	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
+		if remaining := a.getRateLimitRemainingForKey(scope); remaining > 0 {
+			return remaining
+		}
+	}
+
 	return 0
 }
 
