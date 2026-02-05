@@ -197,6 +197,14 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 		sessionKey = "gemini:" + sessionHash
 	}
 
+	// 查询粘性会话绑定的账号 ID
+	var sessionBoundAccountID int64
+	if sessionKey != "" {
+		sessionBoundAccountID, _ = h.gatewayService.GetCachedSessionAccountID(c.Request.Context(), apiKey.GroupID, sessionKey)
+	}
+	// 判断是否真的绑定了粘性会话：有 sessionKey 且已经绑定到某个账号
+	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
+
 	if platform == service.PlatformGemini {
 		maxAccountSwitches := h.maxAccountSwitchesGemini
 		switchCount := 0
@@ -291,7 +299,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				requestCtx = context.WithValue(requestCtx, ctxkey.AccountSwitchCount, switchCount)
 			}
 			if account.Platform == service.PlatformAntigravity {
-				result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, reqModel, "generateContent", reqStream, body, sessionKey != "")
+				result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, reqModel, "generateContent", reqStream, body, hasBoundSession)
 			} else {
 				result, err = h.geminiCompatService.Forward(requestCtx, c, account, body)
 			}
@@ -447,7 +455,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				requestCtx = context.WithValue(requestCtx, ctxkey.AccountSwitchCount, switchCount)
 			}
 			if account.Platform == service.PlatformAntigravity {
-				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, sessionKey != "")
+				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
 			}
