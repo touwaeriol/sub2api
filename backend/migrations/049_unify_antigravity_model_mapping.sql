@@ -1,13 +1,12 @@
--- 统一 Antigravity 模型白名单/映射字段
--- 将原有的 model_whitelist 逻辑合并到 model_mapping 中
--- model_mapping 的 key 作为白名单，value 作为映射目标（精确匹配，无通配符）
-
--- 为未配置 model_mapping 的 Antigravity OAuth 账号填充默认映射
--- 基于官方 API 返回的模型列表，只支持 Claude 4.5+ 和 Gemini 2.5+
--- Claude 4 及更早版本不支持
+-- Force set default Antigravity model_mapping.
+--
+-- Notes:
+-- - Applies to both Antigravity OAuth and Upstream accounts.
+-- - Overwrites existing credentials.model_mapping.
+-- - Removes legacy credentials.model_whitelist.
 
 UPDATE accounts
-SET credentials = credentials || '{
+SET credentials = (COALESCE(credentials, '{}'::jsonb) - 'model_whitelist' - 'model_mapping') || '{
   "model_mapping": {
     "claude-opus-4-6": "claude-opus-4-6",
     "claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
@@ -33,33 +32,6 @@ SET credentials = credentials || '{
   }
 }'::jsonb
 WHERE platform = 'antigravity'
-  AND type = 'oauth'
-  AND deleted_at IS NULL
-  AND NOT (credentials ? 'model_mapping');
+  AND type IN ('oauth', 'upstream')
+  AND deleted_at IS NULL;
 
--- 对于已配置 model_whitelist 但未配置 model_mapping 的账号，
--- 将 model_whitelist 转换为 model_mapping（精确匹配）
--- 注意：这种转换保持精确匹配语义
-
-UPDATE accounts
-SET credentials = credentials - 'model_whitelist' ||
-  jsonb_build_object('model_mapping',
-    (SELECT jsonb_object_agg(elem, elem)
-     FROM jsonb_array_elements_text(credentials->'model_whitelist') AS elem)
-  )
-WHERE platform = 'antigravity'
-  AND type = 'oauth'
-  AND deleted_at IS NULL
-  AND credentials ? 'model_whitelist'
-  AND NOT (credentials ? 'model_mapping');
-
--- 对于已同时配置 model_whitelist 和 model_mapping 的账号，
--- 直接删除 model_whitelist（model_mapping 优先）
-
-UPDATE accounts
-SET credentials = credentials - 'model_whitelist'
-WHERE platform = 'antigravity'
-  AND type = 'oauth'
-  AND deleted_at IS NULL
-  AND credentials ? 'model_whitelist'
-  AND credentials ? 'model_mapping';
