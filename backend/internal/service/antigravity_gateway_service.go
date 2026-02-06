@@ -567,29 +567,32 @@ var antigravityPrefixMapping = []struct {
 
 // AntigravityGatewayService 处理 Antigravity 平台的 API 转发
 type AntigravityGatewayService struct {
-	accountRepo      AccountRepository
-	tokenProvider    *AntigravityTokenProvider
-	rateLimitService *RateLimitService
-	httpUpstream     HTTPUpstream
-	settingService   *SettingService
-	cache            GatewayCache // 用于模型级限流时清除粘性会话绑定
+	accountRepo       AccountRepository
+	tokenProvider     *AntigravityTokenProvider
+	rateLimitService  *RateLimitService
+	httpUpstream      HTTPUpstream
+	settingService    *SettingService
+	cache             GatewayCache // 用于模型级限流时清除粘性会话绑定
+	schedulerSnapshot *SchedulerSnapshotService
 }
 
 func NewAntigravityGatewayService(
 	accountRepo AccountRepository,
 	cache GatewayCache,
+	schedulerSnapshot *SchedulerSnapshotService,
 	tokenProvider *AntigravityTokenProvider,
 	rateLimitService *RateLimitService,
 	httpUpstream HTTPUpstream,
 	settingService *SettingService,
 ) *AntigravityGatewayService {
 	return &AntigravityGatewayService{
-		accountRepo:      accountRepo,
-		tokenProvider:    tokenProvider,
-		rateLimitService: rateLimitService,
-		httpUpstream:     httpUpstream,
-		settingService:   settingService,
-		cache:            cache,
+		accountRepo:       accountRepo,
+		tokenProvider:     tokenProvider,
+		rateLimitService:  rateLimitService,
+		httpUpstream:      httpUpstream,
+		settingService:    settingService,
+		cache:             cache,
+		schedulerSnapshot: schedulerSnapshot,
 	}
 }
 
@@ -2174,14 +2177,45 @@ func (s *AntigravityGatewayService) setModelRateLimitAndClearSession(p *handleMo
 	log.Printf("%s status=%d model_rate_limited model=%s account=%d reset_in=%v",
 		p.prefix, p.statusCode, info.ModelName, p.account.ID, info.RetryDelay)
 
-	// 设置模型限流状态
+	// 设置模型限流状态（数据库）
 	if err := s.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, info.ModelName, resetAt); err != nil {
 		log.Printf("%s model_rate_limit_failed model=%s error=%v", p.prefix, info.ModelName, err)
 	}
 
+	// 立即更新 Redis 快照中账号的限流状态，避免并发请求重复选中
+	s.updateAccountModelRateLimitInCache(p.ctx, p.account, info.ModelName, resetAt)
+
 	// 清除粘性会话绑定
 	if p.cache != nil && p.sessionHash != "" {
 		_ = p.cache.DeleteSessionAccountID(p.ctx, p.groupID, p.sessionHash)
+	}
+}
+
+// updateAccountModelRateLimitInCache 立即更新 Redis 中账号的模型限流状态
+func (s *AntigravityGatewayService) updateAccountModelRateLimitInCache(ctx context.Context, account *Account, modelKey string, resetAt time.Time) {
+	if s.schedulerSnapshot == nil || account == nil || modelKey == "" {
+		return
+	}
+
+	// 更新账号对象的 Extra 字段
+	if account.Extra == nil {
+		account.Extra = make(map[string]any)
+	}
+
+	limits, _ := account.Extra["model_rate_limits"].(map[string]any)
+	if limits == nil {
+		limits = make(map[string]any)
+		account.Extra["model_rate_limits"] = limits
+	}
+
+	limits[modelKey] = map[string]any{
+		"rate_limited_at":     time.Now().UTC().Format(time.RFC3339),
+		"rate_limit_reset_at": resetAt.UTC().Format(time.RFC3339),
+	}
+
+	// 更新 Redis 快照
+	if err := s.schedulerSnapshot.UpdateAccountInCache(ctx, account); err != nil {
+		log.Printf("[antigravity-Forward] cache_update_failed account=%d model=%s err=%v", account.ID, modelKey, err)
 	}
 }
 
