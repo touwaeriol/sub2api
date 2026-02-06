@@ -327,6 +327,9 @@ urlFallbackLoop:
 			}
 
 			resp, err = p.httpUpstream.Do(upstreamReq, p.proxyURL, p.account.ID, p.account.Concurrency)
+			if err == nil && resp == nil {
+				err = errors.New("upstream returned nil response")
+			}
 			if err != nil {
 				safeErr := sanitizeUpstreamErrorMessage(err.Error())
 				appendOpsUpstreamError(p.c, OpsUpstreamErrorEvent{

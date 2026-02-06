@@ -1692,24 +1692,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// Antigravity 平台：使用模型负载调度算法
-		if isAntigravity && requestedModel != "" {
+		// Antigravity 平台：优先级硬过滤 →（同优先级内）LRU（按模型最近使用时间）
+		// 其他平台：分层过滤选择：优先级 → 负载率 → LRU
+		if isAntigravity {
 			for len(available) > 0 {
-				// 转换为 accountWithModelLoad
-				availableWithModelLoad := make([]accountWithModelLoad, 0, len(available))
-				for _, acc := range available {
-					var mli *ModelLoadInfo
-					if modelLoadMap != nil {
-						mli = modelLoadMap[acc.account.ID]
-					}
-					availableWithModelLoad = append(availableWithModelLoad, accountWithModelLoad{
-						account:       acc.account,
-						modelLoadInfo: mli,
-					})
-				}
-
-				// 基于负载比选择账号
-				selected := selectByLoadRatio(availableWithModelLoad, preferOAuth)
+				// 1. 取优先级最小的集合（硬过滤）
+				candidates := filterByMinPriority(available)
+				// 2. 同优先级内按 LRU 选择（优先使用模型级 last_used；取不到则回退到账号 last_used）
+				selected := selectByModelLRU(candidates, modelLoadMap, preferOAuth)
 				if selected == nil {
 					break
 				}
@@ -1742,7 +1732,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				available = newAvailable
 			}
 		} else {
-			// 非 Antigravity 平台：分层过滤选择：优先级 → 负载率 → LRU
 			for len(available) > 0 {
 				// 1. 取优先级最小的集合
 				candidates := filterByMinPriority(available)
@@ -2316,6 +2305,83 @@ func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 			return a.LastUsedAt.Before(*b.LastUsedAt)
 		}
 	})
+}
+
+func selectByModelLRU(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo, preferOAuth bool) *accountWithLoad {
+	if modelLoadMap == nil {
+		return selectByLRU(accounts, preferOAuth)
+	}
+	if len(accounts) == 0 {
+		return nil
+	}
+	if len(accounts) == 1 {
+		return &accounts[0]
+	}
+
+	getLastUsed := func(acc accountWithLoad) *time.Time {
+		if acc.account == nil {
+			return nil
+		}
+		if info := modelLoadMap[acc.account.ID]; info != nil {
+			if info.LastUsedAt.IsZero() {
+				return nil
+			}
+			t := info.LastUsedAt
+			return &t
+		}
+		return acc.account.LastUsedAt
+	}
+
+	// 1. 找到最小的 LastUsedAt（nil 被视为最小）
+	var minTime *time.Time
+	hasNil := false
+	for _, acc := range accounts {
+		lastUsed := getLastUsed(acc)
+		if lastUsed == nil {
+			hasNil = true
+			break
+		}
+		if minTime == nil || lastUsed.Before(*minTime) {
+			minTime = lastUsed
+		}
+	}
+
+	// 2. 收集所有具有最小 LastUsedAt 的账号索引
+	var candidateIdxs []int
+	for i, acc := range accounts {
+		lastUsed := getLastUsed(acc)
+		if hasNil {
+			if lastUsed == nil {
+				candidateIdxs = append(candidateIdxs, i)
+			}
+			continue
+		}
+		if lastUsed != nil && lastUsed.Equal(*minTime) {
+			candidateIdxs = append(candidateIdxs, i)
+		}
+	}
+
+	// 3. 如果只有一个候选，直接返回
+	if len(candidateIdxs) == 1 {
+		return &accounts[candidateIdxs[0]]
+	}
+
+	// 4. 如果有多个候选且 preferOAuth，优先选择 OAuth 类型
+	if preferOAuth {
+		var oauthIdxs []int
+		for _, idx := range candidateIdxs {
+			if accounts[idx].account.Type == AccountTypeOAuth {
+				oauthIdxs = append(oauthIdxs, idx)
+			}
+		}
+		if len(oauthIdxs) > 0 {
+			candidateIdxs = oauthIdxs
+		}
+	}
+
+	// 5. 随机选择一个
+	selectedIdx := candidateIdxs[mathrand.Intn(len(candidateIdxs))]
+	return &accounts[selectedIdx]
 }
 
 // sortCandidatesForFallback 根据配置选择排序策略

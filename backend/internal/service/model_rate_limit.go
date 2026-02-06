@@ -7,55 +7,6 @@ import (
 
 const modelRateLimitsKey = "model_rate_limits"
 
-// 模型限流 scope 常量
-const (
-	modelRateLimitScopeClaudeSonnet = "claude_sonnet"
-	modelRateLimitScopeClaudeOpus   = "claude_opus"
-	modelRateLimitScopeClaudeHaiku  = "claude_haiku"
-	modelRateLimitScopeGeminiFlash  = "gemini_flash"
-	modelRateLimitScopeGeminiPro    = "gemini_pro"
-)
-
-// resolveModelRateLimitScope 将请求的模型名映射到限流 scope
-// 返回 scope 和是否成功映射
-//
-// 映射逻辑：
-// - 服务器返回的模型名（如 claude-sonnet-4-5）会直接存储
-// - 客户端请求的模型名（如 claude-3-5-sonnet）需要映射到相同的 scope
-// - 使用模型类型（sonnet/opus/haiku/flash/pro）作为 scope，而不是具体版本号
-func resolveModelRateLimitScope(requestedModel string) (string, bool) {
-	model := strings.ToLower(strings.TrimSpace(requestedModel))
-	if model == "" {
-		return "", false
-	}
-	model = strings.TrimPrefix(model, "models/")
-
-	// Claude 模型映射
-	// 客户端: claude-3-5-sonnet, claude-sonnet-4 等
-	// 服务器: claude-sonnet-4-5 等
-	if strings.Contains(model, "sonnet") {
-		return modelRateLimitScopeClaudeSonnet, true
-	}
-	if strings.Contains(model, "opus") {
-		return modelRateLimitScopeClaudeOpus, true
-	}
-	if strings.Contains(model, "haiku") {
-		return modelRateLimitScopeClaudeHaiku, true
-	}
-
-	// Gemini 模型映射
-	// flash 系列
-	if strings.Contains(model, "flash") {
-		return modelRateLimitScopeGeminiFlash, true
-	}
-	// pro 系列（gemini-3-pro-low, gemini-3-pro-high 等）
-	if strings.HasPrefix(model, "gemini") && strings.Contains(model, "pro") {
-		return modelRateLimitScopeGeminiPro, true
-	}
-
-	return "", false
-}
-
 // isRateLimitActiveForKey 检查指定 key 的限流是否生效
 func (a *Account) isRateLimitActiveForKey(key string) bool {
 	resetAt := a.modelRateLimitResetAt(key)
@@ -76,25 +27,19 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 }
 
 func (a *Account) isModelRateLimited(requestedModel string) bool {
-	// 1. 账户级映射
-	if a.isRateLimitActiveForKey(a.GetMappedModel(requestedModel)) {
-		return true
+	if a == nil {
+		return false
 	}
 
-	// 2. Antigravity 全局映射
+	modelKey := a.GetMappedModel(requestedModel)
 	if a.Platform == PlatformAntigravity {
-		antigravityMapped := resolveAntigravityModelMapping(requestedModel)
-		if antigravityMapped != requestedModel && a.isRateLimitActiveForKey(antigravityMapped) {
-			return true
-		}
+		modelKey = mapAntigravityModel(a, requestedModel)
 	}
-
-	// 3. 旧格式 scope 兼容
-	if scope, ok := resolveModelRateLimitScope(requestedModel); ok && a.isRateLimitActiveForKey(scope) {
-		return true
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return false
 	}
-
-	return false
+	return a.isRateLimitActiveForKey(modelKey)
 }
 
 // GetModelRateLimitRemainingTime 获取模型限流剩余时间
@@ -104,29 +49,15 @@ func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Dur
 		return 0
 	}
 
-	// 1. 账户级映射
-	if remaining := a.getRateLimitRemainingForKey(a.GetMappedModel(requestedModel)); remaining > 0 {
-		return remaining
-	}
-
-	// 2. Antigravity 全局映射
+	modelKey := a.GetMappedModel(requestedModel)
 	if a.Platform == PlatformAntigravity {
-		antigravityMapped := resolveAntigravityModelMapping(requestedModel)
-		if antigravityMapped != requestedModel {
-			if remaining := a.getRateLimitRemainingForKey(antigravityMapped); remaining > 0 {
-				return remaining
-			}
-		}
+		modelKey = mapAntigravityModel(a, requestedModel)
 	}
-
-	// 3. 旧格式 scope 兼容
-	if scope, ok := resolveModelRateLimitScope(requestedModel); ok {
-		if remaining := a.getRateLimitRemainingForKey(scope); remaining > 0 {
-			return remaining
-		}
+	modelKey = strings.TrimSpace(modelKey)
+	if modelKey == "" {
+		return 0
 	}
-
-	return 0
+	return a.getRateLimitRemainingForKey(modelKey)
 }
 
 func (a *Account) modelRateLimitResetAt(scope string) *time.Time {
