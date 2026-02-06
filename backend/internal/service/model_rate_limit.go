@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 const modelRateLimitsKey = "model_rate_limits"
@@ -27,13 +30,17 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 }
 
 func (a *Account) isModelRateLimited(requestedModel string) bool {
+	return a.isModelRateLimitedWithContext(context.Background(), requestedModel)
+}
+
+func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
 	if a == nil {
 		return false
 	}
 
 	modelKey := a.GetMappedModel(requestedModel)
 	if a.Platform == PlatformAntigravity {
-		modelKey = mapAntigravityModel(a, requestedModel)
+		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
 	}
 	modelKey = strings.TrimSpace(modelKey)
 	if modelKey == "" {
@@ -45,19 +52,35 @@ func (a *Account) isModelRateLimited(requestedModel string) bool {
 // GetModelRateLimitRemainingTime 获取模型限流剩余时间
 // 返回 0 表示未限流或已过期
 func (a *Account) GetModelRateLimitRemainingTime(requestedModel string) time.Duration {
+	return a.GetModelRateLimitRemainingTimeWithContext(context.Background(), requestedModel)
+}
+
+func (a *Account) GetModelRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
 	if a == nil {
 		return 0
 	}
 
 	modelKey := a.GetMappedModel(requestedModel)
 	if a.Platform == PlatformAntigravity {
-		modelKey = mapAntigravityModel(a, requestedModel)
+		modelKey = resolveFinalAntigravityModelKey(ctx, a, requestedModel)
 	}
 	modelKey = strings.TrimSpace(modelKey)
 	if modelKey == "" {
 		return 0
 	}
 	return a.getRateLimitRemainingForKey(modelKey)
+}
+
+func resolveFinalAntigravityModelKey(ctx context.Context, account *Account, requestedModel string) string {
+	modelKey := mapAntigravityModel(account, requestedModel)
+	if modelKey == "" {
+		return ""
+	}
+	// thinking 会影响 Antigravity 最终模型名（例如 claude-sonnet-4-5 -> claude-sonnet-4-5-thinking）
+	if enabled, ok := ctx.Value(ctxkey.ThinkingEnabled).(bool); ok {
+		modelKey = applyThinkingModelSuffix(modelKey, enabled)
+	}
+	return modelKey
 }
 
 func (a *Account) modelRateLimitResetAt(scope string) *time.Time {

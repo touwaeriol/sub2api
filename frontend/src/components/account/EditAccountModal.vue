@@ -1645,7 +1645,9 @@ const handleSubmit = async () => {
           // Legacy compatibility: also store as model_mapping whitelist (from===to)
           const legacyMapping: Record<string, string> = {}
           for (const m of antigravityWhitelistModels.value) {
-            legacyMapping[m] = m
+            if (!m.includes('*')) {
+              legacyMapping[m] = m
+            }
           }
           newCredentials.model_mapping = legacyMapping
         }

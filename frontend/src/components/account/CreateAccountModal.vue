@@ -2727,7 +2727,9 @@ const handleSubmit = async () => {
         // Legacy compatibility: also store as model_mapping whitelist (from===to)
         const legacyMapping: Record<string, string> = {}
         for (const m of antigravityWhitelistModels.value) {
-          legacyMapping[m] = m
+          if (!m.includes('*')) {
+            legacyMapping[m] = m
+          }
         }
         credentials.model_mapping = legacyMapping
       }
@@ -2962,7 +2964,9 @@ const handleAntigravityExchange = async (authCode: string) => {
 				// Legacy compatibility: also store as model_mapping whitelist (from===to)
 				const legacyMapping: Record<string, string> = {}
 				for (const m of antigravityWhitelistModels.value) {
-					legacyMapping[m] = m
+					if (!m.includes('*')) {
+						legacyMapping[m] = m
+					}
 				}
 				credentials.model_mapping = legacyMapping
 			}

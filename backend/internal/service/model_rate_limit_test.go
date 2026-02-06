@@ -1,8 +1,11 @@
 package service
 
 import (
+	"context"
 	"testing"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 )
 
 func TestIsModelRateLimited(t *testing.T) {
@@ -166,11 +169,32 @@ func TestIsModelRateLimited(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.account.isModelRateLimited(tt.requestedModel)
+			result := tt.account.isModelRateLimitedWithContext(context.Background(), tt.requestedModel)
 			if result != tt.expected {
 				t.Errorf("isModelRateLimited(%q) = %v, want %v", tt.requestedModel, result, tt.expected)
 			}
 		})
+	}
+}
+
+func TestIsModelRateLimited_Antigravity_ThinkingAffectsModelKey(t *testing.T) {
+	now := time.Now()
+	future := now.Add(10 * time.Minute).Format(time.RFC3339)
+
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Extra: map[string]any{
+			modelRateLimitsKey: map[string]any{
+				"claude-sonnet-4-5-thinking": map[string]any{
+					"rate_limit_reset_at": future,
+				},
+			},
+		},
+	}
+
+	ctx := context.WithValue(context.Background(), ctxkey.ThinkingEnabled, true)
+	if !account.isModelRateLimitedWithContext(ctx, "claude-sonnet-4-5") {
+		t.Errorf("expected model to be rate limited")
 	}
 }
 
@@ -286,7 +310,7 @@ func TestGetModelRateLimitRemainingTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.account.GetModelRateLimitRemainingTime(tt.requestedModel)
+			result := tt.account.GetModelRateLimitRemainingTimeWithContext(context.Background(), tt.requestedModel)
 			if result < tt.minExpected || result > tt.maxExpected {
 				t.Errorf("GetModelRateLimitRemainingTime() = %v, want between %v and %v", result, tt.minExpected, tt.maxExpected)
 			}
@@ -504,7 +528,7 @@ func TestGetRateLimitRemainingTime(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := tt.account.GetRateLimitRemainingTime(tt.requestedModel)
+			result := tt.account.GetRateLimitRemainingTimeWithContext(context.Background(), tt.requestedModel)
 			if result < tt.minExpected || result > tt.maxExpected {
 				t.Errorf("GetRateLimitRemainingTime() = %v, want between %v and %v", result, tt.minExpected, tt.maxExpected)
 			}

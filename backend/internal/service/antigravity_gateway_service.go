@@ -263,7 +263,7 @@ func handleSmartRetry(p antigravityRetryLoopParams, resp *http.Response, respBod
 func antigravityRetryLoop(p antigravityRetryLoopParams) (*antigravityRetryLoopResult, error) {
 	// 预检查：如果账号已限流，根据剩余时间决定等待或切换
 	if p.requestedModel != "" {
-		if remaining := p.account.GetRateLimitRemainingTime(p.requestedModel); remaining > 0 {
+		if remaining := p.account.GetRateLimitRemainingTimeWithContext(p.ctx, p.requestedModel); remaining > 0 {
 			if remaining < antigravityRateLimitThreshold {
 				// 限流剩余时间较短，等待后继续
 				log.Printf("%s pre_check: rate_limit_wait remaining=%v model=%s account=%d",

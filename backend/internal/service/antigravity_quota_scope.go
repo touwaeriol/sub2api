@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"slices"
 	"strings"
 	"time"
@@ -57,15 +58,20 @@ func normalizeAntigravityModelName(model string) string {
 	return normalized
 }
 
-// IsSchedulableForModel 结合 Antigravity 配额域限流判断是否可调度
+// IsSchedulableForModel 结合 Antigravity 配额域限流判断是否可调度。
+// 保持旧签名以兼容既有调用方；默认使用 context.Background()。
 func (a *Account) IsSchedulableForModel(requestedModel string) bool {
+	return a.IsSchedulableForModelWithContext(context.Background(), requestedModel)
+}
+
+func (a *Account) IsSchedulableForModelWithContext(ctx context.Context, requestedModel string) bool {
 	if a == nil {
 		return false
 	}
 	if !a.IsSchedulable() {
 		return false
 	}
-	if a.isModelRateLimited(requestedModel) {
+	if a.isModelRateLimitedWithContext(ctx, requestedModel) {
 		return false
 	}
 	if a.Platform != PlatformAntigravity {
@@ -156,10 +162,16 @@ func (a *Account) GetQuotaScopeRateLimitRemainingTime(requestedModel string) tim
 // GetRateLimitRemainingTime 获取限流剩余时间（模型限流和模型域限流取最大值）
 // 返回 0 表示未限流或已过期
 func (a *Account) GetRateLimitRemainingTime(requestedModel string) time.Duration {
+	return a.GetRateLimitRemainingTimeWithContext(context.Background(), requestedModel)
+}
+
+// GetRateLimitRemainingTimeWithContext 获取限流剩余时间（模型限流和模型域限流取最大值）
+// 返回 0 表示未限流或已过期
+func (a *Account) GetRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
 	if a == nil {
 		return 0
 	}
-	modelRemaining := a.GetModelRateLimitRemainingTime(requestedModel)
+	modelRemaining := a.GetModelRateLimitRemainingTimeWithContext(ctx, requestedModel)
 	scopeRemaining := a.GetQuotaScopeRateLimitRemainingTime(requestedModel)
 	if modelRemaining > scopeRemaining {
 		return modelRemaining

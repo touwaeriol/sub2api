@@ -384,7 +384,7 @@ func shouldClearStickySession(account *Account, requestedModel string) bool {
 		return true
 	}
 	// 检查模型限流和 scope 限流，只在超过阈值时清除粘性会话
-	if remaining := account.GetRateLimitRemainingTime(requestedModel); remaining > stickySessionRateLimitThreshold {
+	if remaining := account.GetRateLimitRemainingTimeWithContext(context.Background(), requestedModel); remaining > stickySessionRateLimitThreshold {
 		return true
 	}
 	return false
@@ -541,6 +541,13 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	}
 
 	return ""
+}
+
+func setThinkingEnabledContext(ctx context.Context, parsed *ParsedRequest) context.Context {
+	if parsed == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.ThinkingEnabled, parsed.ThinkingEnabled)
 }
 
 // BindStickySession sets session -> account binding with standard TTL.
@@ -1345,13 +1352,13 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				filteredPlatform++
 				continue
 			}
-			if !account.IsSchedulableForModel(requestedModel) {
-				filteredModelScope++
-				modelScopeSkippedIDs = append(modelScopeSkippedIDs, account.ID)
-				continue
-			}
 			if requestedModel != "" && !s.isModelSupportedByAccount(account, requestedModel) {
 				filteredModelMapping++
+				continue
+			}
+			if !account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+				filteredModelScope++
+				modelScopeSkippedIDs = append(modelScopeSkippedIDs, account.ID)
 				continue
 			}
 			// 窗口费用检查（非粘性会话路径）
@@ -1381,8 +1388,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if stickyAccount, ok := accountByID[stickyAccountID]; ok {
 						if stickyAccount.IsSchedulable() &&
 							s.isAccountAllowedForPlatform(stickyAccount, platform, useMixed) &&
-							stickyAccount.IsSchedulableForModel(requestedModel) &&
 							(requestedModel == "" || s.isModelSupportedByAccount(stickyAccount, requestedModel)) &&
+							stickyAccount.IsSchedulableForModelWithContext(ctx, requestedModel) &&
 							s.isAccountSchedulableForWindowCost(ctx, stickyAccount, true) { // 粘性会话窗口费用检查
 							result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency)
 							if err == nil && result.Acquired {
@@ -1535,8 +1542,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				}
 				if !clearSticky && s.isAccountInGroup(account, groupID) &&
 					s.isAccountAllowedForPlatform(account, platform, useMixed) &&
-					account.IsSchedulableForModel(requestedModel) &&
 					(requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) &&
+					account.IsSchedulableForModelWithContext(ctx, requestedModel) &&
 					s.isAccountSchedulableForWindowCost(ctx, account, true) { // 粘性会话窗口费用检查
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 					if err == nil && result.Acquired {
@@ -1594,10 +1601,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.isAccountAllowedForPlatform(acc, platform, useMixed) {
 			continue
 		}
-		if !acc.IsSchedulableForModel(requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
 			continue
 		}
 		// 窗口费用检查（非粘性会话路径）
@@ -2445,7 +2452,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 							if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 								log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 							}
@@ -2492,10 +2499,10 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			if !acc.IsSchedulable() {
 				continue
 			}
-			if !acc.IsSchedulableForModel(requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+			if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
 				continue
 			}
 			if selected == nil {
@@ -2548,7 +2555,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+					if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 						if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 							log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 						}
@@ -2584,10 +2591,10 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if !acc.IsSchedulable() {
 			continue
 		}
-		if !acc.IsSchedulableForModel(requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
 			continue
 		}
 		if selected == nil {
@@ -2658,7 +2665,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isAccountInGroup(account, groupID) && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+						if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 							if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 								if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 									log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
@@ -2707,10 +2714,10 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 				continue
 			}
-			if !acc.IsSchedulableForModel(requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+			if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
 				continue
 			}
 			if selected == nil {
@@ -2763,7 +2770,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isAccountInGroup(account, groupID) && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+					if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 						if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 							if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 								log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
@@ -2801,10 +2808,10 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 			continue
 		}
-		if !acc.IsSchedulableForModel(requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
 			continue
 		}
 		if selected == nil {

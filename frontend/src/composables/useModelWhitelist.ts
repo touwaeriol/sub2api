@@ -322,7 +322,12 @@ export function buildModelMappingObject(
 
   if (mode === 'whitelist') {
     for (const model of allowedModels) {
-      mapping[model] = model
+      // whitelist 模式的本意是“精确模型列表”，如果用户输入了通配符（如 claude-*），
+      // 写入 model_mapping 会导致 GetMappedModel() 把真实模型映射成 "claude-*"，从而转发失败。
+      // 因此这里跳过包含通配符的条目。
+      if (!model.includes('*')) {
+        mapping[model] = model
+      }
     }
   } else {
     for (const m of modelMappings) {
