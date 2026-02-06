@@ -623,8 +623,8 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 }
 
 // mapAntigravityModel 获取映射后的模型名
-// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 默认值
-// 注意：白名单检查已在调度时通过 IsModelSupported 完成
+// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 空（不支持）
+// 注意：返回空字符串表示模型不被支持，调度时会过滤掉该账号
 func mapAntigravityModel(account *Account, requestedModel string) string {
 	if account == nil {
 		return ""
@@ -652,8 +652,8 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 		return requestedModel
 	}
 
-	// 5. 默认值
-	return "claude-sonnet-4-5"
+	// 5. 未知模型：返回空字符串，调度时会因为模型不支持而过滤
+	return ""
 }
 
 // getMappedModel 获取映射后的模型名

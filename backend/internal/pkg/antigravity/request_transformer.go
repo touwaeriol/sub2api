@@ -108,8 +108,8 @@ func TransformClaudeToGeminiWithOptions(claudeReq *ClaudeRequest, projectID, map
 		return nil, fmt.Errorf("build contents: %w", err)
 	}
 
-	// 2. 构建 systemInstruction
-	systemInstruction := buildSystemInstruction(claudeReq.System, claudeReq.Model, opts, claudeReq.Tools)
+	// 2. 构建 systemInstruction（使用 targetModel 而非原始请求模型，确保身份注入基于最终模型）
+	systemInstruction := buildSystemInstruction(claudeReq.System, targetModel, opts, claudeReq.Tools)
 
 	// 3. 构建 generationConfig
 	reqForConfig := claudeReq
@@ -197,8 +197,10 @@ type modelInfo struct {
 }
 
 // modelInfoMap 模型前缀 → 模型信息映射
+// 只有在此映射表中的模型才会注入身份提示词
 var modelInfoMap = map[string]modelInfo{
 	"claude-opus-4-5":   {DisplayName: "Claude Opus 4.5", CanonicalID: "claude-opus-4-5-20250929"},
+	"claude-opus-4-6":   {DisplayName: "Claude Opus 4.6", CanonicalID: "claude-opus-4-6"},
 	"claude-sonnet-4-5": {DisplayName: "Claude Sonnet 4.5", CanonicalID: "claude-sonnet-4-5-20250929"},
 	"claude-haiku-4-5":  {DisplayName: "Claude Haiku 4.5", CanonicalID: "claude-haiku-4-5-20251001"},
 }
