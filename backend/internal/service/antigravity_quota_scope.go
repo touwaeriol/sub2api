@@ -1,8 +1,10 @@
 package service
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"time"
 )
 
 const antigravityQuotaScopesKey = "antigravity_quota_scopes"
@@ -56,17 +58,123 @@ func normalizeAntigravityModelName(model string) string {
 	return normalized
 }
 
-// IsSchedulableForModel 判断账号是否可调度（只检查模型级限流）
+// IsSchedulableForModel 结合 Antigravity 配额域限流判断是否可调度。
+// 保持旧签名以兼容既有调用方；默认使用 context.Background()。
 func (a *Account) IsSchedulableForModel(requestedModel string) bool {
+	return a.IsSchedulableForModelWithContext(context.Background(), requestedModel)
+}
+
+func (a *Account) IsSchedulableForModelWithContext(ctx context.Context, requestedModel string) bool {
 	if a == nil {
 		return false
 	}
 	if !a.IsSchedulable() {
 		return false
 	}
-	// 只检查模型级限流，不再检查 Scope 级限流
-	if a.isModelRateLimited(requestedModel) {
+	if a.isModelRateLimitedWithContext(ctx, requestedModel) {
 		return false
 	}
-	return true
+	if a.Platform != PlatformAntigravity {
+		return true
+	}
+	scope, ok := resolveAntigravityQuotaScope(requestedModel)
+	if !ok {
+		return true
+	}
+	resetAt := a.antigravityQuotaScopeResetAt(scope)
+	if resetAt == nil {
+		return true
+	}
+	now := time.Now()
+	return !now.Before(*resetAt)
+}
+
+func (a *Account) antigravityQuotaScopeResetAt(scope AntigravityQuotaScope) *time.Time {
+	if a == nil || a.Extra == nil || scope == "" {
+		return nil
+	}
+	rawScopes, ok := a.Extra[antigravityQuotaScopesKey].(map[string]any)
+	if !ok {
+		return nil
+	}
+	rawScope, ok := rawScopes[string(scope)].(map[string]any)
+	if !ok {
+		return nil
+	}
+	resetAtRaw, ok := rawScope["rate_limit_reset_at"].(string)
+	if !ok || strings.TrimSpace(resetAtRaw) == "" {
+		return nil
+	}
+	resetAt, err := time.Parse(time.RFC3339, resetAtRaw)
+	if err != nil {
+		return nil
+	}
+	return &resetAt
+}
+
+var antigravityAllScopes = []AntigravityQuotaScope{
+	AntigravityQuotaScopeClaude,
+	AntigravityQuotaScopeGeminiText,
+	AntigravityQuotaScopeGeminiImage,
+}
+
+func (a *Account) GetAntigravityScopeRateLimits() map[string]int64 {
+	if a == nil || a.Platform != PlatformAntigravity {
+		return nil
+	}
+	now := time.Now()
+	result := make(map[string]int64)
+	for _, scope := range antigravityAllScopes {
+		resetAt := a.antigravityQuotaScopeResetAt(scope)
+		if resetAt != nil && now.Before(*resetAt) {
+			remainingSec := int64(time.Until(*resetAt).Seconds())
+			if remainingSec > 0 {
+				result[string(scope)] = remainingSec
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+// GetQuotaScopeRateLimitRemainingTime 获取模型域限流剩余时间
+// 返回 0 表示未限流或已过期
+func (a *Account) GetQuotaScopeRateLimitRemainingTime(requestedModel string) time.Duration {
+	if a == nil || a.Platform != PlatformAntigravity {
+		return 0
+	}
+	scope, ok := resolveAntigravityQuotaScope(requestedModel)
+	if !ok {
+		return 0
+	}
+	resetAt := a.antigravityQuotaScopeResetAt(scope)
+	if resetAt == nil {
+		return 0
+	}
+	if remaining := time.Until(*resetAt); remaining > 0 {
+		return remaining
+	}
+	return 0
+}
+
+// GetRateLimitRemainingTime 获取限流剩余时间（模型限流和模型域限流取最大值）
+// 返回 0 表示未限流或已过期
+func (a *Account) GetRateLimitRemainingTime(requestedModel string) time.Duration {
+	return a.GetRateLimitRemainingTimeWithContext(context.Background(), requestedModel)
+}
+
+// GetRateLimitRemainingTimeWithContext 获取限流剩余时间（模型限流和模型域限流取最大值）
+// 返回 0 表示未限流或已过期
+func (a *Account) GetRateLimitRemainingTimeWithContext(ctx context.Context, requestedModel string) time.Duration {
+	if a == nil {
+		return 0
+	}
+	modelRemaining := a.GetModelRateLimitRemainingTimeWithContext(ctx, requestedModel)
+	scopeRemaining := a.GetQuotaScopeRateLimitRemainingTime(requestedModel)
+	if modelRemaining > scopeRemaining {
+		return modelRemaining
+	}
+	return scopeRemaining
 }
