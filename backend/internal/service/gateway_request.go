@@ -21,14 +21,14 @@ import (
 // 2. 将解析结果 ParsedRequest 传递给 Service 层
 // 3. 避免重复 json.Unmarshal，减少 CPU 和内存开销
 type ParsedRequest struct {
-	Body           []byte // 原始请求体（保留用于转发）
-	Model          string // 请求的模型名称
-	Stream         bool   // 是否为流式请求
-	MetadataUserID string // metadata.user_id（用于会话亲和）
-	System         any    // system 字段内容
-	Messages       []any  // messages 数组
-	HasSystem      bool   // 是否包含 system 字段（包含 null 也视为显式传入）
-	ThinkingEnabled bool  // 是否开启 thinking（部分平台会影响最终模型名）
+	Body            []byte // 原始请求体（保留用于转发）
+	Model           string // 请求的模型名称
+	Stream          bool   // 是否为流式请求
+	MetadataUserID  string // metadata.user_id（用于会话亲和）
+	System          any    // system 字段内容
+	Messages        []any  // messages 数组
+	HasSystem       bool   // 是否包含 system 字段（包含 null 也视为显式传入）
+	ThinkingEnabled bool   // 是否开启 thinking（部分平台会影响最终模型名）
 }
 
 // ParseGatewayRequest 解析网关请求体并返回结构化结果

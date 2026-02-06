@@ -29,10 +29,6 @@ func (a *Account) getRateLimitRemainingForKey(key string) time.Duration {
 	return 0
 }
 
-func (a *Account) isModelRateLimited(requestedModel string) bool {
-	return a.isModelRateLimitedWithContext(context.Background(), requestedModel)
-}
-
 func (a *Account) isModelRateLimitedWithContext(ctx context.Context, requestedModel string) bool {
 	if a == nil {
 		return false
