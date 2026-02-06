@@ -1187,29 +1187,40 @@ watch(
       const extra = newAccount.extra as Record<string, unknown> | undefined
       mixedScheduling.value = extra?.mixed_scheduling === true
 
-      // Load antigravity model whitelist/mapping
+      // Load antigravity model mapping (统一使用 model_mapping)
       if (newAccount.platform === 'antigravity') {
         const credentials = newAccount.credentials as Record<string, unknown> | undefined
 
-        const rawWhitelist = credentials?.model_whitelist
-        if (Array.isArray(rawWhitelist)) {
-          antigravityWhitelistModels.value = rawWhitelist
-            .map((v) => String(v).trim())
-            .filter((v) => v.length > 0)
-        } else {
-          antigravityWhitelistModels.value = []
-        }
-
-        const rawAgMapping = credentials?.antigravity_model_mapping as Record<string, string> | undefined
+        // 从 model_mapping 读取映射配置
+        const rawAgMapping = credentials?.model_mapping as Record<string, string> | undefined
         if (rawAgMapping && typeof rawAgMapping === 'object') {
-          antigravityModelRestrictionMode.value = 'mapping'
-          antigravityModelMappings.value = Object.entries(rawAgMapping).map(([from, to]) => ({
-            from,
-            to
-          }))
+          const entries = Object.entries(rawAgMapping)
+          // 判断是白名单模式还是映射模式：如果所有 key === value，则为白名单模式
+          const isWhitelistStyle = entries.every(([from, to]) => from === to)
+
+          if (isWhitelistStyle && entries.length > 0) {
+            antigravityModelRestrictionMode.value = 'whitelist'
+            antigravityWhitelistModels.value = entries.map(([from]) => from)
+            antigravityModelMappings.value = []
+          } else {
+            antigravityModelRestrictionMode.value = 'mapping'
+            antigravityModelMappings.value = entries.map(([from, to]) => ({ from, to }))
+            antigravityWhitelistModels.value = []
+          }
         } else {
-          antigravityModelRestrictionMode.value = 'whitelist'
-          antigravityModelMappings.value = []
+          // 兼容旧数据：从 model_whitelist 读取
+          const rawWhitelist = credentials?.model_whitelist
+          if (Array.isArray(rawWhitelist) && rawWhitelist.length > 0) {
+            antigravityModelRestrictionMode.value = 'whitelist'
+            antigravityWhitelistModels.value = rawWhitelist
+              .map((v) => String(v).trim())
+              .filter((v) => v.length > 0)
+            antigravityModelMappings.value = []
+          } else {
+            antigravityModelRestrictionMode.value = 'whitelist'
+            antigravityWhitelistModels.value = []
+            antigravityModelMappings.value = []
+          }
         }
       } else {
         antigravityModelRestrictionMode.value = 'whitelist'
@@ -1626,41 +1637,34 @@ const handleSubmit = async () => {
       updatePayload.credentials = newCredentials
     }
 
-    // Antigravity: persist model whitelist/mapping to credentials (applies to all antigravity types)
+    // Antigravity: persist model mapping to credentials (applies to all antigravity types)
+    // 统一使用 model_mapping 字段，移除 model_whitelist
     if (props.account.platform === 'antigravity') {
       const currentCredentials = (updatePayload.credentials as Record<string, unknown>) ||
         ((props.account.credentials as Record<string, unknown>) || {})
       const newCredentials: Record<string, unknown> = { ...currentCredentials }
 
-      // Clear old fields first
+      // 移除旧字段
       delete newCredentials.model_whitelist
-      delete newCredentials.antigravity_model_mapping
-      // Legacy field (keep in sync)
       delete newCredentials.model_mapping
 
       if (antigravityModelRestrictionMode.value === 'whitelist') {
+        // 白名单模式：将选中的模型转换为 model_mapping 格式（key=value，精确匹配）
         if (antigravityWhitelistModels.value.length > 0) {
-          newCredentials.model_whitelist = [...antigravityWhitelistModels.value]
-
-          // Legacy compatibility: also store as model_mapping whitelist (from===to)
-          const legacyMapping: Record<string, string> = {}
+          const mapping: Record<string, string> = {}
           for (const m of antigravityWhitelistModels.value) {
-            if (!m.includes('*')) {
-              legacyMapping[m] = m
-            }
+            mapping[m] = m
           }
-          newCredentials.model_mapping = legacyMapping
+          newCredentials.model_mapping = mapping
         }
       } else {
+        // 映射模式：直接使用用户配置的映射
         const antigravityModelMapping = buildModelMappingObject(
           'mapping',
           [],
           antigravityModelMappings.value
         )
         if (antigravityModelMapping) {
-          newCredentials.antigravity_model_mapping = antigravityModelMapping
-
-          // Legacy compatibility
           newCredentials.model_mapping = antigravityModelMapping
         }
       }

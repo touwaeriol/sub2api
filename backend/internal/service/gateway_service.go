@@ -2865,7 +2865,8 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 		if !IsAntigravityModelSupported(requestedModel) {
 			return false
 		}
-		return account.IsModelInAntigravityWhitelist(requestedModel)
+		// 使用统一的 IsModelSupported（支持通配符）
+		return account.IsModelSupported(requestedModel)
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
 	if account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {

@@ -2016,7 +2016,8 @@ import {
   getPresetMappingsByPlatform,
   getModelsByPlatform,
   commonErrorCodes,
-  buildModelMappingObject
+  buildModelMappingObject,
+  antigravityDefaultMappings
 } from '@/composables/useModelWhitelist'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
@@ -2302,9 +2303,16 @@ watch(
     if (newVal) {
       // Modal opened - fill related models
       allowedModels.value = [...getModelsByPlatform(form.platform)]
-      antigravityWhitelistModels.value = []
-      antigravityModelMappings.value = []
-      antigravityModelRestrictionMode.value = 'whitelist'
+      // Antigravity: 默认使用映射模式并填充默认映射
+      if (form.platform === 'antigravity') {
+        antigravityModelRestrictionMode.value = 'mapping'
+        antigravityModelMappings.value = [...antigravityDefaultMappings]
+        antigravityWhitelistModels.value = []
+      } else {
+        antigravityWhitelistModels.value = []
+        antigravityModelMappings.value = []
+        antigravityModelRestrictionMode.value = 'mapping'
+      }
     } else {
       resetForm()
     }
@@ -2343,17 +2351,21 @@ watch(
     // Clear model-related settings
     allowedModels.value = []
     modelMappings.value = []
-    antigravityWhitelistModels.value = []
-    antigravityModelMappings.value = []
-    antigravityModelRestrictionMode.value = 'whitelist'
+    // Antigravity: 默认使用映射模式并填充默认映射
+    if (newPlatform === 'antigravity') {
+      antigravityModelRestrictionMode.value = 'mapping'
+      antigravityModelMappings.value = [...antigravityDefaultMappings]
+      antigravityWhitelistModels.value = []
+      accountCategory.value = 'oauth-based'
+      antigravityAccountType.value = 'oauth'
+    } else {
+      antigravityWhitelistModels.value = []
+      antigravityModelMappings.value = []
+      antigravityModelRestrictionMode.value = 'mapping'
+    }
     // Reset Anthropic-specific settings when switching to other platforms
     if (newPlatform !== 'anthropic') {
       interceptWarmupRequests.value = false
-    }
-    // Antigravity: reset to OAuth by default, but allow upstream selection
-    if (newPlatform === 'antigravity') {
-      accountCategory.value = 'oauth-based'
-      antigravityAccountType.value = 'oauth'
     }
     // Reset OAuth states
     oauth.resetState()
@@ -2598,9 +2610,9 @@ const resetForm = () => {
   modelRestrictionMode.value = 'whitelist'
   allowedModels.value = [...claudeModels] // Default fill related models
 
-  antigravityModelRestrictionMode.value = 'whitelist'
+  antigravityModelRestrictionMode.value = 'mapping'
   antigravityWhitelistModels.value = []
-  antigravityModelMappings.value = []
+  antigravityModelMappings.value = [...antigravityDefaultMappings]
   customErrorCodesEnabled.value = false
   selectedErrorCodes.value = []
   customErrorCodeInput.value = null
@@ -2720,18 +2732,15 @@ const handleSubmit = async () => {
       api_key: upstreamApiKey.value.trim()
     }
 
+    // 统一使用 model_mapping 字段（移除 model_whitelist）
     if (antigravityModelRestrictionMode.value === 'whitelist') {
       if (antigravityWhitelistModels.value.length > 0) {
-        credentials.model_whitelist = [...antigravityWhitelistModels.value]
-
-        // Legacy compatibility: also store as model_mapping whitelist (from===to)
-        const legacyMapping: Record<string, string> = {}
+        // 白名单模式：key=value（精确匹配或通配符）
+        const mapping: Record<string, string> = {}
         for (const m of antigravityWhitelistModels.value) {
-          if (!m.includes('*')) {
-            legacyMapping[m] = m
-          }
+          mapping[m] = m
         }
-        credentials.model_mapping = legacyMapping
+        credentials.model_mapping = mapping
       }
     } else {
       const antigravityModelMapping = buildModelMappingObject(
@@ -2740,9 +2749,6 @@ const handleSubmit = async () => {
         antigravityModelMappings.value
       )
       if (antigravityModelMapping) {
-        credentials.antigravity_model_mapping = antigravityModelMapping
-
-        // Legacy compatibility
         credentials.model_mapping = antigravityModelMapping
       }
     }
@@ -2957,18 +2963,15 @@ const handleAntigravityExchange = async (authCode: string) => {
 		if (!tokenInfo) return
 
 		const credentials = antigravityOAuth.buildCredentials(tokenInfo)
+		// 统一使用 model_mapping 字段（移除 model_whitelist）
 		if (antigravityModelRestrictionMode.value === 'whitelist') {
 			if (antigravityWhitelistModels.value.length > 0) {
-				credentials.model_whitelist = [...antigravityWhitelistModels.value]
-
-				// Legacy compatibility: also store as model_mapping whitelist (from===to)
-				const legacyMapping: Record<string, string> = {}
+				// 白名单模式：key=value（精确匹配或通配符）
+				const mapping: Record<string, string> = {}
 				for (const m of antigravityWhitelistModels.value) {
-					if (!m.includes('*')) {
-						legacyMapping[m] = m
-					}
+					mapping[m] = m
 				}
-				credentials.model_mapping = legacyMapping
+				credentials.model_mapping = mapping
 			}
 		} else {
 			const antigravityModelMapping = buildModelMappingObject(
@@ -2977,9 +2980,6 @@ const handleAntigravityExchange = async (authCode: string) => {
 				antigravityModelMappings.value
 			)
 			if (antigravityModelMapping) {
-				credentials.antigravity_model_mapping = antigravityModelMapping
-
-				// Legacy compatibility
 				credentials.model_mapping = antigravityModelMapping
 			}
 		}

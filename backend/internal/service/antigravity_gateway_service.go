@@ -521,15 +521,20 @@ func logPrefix(sessionID, accountName string) string {
 
 // Antigravity 直接支持的模型（精确匹配透传）
 var antigravitySupportedModels = map[string]bool{
+	// Claude 模型
 	"claude-opus-4-5-thinking":   true,
+	"claude-opus-4-6":            true,
 	"claude-sonnet-4-5":          true,
 	"claude-sonnet-4-5-thinking": true,
-	"gemini-2.5-flash":           true,
-	"gemini-2.5-pro":             true,
-	"gemini-3-flash":             true,
-	"gemini-3-pro-low":           true,
-	"gemini-3-pro-high":          true,
-	"gemini-3-pro-image":         true,
+	// Gemini 模型
+	"gemini-2.5-flash":          true,
+	"gemini-2.5-flash-lite":     true,
+	"gemini-2.5-flash-thinking": true,
+	"gemini-2.5-pro":            true,
+	"gemini-3-flash":            true,
+	"gemini-3-pro-low":          true,
+	"gemini-3-pro-high":         true,
+	"gemini-3-pro-image":        true,
 }
 
 // Antigravity 前缀映射表（按前缀长度降序排列，确保最长匹配优先）
@@ -545,12 +550,17 @@ var antigravityPrefixMapping = []struct {
 	// gemini-2.5 前缀映射（直接透传）
 	{"gemini-2.5-flash", "gemini-2.5-flash"}, // gemini-2.5-flash-xxx → gemini-2.5-flash
 	{"gemini-2.5-pro", "gemini-2.5-pro"},     // gemini-2.5-pro-xxx → gemini-2.5-pro
-	// Claude 映射
-	{"claude-3-5-sonnet", "claude-sonnet-4-5"}, // 旧版 claude-3-5-sonnet-xxx
-	{"claude-sonnet-4-5", "claude-sonnet-4-5"}, // claude-sonnet-4-5-xxx
-	{"claude-haiku-4-5", "claude-sonnet-4-5"},  // claude-haiku-4-5-xxx → sonnet
+	// Claude 4.6 映射（最长前缀优先）
+	{"claude-opus-4-6", "claude-opus-4-6"}, // claude-opus-4-6-xxx → claude-opus-4-6
+	// Claude 4.5 映射
+	{"claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking"}, // claude-sonnet-4-5-thinking-xxx
+	{"claude-opus-4-5-thinking", "claude-opus-4-5-thinking"},     // claude-opus-4-5-thinking-xxx
+	{"claude-3-5-sonnet", "claude-sonnet-4-5"},                   // 旧版 claude-3-5-sonnet-xxx
+	{"claude-sonnet-4-5", "claude-sonnet-4-5"},                   // claude-sonnet-4-5-xxx
+	{"claude-haiku-4-5", "claude-sonnet-4-5"},                    // claude-haiku-4-5-xxx → sonnet
 	{"claude-opus-4-5", "claude-opus-4-5-thinking"},
 	{"claude-3-haiku", "claude-sonnet-4-5"}, // 旧版 claude-3-haiku-xxx → sonnet
+	// Claude 4.x 映射
 	{"claude-sonnet-4", "claude-sonnet-4-5"},
 	{"claude-haiku-4", "claude-sonnet-4-5"}, // → sonnet
 	{"claude-opus-4", "claude-opus-4-5-thinking"},
@@ -630,16 +640,12 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 	return truncateString(string(body), maxBytes)
 }
 
-// mapAntigravityModel 获取映射后的模型名（与 AntigravityGatewayService.getMappedModel 保持一致）
-// 返回空字符串表示模型被白名单阻止
+// mapAntigravityModel 获取映射后的模型名
+// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 默认值
+// 注意：白名单检查已在调度时通过 IsModelSupported 完成
 func mapAntigravityModel(account *Account, requestedModel string) string {
 	if account == nil {
 		return ""
-	}
-
-	// 0. 白名单检查（如果配置了白名单）
-	if !account.IsModelInAntigravityWhitelist(requestedModel) {
-		return "" // 被白名单阻止
 	}
 
 	// 1. 原生支持的模型：直接透传（不允许被账号映射覆盖）
@@ -647,35 +653,29 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 		return requestedModel
 	}
 
-	// 2. 账户级自定义映射（支持通配符，用户自定义优先）
-	if mapped := account.GetAntigravityMappedModel(requestedModel); mapped != "" {
-		return mapped
-	}
-
-	// 3. 账户级精确映射（旧版 model_mapping 兼容）
+	// 2. 账户级映射（统一使用 model_mapping，支持通配符）
 	if mapped := account.GetMappedModel(requestedModel); mapped != requestedModel {
 		return mapped
 	}
 
-	// 4. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
+	// 3. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
 	for _, pm := range antigravityPrefixMapping {
 		if strings.HasPrefix(requestedModel, pm.prefix) {
 			return pm.target
 		}
 	}
 
-	// 5. Gemini 模型透传（未匹配到前缀的 gemini 模型）
+	// 4. Gemini 模型透传（未匹配到前缀的 gemini 模型）
 	if strings.HasPrefix(requestedModel, "gemini-") {
 		return requestedModel
 	}
 
-	// 6. 默认值
+	// 5. 默认值
 	return "claude-sonnet-4-5"
 }
 
 // getMappedModel 获取映射后的模型名
-// 逻辑：白名单检查 → 账户自定义映射（通配符）→ 账户精确映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
-// 返回空字符串表示模型被白名单阻止
+// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 默认值
 func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
 	return mapAntigravityModel(account, requestedModel)
 }

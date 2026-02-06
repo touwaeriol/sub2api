@@ -256,6 +256,37 @@ const antigravityPresetMappings = [
   { label: 'Opus 4.5', from: 'claude-opus-4-5-thinking', to: 'claude-opus-4-5-thinking', color: 'bg-pink-100 text-pink-700 hover:bg-pink-200 dark:bg-pink-900/30 dark:text-pink-400' }
 ]
 
+// Antigravity 默认映射（与迁移脚本 049 保持一致）
+// 按前缀长度降序排列，确保最长匹配优先
+// 包含官方 API 返回的所有模型
+export const antigravityDefaultMappings: { from: string; to: string }[] = [
+  // Claude 模型（按前缀长度降序）
+  { from: 'claude-opus-4-6*', to: 'claude-opus-4-6' },
+  { from: 'claude-opus-4-5-thinking*', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-opus-4-5*', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-sonnet-4-5-thinking*', to: 'claude-sonnet-4-5-thinking' },
+  { from: 'claude-sonnet-4-5*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-3-5-sonnet*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-haiku-4-5*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-3-haiku*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-sonnet-4*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-haiku-4*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-opus-4*', to: 'claude-opus-4-5-thinking' },
+  // Gemini 模型（按前缀长度降序）
+  { from: 'gemini-3-pro-image*', to: 'gemini-3-pro-image' },
+  { from: 'gemini-3-pro-high*', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-pro-low*', to: 'gemini-3-pro-low' },
+  { from: 'gemini-3-pro*', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-flash*', to: 'gemini-3-flash' },
+  { from: 'gemini-2.5-flash-thinking*', to: 'gemini-2.5-flash-thinking' },
+  { from: 'gemini-2.5-flash-lite*', to: 'gemini-2.5-flash-lite' },
+  { from: 'gemini-2.5-flash*', to: 'gemini-2.5-flash' },
+  { from: 'gemini-2.5-pro*', to: 'gemini-2.5-pro' },
+  // 其他官方模型（精确匹配）
+  { from: 'gpt-oss-120b-medium', to: 'gpt-oss-120b-medium' },
+  { from: 'tab_flash_lite_preview', to: 'tab_flash_lite_preview' }
+]
+
 // =====================
 // 常用错误码
 // =====================

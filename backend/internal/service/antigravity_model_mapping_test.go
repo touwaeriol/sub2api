@@ -281,26 +281,3 @@ func TestAntigravityGatewayService_IsModelSupported(t *testing.T) {
 		})
 	}
 }
-
-func TestAntigravityGatewayService_GetMappedModel_Whitelist(t *testing.T) {
-	svc := &AntigravityGatewayService{}
-
-	account := &Account{
-		Platform: PlatformAntigravity,
-		Credentials: map[string]any{
-			"model_whitelist": []any{"claude-*"},
-		},
-	}
-
-	require.Equal(t, "claude-sonnet-4-5", svc.getMappedModel(account, "claude-unknown-model"))
-	require.Equal(t, "", svc.getMappedModel(account, "gemini-3-flash"))
-}
-
-func TestAccount_GetAntigravityModelWhitelist_TrimsStringSlice(t *testing.T) {
-	account := &Account{
-		Credentials: map[string]any{
-			"model_whitelist": []string{"  claude-*  ", "", "gemini-*"},
-		},
-	}
-	require.Equal(t, []string{"claude-*", "gemini-*"}, account.GetAntigravityModelWhitelist())
-}
