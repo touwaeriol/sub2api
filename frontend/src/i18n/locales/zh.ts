@@ -1642,6 +1642,8 @@ export default {
       actualModel: '实际模型',
       addMapping: '添加映射',
       mappingExists: '模型 {model} 的映射已存在',
+      wildcardOnlyAtEnd: '通配符 * 只能放在末尾',
+      targetNoWildcard: '目标模型不能包含通配符 *',
       searchModels: '搜索模型...',
       noMatchingModels: '没有匹配的模型',
       fillRelatedModels: '填入相关模型',

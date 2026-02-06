@@ -1494,6 +1494,8 @@ export default {
       actualModel: 'Actual model',
       addMapping: 'Add Mapping',
       mappingExists: 'Mapping for {model} already exists',
+      wildcardOnlyAtEnd: 'Wildcard * can only be at the end',
+      targetNoWildcard: 'Target model cannot contain wildcard *',
       searchModels: 'Search models...',
       noMatchingModels: 'No matching models',
       fillRelatedModels: 'Fill related models',

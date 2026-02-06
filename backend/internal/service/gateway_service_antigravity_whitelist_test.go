@@ -3,8 +3,10 @@
 package service
 
 import (
+	"context"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/stretchr/testify/require"
 )
 
@@ -16,7 +18,7 @@ func TestGatewayService_isModelSupportedByAccount_AntigravityModelMapping(t *tes
 		Platform: PlatformAntigravity,
 		Credentials: map[string]any{
 			"model_mapping": map[string]any{
-				"claude-*":  "claude-sonnet-4-5",
+				"claude-*":   "claude-sonnet-4-5",
 				"gemini-3-*": "gemini-3-flash",
 			},
 		},
@@ -58,4 +60,112 @@ func TestGatewayService_isModelSupportedByAccount_AntigravityNoMapping(t *testin
 
 	// 非 claude-/gemini- 前缀仍然不支持
 	require.False(t, svc.isModelSupportedByAccount(account, "gpt-4"))
+}
+
+// TestGatewayService_isModelSupportedByAccountWithContext_ThinkingMode 测试 thinking 模式下的模型支持检查
+// 验证调度时使用映射后的最终模型名（包括 thinking 后缀）来检查 model_mapping 支持
+func TestGatewayService_isModelSupportedByAccountWithContext_ThinkingMode(t *testing.T) {
+	svc := &GatewayService{}
+
+	tests := []struct {
+		name            string
+		modelMapping    map[string]any
+		requestedModel  string
+		thinkingEnabled bool
+		expected        bool
+	}{
+		// 场景 1: 配置 claude-sonnet-4-5-thinking，请求 claude-sonnet-4-5 + thinking=true
+		// 最终模型名 = claude-sonnet-4-5-thinking，应该匹配
+		{
+			name: "thinking_enabled_matches_thinking_model",
+			modelMapping: map[string]any{
+				"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: true,
+			expected:        true,
+		},
+		// 场景 2: 只配置 claude-sonnet-4-5-thinking，请求 claude-sonnet-4-5 + thinking=false
+		// 最终模型名 = claude-sonnet-4-5，不在 mapping 中，应该不匹配
+		{
+			name: "thinking_disabled_no_match_thinking_only_mapping",
+			modelMapping: map[string]any{
+				"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: false,
+			expected:        false,
+		},
+		// 场景 3: 配置 claude-sonnet-4-5（非 thinking），请求 claude-sonnet-4-5 + thinking=true
+		// 最终模型名 = claude-sonnet-4-5-thinking，不在 mapping 中，应该不匹配
+		{
+			name: "thinking_enabled_no_match_non_thinking_mapping",
+			modelMapping: map[string]any{
+				"claude-sonnet-4-5": "claude-sonnet-4-5",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: true,
+			expected:        false,
+		},
+		// 场景 4: 配置两种模型，请求 claude-sonnet-4-5 + thinking=true，应该匹配 thinking 版本
+		{
+			name: "both_models_thinking_enabled_matches_thinking",
+			modelMapping: map[string]any{
+				"claude-sonnet-4-5":          "claude-sonnet-4-5",
+				"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: true,
+			expected:        true,
+		},
+		// 场景 5: 配置两种模型，请求 claude-sonnet-4-5 + thinking=false，应该匹配非 thinking 版本
+		{
+			name: "both_models_thinking_disabled_matches_non_thinking",
+			modelMapping: map[string]any{
+				"claude-sonnet-4-5":          "claude-sonnet-4-5",
+				"claude-sonnet-4-5-thinking": "claude-sonnet-4-5-thinking",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: false,
+			expected:        true,
+		},
+		// 场景 6: 通配符 claude-* 应该同时匹配 thinking 和非 thinking
+		{
+			name: "wildcard_matches_thinking",
+			modelMapping: map[string]any{
+				"claude-*": "claude-sonnet-4-5",
+			},
+			requestedModel:  "claude-sonnet-4-5",
+			thinkingEnabled: true,
+			expected:        true, // claude-sonnet-4-5-thinking 匹配 claude-*
+		},
+		// 场景 7: 其他模型（非 sonnet-4-5）的 thinking 不受影响
+		{
+			name: "opus_thinking_unchanged",
+			modelMapping: map[string]any{
+				"claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
+			},
+			requestedModel:  "claude-opus-4-5",
+			thinkingEnabled: true,
+			expected:        true, // claude-opus-4-5 映射到 claude-opus-4-5-thinking，匹配
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &Account{
+				Platform: PlatformAntigravity,
+				Credentials: map[string]any{
+					"model_mapping": tt.modelMapping,
+				},
+			}
+
+			ctx := context.WithValue(context.Background(), ctxkey.ThinkingEnabled, tt.thinkingEnabled)
+			result := svc.isModelSupportedByAccountWithContext(ctx, account, tt.requestedModel)
+
+			require.Equal(t, tt.expected, result,
+				"isModelSupportedByAccountWithContext(ctx[thinking=%v], account, %q) = %v, want %v",
+				tt.thinkingEnabled, tt.requestedModel, result, tt.expected)
+		})
+	}
 }
