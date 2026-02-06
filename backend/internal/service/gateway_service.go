@@ -1668,14 +1668,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// Antigravity 平台：优先级硬过滤 →（同优先级内）LRU（按模型最近使用时间）
+		// Antigravity 平台：优先级硬过滤 →（同优先级内）按调用次数选择（最少优先，新账号用平均值）
 		// 其他平台：分层过滤选择：优先级 → 负载率 → LRU
 		if isAntigravity {
 			for len(available) > 0 {
 				// 1. 取优先级最小的集合（硬过滤）
 				candidates := filterByMinPriority(available)
-				// 2. 同优先级内按 LRU 选择（优先使用模型级 last_used；取不到则回退到账号 last_used）
-				selected := selectByModelLRU(candidates, modelLoadMap, preferOAuth)
+				// 2. 同优先级内按调用次数选择（调用次数最少优先，新账号使用平均值）
+				selected := selectByCallCount(candidates, modelLoadMap, preferOAuth)
 				if selected == nil {
 					break
 				}
@@ -2358,6 +2358,87 @@ func selectByModelLRU(accounts []accountWithLoad, modelLoadMap map[int64]*ModelL
 	// 5. 随机选择一个
 	selectedIdx := candidateIdxs[mathrand.Intn(len(candidateIdxs))]
 	return &accounts[selectedIdx]
+}
+
+// selectByCallCount 从候选账号中选择调用次数最少的账号（Antigravity 专用）
+// 新账号（CallCount=0）使用平均调用次数作为虚拟值，避免冷启动被猛调
+// 如果有多个账号具有相同的最小调用次数，则随机选择一个
+func selectByCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo, preferOAuth bool) *accountWithLoad {
+	if len(accounts) == 0 {
+		return nil
+	}
+	if len(accounts) == 1 {
+		return &accounts[0]
+	}
+
+	// 如果没有负载信息，回退到 LRU
+	if modelLoadMap == nil {
+		return selectByLRU(accounts, preferOAuth)
+	}
+
+	// 1. 计算平均调用次数（用于新账号冷启动）
+	var totalCallCount int64
+	var countWithCalls int
+	for _, acc := range accounts {
+		if info := modelLoadMap[acc.account.ID]; info != nil && info.CallCount > 0 {
+			totalCallCount += info.CallCount
+			countWithCalls++
+		}
+	}
+
+	var avgCallCount int64
+	if countWithCalls > 0 {
+		avgCallCount = totalCallCount / int64(countWithCalls)
+	}
+
+	// 2. 获取每个账号的有效调用次数
+	getEffectiveCallCount := func(acc accountWithLoad) int64 {
+		if acc.account == nil {
+			return 0
+		}
+		info := modelLoadMap[acc.account.ID]
+		if info == nil || info.CallCount == 0 {
+			return avgCallCount // 新账号使用平均值
+		}
+		return info.CallCount
+	}
+
+	// 3. 找到最小调用次数
+	minCount := getEffectiveCallCount(accounts[0])
+	for _, acc := range accounts[1:] {
+		if c := getEffectiveCallCount(acc); c < minCount {
+			minCount = c
+		}
+	}
+
+	// 4. 收集所有具有最小调用次数的账号
+	var candidateIdxs []int
+	for i, acc := range accounts {
+		if getEffectiveCallCount(acc) == minCount {
+			candidateIdxs = append(candidateIdxs, i)
+		}
+	}
+
+	// 5. 如果只有一个候选，直接返回
+	if len(candidateIdxs) == 1 {
+		return &accounts[candidateIdxs[0]]
+	}
+
+	// 6. preferOAuth 处理
+	if preferOAuth {
+		var oauthIdxs []int
+		for _, idx := range candidateIdxs {
+			if accounts[idx].account.Type == AccountTypeOAuth {
+				oauthIdxs = append(oauthIdxs, idx)
+			}
+		}
+		if len(oauthIdxs) > 0 {
+			candidateIdxs = oauthIdxs
+		}
+	}
+
+	// 7. 随机选择
+	return &accounts[candidateIdxs[mathrand.Intn(len(candidateIdxs))]]
 }
 
 // sortCandidatesForFallback 根据配置选择排序策略
