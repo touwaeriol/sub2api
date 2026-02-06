@@ -1051,7 +1051,6 @@ import {
   commonErrorCodes,
   buildModelMappingObject,
   getModelsByPlatform,
-  antigravityDefaultMappings,
   isValidWildcardPattern
 } from '@/composables/useModelWhitelist'
 
