@@ -53,10 +53,27 @@ const geminiModels = [
   'gemini-3-pro-preview'
 ]
 
-// Antigravity（透传 claude-/gemini- 前缀）
+// Antigravity 官方支持的模型（精确匹配）
+// 基于官方 API 返回的模型列表，只支持 Claude 4.5+ 和 Gemini 2.5+
 const antigravityModels = [
-  ...claudeModels,
-  ...geminiModels
+  // Claude 4.5+ 系列
+  'claude-opus-4-6',
+  'claude-opus-4-5-thinking',
+  'claude-sonnet-4-5',
+  'claude-sonnet-4-5-thinking',
+  // Gemini 2.5 系列
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash-thinking',
+  'gemini-2.5-pro',
+  // Gemini 3 系列
+  'gemini-3-flash',
+  'gemini-3-pro-high',
+  'gemini-3-pro-low',
+  'gemini-3-pro-image',
+  // 其他
+  'gpt-oss-120b-medium',
+  'tab_flash_lite_preview'
 ]
 
 // 智谱 GLM
@@ -257,32 +274,35 @@ const antigravityPresetMappings = [
 ]
 
 // Antigravity 默认映射（与迁移脚本 049 保持一致）
-// 按前缀长度降序排列，确保最长匹配优先
-// 包含官方 API 返回的所有模型
+// 基于官方 API 返回的模型列表，只支持 Claude 4.5+ 和 Gemini 2.5+
+// 精确匹配，无通配符
 export const antigravityDefaultMappings: { from: string; to: string }[] = [
-  // Claude 模型（按前缀长度降序）
-  { from: 'claude-opus-4-6*', to: 'claude-opus-4-6' },
-  { from: 'claude-opus-4-5-thinking*', to: 'claude-opus-4-5-thinking' },
-  { from: 'claude-opus-4-5*', to: 'claude-opus-4-5-thinking' },
-  { from: 'claude-sonnet-4-5-thinking*', to: 'claude-sonnet-4-5-thinking' },
-  { from: 'claude-sonnet-4-5*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-3-5-sonnet*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-haiku-4-5*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-3-haiku*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-sonnet-4*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-haiku-4*', to: 'claude-sonnet-4-5' },
-  { from: 'claude-opus-4*', to: 'claude-opus-4-5-thinking' },
-  // Gemini 模型（按前缀长度降序）
-  { from: 'gemini-3-pro-image*', to: 'gemini-3-pro-image' },
-  { from: 'gemini-3-pro-high*', to: 'gemini-3-pro-high' },
-  { from: 'gemini-3-pro-low*', to: 'gemini-3-pro-low' },
-  { from: 'gemini-3-pro*', to: 'gemini-3-pro-high' },
-  { from: 'gemini-3-flash*', to: 'gemini-3-flash' },
-  { from: 'gemini-2.5-flash-thinking*', to: 'gemini-2.5-flash-thinking' },
-  { from: 'gemini-2.5-flash-lite*', to: 'gemini-2.5-flash-lite' },
-  { from: 'gemini-2.5-flash*', to: 'gemini-2.5-flash' },
-  { from: 'gemini-2.5-pro*', to: 'gemini-2.5-pro' },
-  // 其他官方模型（精确匹配）
+  // Claude 白名单
+  { from: 'claude-opus-4-6', to: 'claude-opus-4-6' },
+  { from: 'claude-opus-4-5-thinking', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-sonnet-4-5', to: 'claude-sonnet-4-5' },
+  { from: 'claude-sonnet-4-5-thinking', to: 'claude-sonnet-4-5-thinking' },
+  // Claude 详细版本 ID 映射
+  { from: 'claude-opus-4-5-20251101', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-sonnet-4-5-20250929', to: 'claude-sonnet-4-5' },
+  // Claude Haiku → Sonnet（无 Haiku 支持）
+  { from: 'claude-haiku-4-5', to: 'claude-sonnet-4-5' },
+  { from: 'claude-haiku-4-5-20251001', to: 'claude-sonnet-4-5' },
+  // Gemini 2.5 白名单
+  { from: 'gemini-2.5-flash', to: 'gemini-2.5-flash' },
+  { from: 'gemini-2.5-flash-lite', to: 'gemini-2.5-flash-lite' },
+  { from: 'gemini-2.5-flash-thinking', to: 'gemini-2.5-flash-thinking' },
+  { from: 'gemini-2.5-pro', to: 'gemini-2.5-pro' },
+  // Gemini 3 白名单
+  { from: 'gemini-3-flash', to: 'gemini-3-flash' },
+  { from: 'gemini-3-pro-high', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-pro-low', to: 'gemini-3-pro-low' },
+  { from: 'gemini-3-pro-image', to: 'gemini-3-pro-image' },
+  // Gemini 3 preview 映射
+  { from: 'gemini-3-flash-preview', to: 'gemini-3-flash' },
+  { from: 'gemini-3-pro-preview', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-pro-image-preview', to: 'gemini-3-pro-image' },
+  // 其他官方模型
   { from: 'gpt-oss-120b-medium', to: 'gpt-oss-120b-medium' },
   { from: 'tab_flash_lite_preview', to: 'tab_flash_lite_preview' }
 ]
