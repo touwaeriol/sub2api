@@ -706,7 +706,7 @@
         <div class="mb-4 flex gap-2">
           <button
             type="button"
-            @click="antigravityModelRestrictionMode = 'whitelist'"
+            @click="switchToAntigravityWhitelist()"
             :class="[
               'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
               antigravityModelRestrictionMode === 'whitelist'
@@ -726,7 +726,7 @@
           </button>
           <button
             type="button"
-            @click="antigravityModelRestrictionMode = 'mapping'"
+            @click="switchToAntigravityMapping()"
             :class="[
               'flex-1 rounded-lg px-4 py-2 text-sm font-medium transition-all',
               antigravityModelRestrictionMode === 'mapping'
@@ -2450,6 +2450,24 @@ const addAntigravityPresetMapping = (from: string, to: string) => {
     return
   }
   antigravityModelMappings.value.push({ from, to })
+}
+
+// 切换到白名单模式，自动填充默认模型
+const switchToAntigravityWhitelist = () => {
+  antigravityModelRestrictionMode.value = 'whitelist'
+  // 如果白名单为空，自动填充 antigravity 平台的默认模型
+  if (antigravityWhitelistModels.value.length === 0) {
+    antigravityWhitelistModels.value = [...getModelsByPlatform('antigravity')]
+  }
+}
+
+// 切换到映射模式，自动填充默认映射
+const switchToAntigravityMapping = () => {
+  antigravityModelRestrictionMode.value = 'mapping'
+  // 如果映射为空，自动填充默认映射
+  if (antigravityModelMappings.value.length === 0) {
+    antigravityModelMappings.value = [...antigravityDefaultMappings]
+  }
 }
 
 // Error code toggle helper
