@@ -1371,13 +1371,9 @@ const switchToAntigravityWhitelist = () => {
   }
 }
 
-// 切换到映射模式，自动填充默认映射
+// 切换到映射模式（编辑时不自动填充默认映射，保持账号原有配置）
 const switchToAntigravityMapping = () => {
   antigravityModelRestrictionMode.value = 'mapping'
-  // 如果映射为空，自动填充默认映射
-  if (antigravityModelMappings.value.length === 0) {
-    antigravityModelMappings.value = [...antigravityDefaultMappings]
-  }
 }
 
 // Error code toggle helper
