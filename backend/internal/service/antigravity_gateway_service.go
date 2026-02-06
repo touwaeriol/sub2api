@@ -36,7 +36,7 @@ const (
 	antigravityRateLimitThreshold       = 7 * time.Second
 	antigravitySmartRetryMinWait        = 1 * time.Second // 智能重试最小等待时间
 	antigravitySmartRetryMaxAttempts    = 3               // 智能重试最大次数
-	antigravityDefaultRateLimitDuration = 1 * time.Minute // 默认限流时间（无 retryDelay 时使用）
+	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（无 retryDelay 时使用）
 
 	// Google RPC 状态和类型常量
 	googleRPCStatusResourceExhausted      = "RESOURCE_EXHAUSTED"
