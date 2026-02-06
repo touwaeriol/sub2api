@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 )
 
 type Account struct {
@@ -348,10 +350,18 @@ func parseTempUnschedInt(value any) int {
 
 func (a *Account) GetModelMapping() map[string]string {
 	if a.Credentials == nil {
+		// Antigravity 平台使用默认映射
+		if a.Platform == domain.PlatformAntigravity {
+			return domain.DefaultAntigravityModelMapping
+		}
 		return nil
 	}
 	raw, ok := a.Credentials["model_mapping"]
 	if !ok || raw == nil {
+		// Antigravity 平台使用默认映射
+		if a.Platform == domain.PlatformAntigravity {
+			return domain.DefaultAntigravityModelMapping
+		}
 		return nil
 	}
 	if m, ok := raw.(map[string]any); ok {
@@ -364,6 +374,10 @@ func (a *Account) GetModelMapping() map[string]string {
 		if len(result) > 0 {
 			return result
 		}
+	}
+	// Antigravity 平台使用默认映射
+	if a.Platform == domain.PlatformAntigravity {
+		return domain.DefaultAntigravityModelMapping
 	}
 	return nil
 }

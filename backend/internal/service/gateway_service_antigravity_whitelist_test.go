@@ -47,16 +47,22 @@ func TestGatewayService_isModelSupportedByAccount_AntigravityModelMapping(t *tes
 func TestGatewayService_isModelSupportedByAccount_AntigravityNoMapping(t *testing.T) {
 	svc := &GatewayService{}
 
-	// 未配置 model_mapping 时，允许所有 claude-/gemini- 前缀模型
+	// 未配置 model_mapping 时，使用默认映射（domain.DefaultAntigravityModelMapping）
+	// 只有默认映射中的模型才被支持
 	account := &Account{
 		Platform:    PlatformAntigravity,
 		Credentials: map[string]any{},
 	}
 
+	// 默认映射中的模型应该被支持
 	require.True(t, svc.isModelSupportedByAccount(account, "claude-sonnet-4-5"))
-	require.True(t, svc.isModelSupportedByAccount(account, "claude-3-5-sonnet-20241022"))
 	require.True(t, svc.isModelSupportedByAccount(account, "gemini-3-flash"))
 	require.True(t, svc.isModelSupportedByAccount(account, "gemini-2.5-pro"))
+	require.True(t, svc.isModelSupportedByAccount(account, "claude-haiku-4-5"))
+
+	// 不在默认映射中的模型不被支持
+	require.False(t, svc.isModelSupportedByAccount(account, "claude-3-5-sonnet-20241022"))
+	require.False(t, svc.isModelSupportedByAccount(account, "claude-unknown-model"))
 
 	// 非 claude-/gemini- 前缀仍然不支持
 	require.False(t, svc.isModelSupportedByAccount(account, "gpt-4"))
