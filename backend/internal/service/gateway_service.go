@@ -1345,7 +1345,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				filteredPlatform++
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccount(account, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, account, requestedModel) {
 				filteredModelMapping++
 				continue
 			}
@@ -1381,7 +1381,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if stickyAccount, ok := accountByID[stickyAccountID]; ok {
 						if stickyAccount.IsSchedulable() &&
 							s.isAccountAllowedForPlatform(stickyAccount, platform, useMixed) &&
-							(requestedModel == "" || s.isModelSupportedByAccount(stickyAccount, requestedModel)) &&
+							(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, stickyAccount, requestedModel)) &&
 							stickyAccount.IsSchedulableForModelWithContext(ctx, requestedModel) &&
 							s.isAccountSchedulableForWindowCost(ctx, stickyAccount, true) { // 粘性会话窗口费用检查
 							result, err := s.tryAcquireAccountSlot(ctx, stickyAccountID, stickyAccount.Concurrency)
@@ -1535,7 +1535,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				}
 				if !clearSticky && s.isAccountInGroup(account, groupID) &&
 					s.isAccountAllowedForPlatform(account, platform, useMixed) &&
-					(requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) &&
+					(requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) &&
 					account.IsSchedulableForModelWithContext(ctx, requestedModel) &&
 					s.isAccountSchedulableForWindowCost(ctx, account, true) { // 粘性会话窗口费用检查
 					result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
@@ -1594,7 +1594,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.isAccountAllowedForPlatform(acc, platform, useMixed) {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 			continue
 		}
 		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
@@ -2445,7 +2445,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 							if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 								log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 							}
@@ -2492,7 +2492,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			if !acc.IsSchedulable() {
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 				continue
 			}
 			if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
@@ -2548,7 +2548,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+					if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 						if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 							log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 						}
@@ -2584,7 +2584,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		if !acc.IsSchedulable() {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 			continue
 		}
 		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
@@ -2658,7 +2658,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 						if clearSticky {
 							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 						}
-						if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+						if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 							if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 								if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 									log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
@@ -2707,7 +2707,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 				continue
 			}
-			if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+			if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 				continue
 			}
 			if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
@@ -2763,7 +2763,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					if clearSticky {
 						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 					}
-					if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
+					if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && account.IsSchedulableForModelWithContext(ctx, requestedModel) {
 						if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 							if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 								log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
@@ -2801,7 +2801,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
 			continue
 		}
-		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
+		if requestedModel != "" && !s.isModelSupportedByAccountWithContext(ctx, acc, requestedModel) {
 			continue
 		}
 		if !acc.IsSchedulableForModelWithContext(ctx, requestedModel) {
@@ -2848,8 +2848,9 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	return selected, nil
 }
 
-// isModelSupportedByAccount 根据账户平台检查模型支持
-func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
+// isModelSupportedByAccountWithContext 根据账户平台检查模型支持（带 context）
+// 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
+func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
 	if account.Platform == PlatformAntigravity {
 		// Antigravity 平台使用专门的模型支持检查
 		if strings.TrimSpace(requestedModel) == "" {
@@ -2858,7 +2859,28 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 		if !IsAntigravityModelSupported(requestedModel) {
 			return false
 		}
-		// 使用统一的 IsModelSupported（支持通配符）
+		// 获取映射后的最终模型名（包括 thinking 后缀）
+		finalModel := resolveFinalAntigravityModelKey(ctx, account, requestedModel)
+		if finalModel == "" {
+			return false
+		}
+		// 使用最终模型名检查 model_mapping 支持
+		return account.IsModelSupported(finalModel)
+	}
+	return s.isModelSupportedByAccount(account, requestedModel)
+}
+
+// isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）
+func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
+	if account.Platform == PlatformAntigravity {
+		// Antigravity 应使用 isModelSupportedByAccountWithContext
+		// 这里作为兼容保留，使用原始模型名检查
+		if strings.TrimSpace(requestedModel) == "" {
+			return true
+		}
+		if !IsAntigravityModelSupported(requestedModel) {
+			return false
+		}
 		return account.IsModelSupported(requestedModel)
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
