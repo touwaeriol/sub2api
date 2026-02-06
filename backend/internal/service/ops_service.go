@@ -428,7 +428,7 @@ func isSensitiveKey(key string) bool {
 	}
 
 	// Token 计数 / 预算字段不是凭据，应保留用于排错。
-	// 白名单保持尽量窄，避免误把真实敏感信息"反脱敏"。
+	// 白名单保持尽量窄，避免误把真实敏感信息“反脱敏”。
 	switch k {
 	case "max_tokens",
 		"max_output_tokens",

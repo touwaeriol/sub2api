@@ -53,6 +53,12 @@ const geminiModels = [
   'gemini-3-pro-preview'
 ]
 
+// Antigravity（透传 claude-/gemini- 前缀）
+const antigravityModels = [
+  ...claudeModels,
+  ...geminiModels
+]
+
 // 智谱 GLM
 const zhipuModels = [
   'glm-4', 'glm-4v', 'glm-4-plus', 'glm-4-0520',
@@ -235,6 +241,52 @@ const geminiPresetMappings = [
   { label: '2.5 Pro', from: 'gemini-2.5-pro', to: 'gemini-2.5-pro', color: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400' }
 ]
 
+// Antigravity 预设映射（支持通配符）
+const antigravityPresetMappings = [
+  // Claude 通配符映射
+  { label: 'Claude→Sonnet', from: 'claude-*', to: 'claude-sonnet-4-5', color: 'bg-blue-100 text-blue-700 hover:bg-blue-200 dark:bg-blue-900/30 dark:text-blue-400' },
+  { label: 'Sonnet→Sonnet', from: 'claude-sonnet-*', to: 'claude-sonnet-4-5', color: 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/30 dark:text-indigo-400' },
+  { label: 'Opus→Opus', from: 'claude-opus-*', to: 'claude-opus-4-5-thinking', color: 'bg-purple-100 text-purple-700 hover:bg-purple-200 dark:bg-purple-900/30 dark:text-purple-400' },
+  { label: 'Haiku→Sonnet', from: 'claude-haiku-*', to: 'claude-sonnet-4-5', color: 'bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-400' },
+  // Gemini 通配符映射
+  { label: 'Gemini 3→Flash', from: 'gemini-3*', to: 'gemini-3-flash', color: 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400' },
+  { label: 'Gemini 2.5→Flash', from: 'gemini-2.5*', to: 'gemini-2.5-flash', color: 'bg-orange-100 text-orange-700 hover:bg-orange-200 dark:bg-orange-900/30 dark:text-orange-400' },
+  // 精确映射
+  { label: 'Sonnet 4.5', from: 'claude-sonnet-4-5', to: 'claude-sonnet-4-5', color: 'bg-cyan-100 text-cyan-700 hover:bg-cyan-200 dark:bg-cyan-900/30 dark:text-cyan-400' },
+  { label: 'Opus 4.5', from: 'claude-opus-4-5-thinking', to: 'claude-opus-4-5-thinking', color: 'bg-pink-100 text-pink-700 hover:bg-pink-200 dark:bg-pink-900/30 dark:text-pink-400' }
+]
+
+// Antigravity 默认映射（与迁移脚本 049 保持一致）
+// 按前缀长度降序排列，确保最长匹配优先
+// 包含官方 API 返回的所有模型
+export const antigravityDefaultMappings: { from: string; to: string }[] = [
+  // Claude 模型（按前缀长度降序）
+  { from: 'claude-opus-4-6*', to: 'claude-opus-4-6' },
+  { from: 'claude-opus-4-5-thinking*', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-opus-4-5*', to: 'claude-opus-4-5-thinking' },
+  { from: 'claude-sonnet-4-5-thinking*', to: 'claude-sonnet-4-5-thinking' },
+  { from: 'claude-sonnet-4-5*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-3-5-sonnet*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-haiku-4-5*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-3-haiku*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-sonnet-4*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-haiku-4*', to: 'claude-sonnet-4-5' },
+  { from: 'claude-opus-4*', to: 'claude-opus-4-5-thinking' },
+  // Gemini 模型（按前缀长度降序）
+  { from: 'gemini-3-pro-image*', to: 'gemini-3-pro-image' },
+  { from: 'gemini-3-pro-high*', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-pro-low*', to: 'gemini-3-pro-low' },
+  { from: 'gemini-3-pro*', to: 'gemini-3-pro-high' },
+  { from: 'gemini-3-flash*', to: 'gemini-3-flash' },
+  { from: 'gemini-2.5-flash-thinking*', to: 'gemini-2.5-flash-thinking' },
+  { from: 'gemini-2.5-flash-lite*', to: 'gemini-2.5-flash-lite' },
+  { from: 'gemini-2.5-flash*', to: 'gemini-2.5-flash' },
+  { from: 'gemini-2.5-pro*', to: 'gemini-2.5-pro' },
+  // 其他官方模型（精确匹配）
+  { from: 'gpt-oss-120b-medium', to: 'gpt-oss-120b-medium' },
+  { from: 'tab_flash_lite_preview', to: 'tab_flash_lite_preview' }
+]
+
 // =====================
 // 常用错误码
 // =====================
@@ -260,6 +312,7 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'anthropic':
     case 'claude': return claudeModels
     case 'gemini': return geminiModels
+    case 'antigravity': return antigravityModels
     case 'zhipu': return zhipuModels
     case 'qwen': return qwenModels
     case 'deepseek': return deepseekModels
@@ -283,6 +336,7 @@ export function getModelsByPlatform(platform: string): string[] {
 export function getPresetMappingsByPlatform(platform: string) {
   if (platform === 'openai') return openaiPresetMappings
   if (platform === 'gemini') return geminiPresetMappings
+  if (platform === 'antigravity') return antigravityPresetMappings
   return anthropicPresetMappings
 }
 
@@ -299,7 +353,12 @@ export function buildModelMappingObject(
 
   if (mode === 'whitelist') {
     for (const model of allowedModels) {
-      mapping[model] = model
+      // whitelist 模式的本意是“精确模型列表”，如果用户输入了通配符（如 claude-*），
+      // 写入 model_mapping 会导致 GetMappedModel() 把真实模型映射成 "claude-*"，从而转发失败。
+      // 因此这里跳过包含通配符的条目。
+      if (!model.includes('*')) {
+        mapping[model] = model
+      }
     }
   } else {
     for (const m of modelMappings) {
