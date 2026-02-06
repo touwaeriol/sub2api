@@ -34,8 +34,8 @@ const (
 	// - 智能重试：retryDelay < 此阈值时等待后重试，>= 此阈值时直接限流模型
 	// - 预检查：剩余限流时间 < 此阈值时等待，>= 此阈值时切换账号
 	antigravityRateLimitThreshold       = 7 * time.Second
-	antigravitySmartRetryMinWait        = 1 * time.Second // 智能重试最小等待时间
-	antigravitySmartRetryMaxAttempts    = 3               // 智能重试最大次数
+	antigravitySmartRetryMinWait        = 1 * time.Second  // 智能重试最小等待时间
+	antigravitySmartRetryMaxAttempts    = 3                // 智能重试最大次数
 	antigravityDefaultRateLimitDuration = 30 * time.Second // 默认限流时间（无 retryDelay 时使用）
 
 	// Google RPC 状态和类型常量
