@@ -463,7 +463,16 @@ func (a *Account) GetAntigravityModelWhitelist() []string {
 		if len(v) == 0 {
 			return nil
 		}
-		return v
+		result := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(item); s != "" {
+				result = append(result, s)
+			}
+		}
+		if len(result) == 0 {
+			return nil
+		}
+		return result
 	case []any:
 		result := make([]string, 0, len(v))
 		for _, item := range v {
@@ -546,7 +555,10 @@ func (a *Account) GetAntigravityMappedModel(requestedModel string) string {
 
 	// 按 pattern 长度降序排序
 	sort.Slice(matches, func(i, j int) bool {
-		return len(matches[i].pattern) > len(matches[j].pattern)
+		if len(matches[i].pattern) != len(matches[j].pattern) {
+			return len(matches[i].pattern) > len(matches[j].pattern)
+		}
+		return matches[i].pattern < matches[j].pattern
 	})
 
 	return matches[0].target
@@ -589,7 +601,10 @@ func matchWildcardMapping(mapping map[string]string, requestedModel string) stri
 
 	// 按 pattern 长度降序排序
 	sort.Slice(matches, func(i, j int) bool {
-		return len(matches[i].pattern) > len(matches[j].pattern)
+		if len(matches[i].pattern) != len(matches[j].pattern) {
+			return len(matches[i].pattern) > len(matches[j].pattern)
+		}
+		return matches[i].pattern < matches[j].pattern
 	})
 
 	return matches[0].target

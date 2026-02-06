@@ -1652,25 +1652,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		// Antigravity 平台：获取模型负载信息
 		var modelLoadMap map[int64]*ModelLoadInfo
 		isAntigravity := platform == PlatformAntigravity
-		if isAntigravity && requestedModel != "" && s.cache != nil {
-			candidateIDs := make([]int64, 0, len(candidates))
-			for _, acc := range candidates {
-				candidateIDs = append(candidateIDs, acc.ID)
-			}
-			// 获取映射后的模型名（与 Forward 方法保持一致）
-			// 逻辑：账户级映射 → 全局前缀映射
-			// 统一调度和统计使用的模型名，避免负载均衡失效
-			mappedModel := requestedModel
-			if len(candidates) > 0 {
-				// 1. 先尝试账户级映射
-				mappedModel = candidates[0].GetMappedModel(requestedModel)
-			}
-			if mappedModel == requestedModel {
-				// 2. 账户级映射无效时，使用全局前缀映射
-				mappedModel = resolveAntigravityModelMapping(requestedModel)
-			}
-			modelLoadMap, _ = s.cache.GetModelLoadBatch(ctx, candidateIDs, mappedModel)
-		}
 
 		var available []accountWithLoad
 		for _, acc := range candidates {
@@ -1683,6 +1664,31 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					account:  acc,
 					loadInfo: loadInfo,
 				})
+			}
+		}
+
+		// Antigravity 平台：按账号实际映射后的模型名获取模型负载（与 Forward 的统计保持一致）
+		if isAntigravity && requestedModel != "" && s.cache != nil && len(available) > 0 {
+			modelLoadMap = make(map[int64]*ModelLoadInfo, len(available))
+			modelToAccountIDs := make(map[string][]int64)
+			for _, item := range available {
+				mappedModel := mapAntigravityModel(item.account, requestedModel)
+				if mappedModel == "" {
+					continue
+				}
+				modelToAccountIDs[mappedModel] = append(modelToAccountIDs[mappedModel], item.account.ID)
+			}
+			for model, ids := range modelToAccountIDs {
+				batch, err := s.cache.GetModelLoadBatch(ctx, ids, model)
+				if err != nil {
+					continue
+				}
+				for id, info := range batch {
+					modelLoadMap[id] = info
+				}
+			}
+			if len(modelLoadMap) == 0 {
+				modelLoadMap = nil
 			}
 		}
 
@@ -2804,7 +2810,13 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
 	if account.Platform == PlatformAntigravity {
 		// Antigravity 平台使用专门的模型支持检查
-		return IsAntigravityModelSupported(requestedModel)
+		if strings.TrimSpace(requestedModel) == "" {
+			return true
+		}
+		if !IsAntigravityModelSupported(requestedModel) {
+			return false
+		}
+		return account.IsModelInAntigravityWhitelist(requestedModel)
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
 	if account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {

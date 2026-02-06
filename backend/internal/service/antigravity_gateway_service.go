@@ -627,10 +627,13 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 	return truncateString(string(body), maxBytes)
 }
 
-// getMappedModel 获取映射后的模型名
-// 逻辑：白名单检查 → 账户自定义映射（通配符）→ 账户精确映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
+// mapAntigravityModel 获取映射后的模型名（与 AntigravityGatewayService.getMappedModel 保持一致）
 // 返回空字符串表示模型被白名单阻止
-func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
+func mapAntigravityModel(account *Account, requestedModel string) string {
+	if account == nil {
+		return ""
+	}
+
 	// 0. 白名单检查（如果配置了白名单）
 	if !account.IsModelInAntigravityWhitelist(requestedModel) {
 		return "" // 被白名单阻止
@@ -665,6 +668,13 @@ func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedMo
 
 	// 6. 默认值
 	return "claude-sonnet-4-5"
+}
+
+// getMappedModel 获取映射后的模型名
+// 逻辑：白名单检查 → 账户自定义映射（通配符）→ 账户精确映射 → 直接支持透传 → 前缀映射 → gemini透传 → 默认值
+// 返回空字符串表示模型被白名单阻止
+func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
+	return mapAntigravityModel(account, requestedModel)
 }
 
 // applyThinkingModelSuffix 根据 thinking 配置调整模型名
@@ -1017,17 +1027,18 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	// 解析 Claude 请求
 	var claudeReq antigravity.ClaudeRequest
 	if err := json.Unmarshal(body, &claudeReq); err != nil {
-		return nil, fmt.Errorf("parse claude request: %w", err)
+		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
 	}
 	if strings.TrimSpace(claudeReq.Model) == "" {
-		return nil, fmt.Errorf("missing model")
+		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "Missing model")
 	}
 
 	originalModel := claudeReq.Model
 	mappedModel := s.getMappedModel(account, claudeReq.Model)
 	if mappedModel == "" {
-		return nil, fmt.Errorf("model %s not in whitelist", claudeReq.Model)
+		return nil, s.writeClaudeError(c, http.StatusForbidden, "permission_error", fmt.Sprintf("model %s not in whitelist", claudeReq.Model))
 	}
+	loadModel := mappedModel
 	// 应用 thinking 模式自动后缀：如果 thinking 开启且目标是 claude-sonnet-4-5，自动改为 thinking 版本
 	thinkingEnabled := claudeReq.Thinking != nil && claudeReq.Thinking.Type == "enabled"
 	mappedModel = applyThinkingModelSuffix(mappedModel, thinkingEnabled)
@@ -1035,11 +1046,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	// 获取 access_token
 	if s.tokenProvider == nil {
-		return nil, errors.New("antigravity token provider not configured")
+		return nil, s.writeClaudeError(c, http.StatusBadGateway, "api_error", "Antigravity token provider not configured")
 	}
 	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
 	if err != nil {
-		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
+		return nil, s.writeClaudeError(c, http.StatusBadGateway, "authentication_error", "Failed to get upstream access token")
 	}
 
 	// 获取 project_id（部分账户类型可能没有）
@@ -1059,7 +1070,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	// 转换 Claude 请求为 Gemini 格式
 	geminiBody, err := antigravity.TransformClaudeToGeminiWithOptions(&claudeReq, projectID, mappedModel, transformOpts)
 	if err != nil {
-		return nil, fmt.Errorf("transform request: %w", err)
+		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "Invalid request")
 	}
 
 	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
@@ -1068,7 +1079,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	// 统计模型调用次数（包括粘性会话，用于负载均衡调度）
 	if s.cache != nil {
-		_, _ = s.cache.IncrModelCallCount(ctx, account.ID, mappedModel)
+		_, _ = s.cache.IncrModelCallCount(ctx, account.ID, loadModel)
 	}
 
 	// 执行带重试的请求
@@ -1671,11 +1682,11 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 
 	// 获取 access_token
 	if s.tokenProvider == nil {
-		return nil, errors.New("antigravity token provider not configured")
+		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Antigravity token provider not configured")
 	}
 	accessToken, err := s.tokenProvider.GetAccessToken(ctx, account)
 	if err != nil {
-		return nil, fmt.Errorf("获取 access_token 失败: %w", err)
+		return nil, s.writeGoogleError(c, http.StatusBadGateway, "Failed to get upstream access token")
 	}
 
 	// 获取 project_id（部分账户类型可能没有）
@@ -1690,7 +1701,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	// Antigravity 上游要求必须包含身份提示词，注入到请求中
 	injectedBody, err := injectIdentityPatchToGeminiRequest(body)
 	if err != nil {
-		return nil, err
+		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Invalid request body")
 	}
 
 	// 清理 Schema
@@ -1704,7 +1715,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	// 包装请求
 	wrappedBody, err := s.wrapV1InternalRequest(projectID, mappedModel, injectedBody)
 	if err != nil {
-		return nil, err
+		return nil, s.writeGoogleError(c, http.StatusInternalServerError, "Failed to build upstream request")
 	}
 
 	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
