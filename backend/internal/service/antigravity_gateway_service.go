@@ -539,6 +539,7 @@ var antigravitySupportedModels = map[string]bool{
 
 // Antigravity 前缀映射表（按前缀长度降序排列，确保最长匹配优先）
 // 用于处理模型版本号变化（如 -20251111, -thinking, -preview 等后缀）
+// 注意：只映射明确的版本后缀，不要使用太宽泛的前缀（如 claude-opus-4）
 var antigravityPrefixMapping = []struct {
 	prefix string
 	target string
@@ -558,12 +559,10 @@ var antigravityPrefixMapping = []struct {
 	{"claude-3-5-sonnet", "claude-sonnet-4-5"},                   // 旧版 claude-3-5-sonnet-xxx
 	{"claude-sonnet-4-5", "claude-sonnet-4-5"},                   // claude-sonnet-4-5-xxx
 	{"claude-haiku-4-5", "claude-sonnet-4-5"},                    // claude-haiku-4-5-xxx → sonnet
-	{"claude-opus-4-5", "claude-opus-4-5-thinking"},
-	{"claude-3-haiku", "claude-sonnet-4-5"}, // 旧版 claude-3-haiku-xxx → sonnet
-	// Claude 4.x 映射
-	{"claude-sonnet-4", "claude-sonnet-4-5"},
-	{"claude-haiku-4", "claude-sonnet-4-5"}, // → sonnet
-	{"claude-opus-4", "claude-opus-4-5-thinking"},
+	{"claude-opus-4-5", "claude-opus-4-5-thinking"},              // claude-opus-4-5-xxx → thinking
+	{"claude-3-haiku", "claude-sonnet-4-5"},                      // 旧版 claude-3-haiku-xxx → sonnet
+	// 注意：不要添加太宽泛的前缀如 claude-opus-4、claude-sonnet-4
+	// 这会导致未知模型（如 claude-opus-4.7）被错误映射
 }
 
 // AntigravityGatewayService 处理 Antigravity 平台的 API 转发
