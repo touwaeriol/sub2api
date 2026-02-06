@@ -78,6 +78,20 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "my-opus",
 		},
 
+		// 原生支持的模型必须直接透传（不允许被账号映射覆盖）
+		{
+			name:           "原生透传优先 - claude-sonnet-4-5 不可被覆盖",
+			requestedModel: "claude-sonnet-4-5",
+			accountMapping: map[string]string{"claude-sonnet-4-5": "my-sonnet"},
+			expected:       "claude-sonnet-4-5",
+		},
+		{
+			name:           "原生透传优先 - gemini-2.5-flash 不可被覆盖",
+			requestedModel: "gemini-2.5-flash",
+			accountMapping: map[string]string{"gemini-2.5-flash": "my-gemini"},
+			expected:       "gemini-2.5-flash",
+		},
+
 		// 2. 系统默认映射
 		{
 			name:           "系统映射 - claude-3-5-sonnet-20241022",
@@ -134,18 +148,18 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 
-		// 3. Gemini 2.5 → 3 映射
+		// 3. Gemini 2.5 直接透传
 		{
-			name:           "Gemini映射 - gemini-2.5-flash → gemini-3-flash",
+			name:           "Gemini透传 - gemini-2.5-flash",
 			requestedModel: "gemini-2.5-flash",
 			accountMapping: nil,
-			expected:       "gemini-3-flash",
+			expected:       "gemini-2.5-flash",
 		},
 		{
-			name:           "Gemini映射 - gemini-2.5-pro → gemini-3-pro-high",
+			name:           "Gemini透传 - gemini-2.5-pro",
 			requestedModel: "gemini-2.5-pro",
 			accountMapping: nil,
-			expected:       "gemini-3-pro-high",
+			expected:       "gemini-2.5-pro",
 		},
 		{
 			name:           "Gemini透传 - gemini-future-model",
