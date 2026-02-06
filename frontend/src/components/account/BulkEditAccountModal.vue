@@ -925,9 +925,22 @@ const buildUpdatePayload = (): Record<string, unknown> | null => {
 
   if (enableModelRestriction.value) {
     const modelMapping = buildModelMappingObject()
-    if (modelMapping) {
-      credentials.model_mapping = modelMapping
-      credentialsChanged = true
+
+    // Bulk 编辑无法确定每个账号的平台，这里尽量兼容：
+    // - 传统账号：使用 model_mapping
+    // - Antigravity：白名单用 model_whitelist，映射用 antigravity_model_mapping
+    if (modelRestrictionMode.value === 'whitelist') {
+      if (allowedModels.value.length > 0) {
+        credentials.model_mapping = modelMapping
+        credentials.model_whitelist = [...allowedModels.value]
+        credentialsChanged = true
+      }
+    } else {
+      if (modelMapping) {
+        credentials.model_mapping = modelMapping
+        credentials.antigravity_model_mapping = modelMapping
+        credentialsChanged = true
+      }
     }
   }
 

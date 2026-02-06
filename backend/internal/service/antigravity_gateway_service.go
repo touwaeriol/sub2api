@@ -642,19 +642,19 @@ func mapAntigravityModel(account *Account, requestedModel string) string {
 		return "" // 被白名单阻止
 	}
 
-	// 1. 账户级自定义映射（支持通配符，用户自定义优先）
+	// 1. 原生支持的模型：直接透传（不允许被账号映射覆盖）
+	if antigravitySupportedModels[requestedModel] {
+		return requestedModel
+	}
+
+	// 2. 账户级自定义映射（支持通配符，用户自定义优先）
 	if mapped := account.GetAntigravityMappedModel(requestedModel); mapped != "" {
 		return mapped
 	}
 
-	// 2. 账户级精确映射（旧版 model_mapping 兼容）
+	// 3. 账户级精确映射（旧版 model_mapping 兼容）
 	if mapped := account.GetMappedModel(requestedModel); mapped != requestedModel {
 		return mapped
-	}
-
-	// 3. 直接支持的模型透传
-	if antigravitySupportedModels[requestedModel] {
-		return requestedModel
 	}
 
 	// 4. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）

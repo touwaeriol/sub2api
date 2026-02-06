@@ -53,6 +53,12 @@ const geminiModels = [
   'gemini-3-pro-preview'
 ]
 
+// Antigravity（透传 claude-/gemini- 前缀）
+const antigravityModels = [
+  ...claudeModels,
+  ...geminiModels
+]
+
 // 智谱 GLM
 const zhipuModels = [
   'glm-4', 'glm-4v', 'glm-4-plus', 'glm-4-0520',
@@ -275,6 +281,7 @@ export function getModelsByPlatform(platform: string): string[] {
     case 'anthropic':
     case 'claude': return claudeModels
     case 'gemini': return geminiModels
+    case 'antigravity': return antigravityModels
     case 'zhipu': return zhipuModels
     case 'qwen': return qwenModels
     case 'deepseek': return deepseekModels
