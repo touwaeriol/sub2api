@@ -98,8 +98,42 @@ git push origin main
 ### 前置条件
 
 - 本地已配置 SSH 别名 `clicodeplus` 连接到服务器
-- 服务器部署目录：`/root/sub2api`
+- 服务器部署目录：`/root/sub2api`（正式）、`/root/sub2api-beta`（测试）
 - 服务器使用 Docker Compose 部署
+
+### 部署环境说明
+
+| 环境 | 目录 | 端口 | 数据库 | 容器名 |
+|------|------|------|--------|--------|
+| 正式 | `/root/sub2api` | 8080 | `sub2api` | `sub2api` |
+| Beta | `/root/sub2api-beta` | 8084 | `beta` | `sub2api-beta` |
+
+### 外部数据库
+
+正式和 Beta 环境**共用外部 PostgreSQL 数据库**（非容器内数据库），配置在 `.env` 文件中：
+- `DATABASE_HOST`：外部数据库地址
+- `DATABASE_SSLMODE`：SSL 模式（通常为 `require`）
+- `POSTGRES_USER` / `POSTGRES_DB`：用户名和数据库名
+
+#### 数据库操作命令
+
+通过 SSH 在服务器上执行数据库操作：
+
+```bash
+# 正式环境 - 查询迁移记录
+ssh clicodeplus "source /root/sub2api/deploy/.env && PGPASSWORD=\"\$POSTGRES_PASSWORD\" psql -h \$DATABASE_HOST -U \$POSTGRES_USER -d \$POSTGRES_DB -c 'SELECT * FROM schema_migrations ORDER BY applied_at DESC LIMIT 5;'"
+
+# Beta 环境 - 查询迁移记录
+ssh clicodeplus "source /root/sub2api-beta/deploy/.env && PGPASSWORD=\"\$POSTGRES_PASSWORD\" psql -h \$DATABASE_HOST -U \$POSTGRES_USER -d \$POSTGRES_DB -c 'SELECT * FROM schema_migrations ORDER BY applied_at DESC LIMIT 5;'"
+
+# Beta 环境 - 清除指定迁移记录（重新执行迁移）
+ssh clicodeplus "source /root/sub2api-beta/deploy/.env && PGPASSWORD=\"\$POSTGRES_PASSWORD\" psql -h \$DATABASE_HOST -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"DELETE FROM schema_migrations WHERE filename LIKE '%049%';\""
+
+# Beta 环境 - 更新账号数据
+ssh clicodeplus "source /root/sub2api-beta/deploy/.env && PGPASSWORD=\"\$POSTGRES_PASSWORD\" psql -h \$DATABASE_HOST -U \$POSTGRES_USER -d \$POSTGRES_DB -c \"UPDATE accounts SET credentials = credentials - 'model_mapping' WHERE platform = 'antigravity';\""
+```
+
+> **注意**：使用 `source .env` 加载环境变量，避免在命令行中暴露密码。
 
 ### 部署步骤
 
