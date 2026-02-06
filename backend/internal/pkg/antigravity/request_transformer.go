@@ -190,40 +190,37 @@ func GetDefaultIdentityPatch() string {
 	return antigravityIdentity
 }
 
-// modelDisplayNameMap 模型前缀 → 显示名称映射
-var modelDisplayNameMap = map[string]string{
-	// Claude 4.5
-	"claude-opus-4-5":   "Claude Opus 4.5",
-	"claude-sonnet-4-5": "Claude Sonnet 4.5",
-	"claude-haiku-4-5":  "Claude Haiku 4.5",
-	// Claude 4
-	"claude-opus-4":   "Claude Opus 4",
-	"claude-sonnet-4": "Claude Sonnet 4",
-	"claude-haiku-4":  "Claude Haiku 4",
-	// Claude 3.5
-	"claude-3-5-sonnet": "Claude Sonnet 3.5",
-	"claude-3-5-opus":   "Claude Opus 3.5",
-	"claude-3-5-haiku":  "Claude Haiku 3.5",
-	// Claude 3
-	"claude-3-sonnet": "Claude Sonnet 3",
-	"claude-3-opus":   "Claude Opus 3",
-	"claude-3-haiku":  "Claude Haiku 3",
+// modelInfo 模型信息
+type modelInfo struct {
+	DisplayName string // 人类可读名称，如 "Claude Opus 4.5"
+	CanonicalID string // 规范模型 ID，如 "claude-opus-4-5-20250929"
+}
+
+// modelInfoMap 模型前缀 → 模型信息映射
+var modelInfoMap = map[string]modelInfo{
+	"claude-opus-4-5":   {DisplayName: "Claude Opus 4.5", CanonicalID: "claude-opus-4-5-20250929"},
+	"claude-sonnet-4-5": {DisplayName: "Claude Sonnet 4.5", CanonicalID: "claude-sonnet-4-5-20250929"},
+	"claude-haiku-4-5":  {DisplayName: "Claude Haiku 4.5", CanonicalID: "claude-haiku-4-5-20251001"},
+}
+
+// getModelInfo 根据模型 ID 获取模型信息（前缀匹配）
+func getModelInfo(modelID string) (info modelInfo, matched bool) {
+	var bestMatch string
+
+	for prefix, mi := range modelInfoMap {
+		if strings.HasPrefix(modelID, prefix) && len(prefix) > len(bestMatch) {
+			bestMatch = prefix
+			info = mi
+		}
+	}
+
+	return info, bestMatch != ""
 }
 
 // GetModelDisplayName 根据模型 ID 获取人类可读的显示名称
 func GetModelDisplayName(modelID string) string {
-	var bestMatch string
-	var bestName string
-
-	for prefix, name := range modelDisplayNameMap {
-		if strings.HasPrefix(modelID, prefix) && len(prefix) > len(bestMatch) {
-			bestMatch = prefix
-			bestName = name
-		}
-	}
-
-	if bestName != "" {
-		return bestName
+	if info, ok := getModelInfo(modelID); ok {
+		return info.DisplayName
 	}
 	return modelID
 }
@@ -231,12 +228,11 @@ func GetModelDisplayName(modelID string) string {
 // buildModelIdentityText 构建模型身份提示文本
 // 如果模型 ID 没有匹配到映射，返回空字符串
 func buildModelIdentityText(modelID string) string {
-	displayName := GetModelDisplayName(modelID)
-	// 如果没匹配到（displayName == modelID），不注入
-	if displayName == modelID {
+	info, matched := getModelInfo(modelID)
+	if !matched {
 		return ""
 	}
-	return fmt.Sprintf("You are Model %s, ModelId is %s.", displayName, modelID)
+	return fmt.Sprintf("You are Model %s, ModelId is %s.", info.DisplayName, info.CanonicalID)
 }
 
 // mcpXMLProtocol MCP XML 工具调用协议（与 Antigravity-Manager 保持一致）
