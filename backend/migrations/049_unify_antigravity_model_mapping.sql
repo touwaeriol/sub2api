@@ -32,6 +32,5 @@ SET credentials = (COALESCE(credentials, '{}'::jsonb) - 'model_whitelist' - 'mod
   }
 }'::jsonb
 WHERE platform = 'antigravity'
-  AND type IN ('oauth', 'upstream')
   AND deleted_at IS NULL;
 
