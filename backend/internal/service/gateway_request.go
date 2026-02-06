@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
 )
 
 // ParsedRequest 保存网关请求的预解析结果
@@ -26,6 +28,7 @@ type ParsedRequest struct {
 	System         any    // system 字段内容
 	Messages       []any  // messages 数组
 	HasSystem      bool   // 是否包含 system 字段（包含 null 也视为显式传入）
+	ThinkingEnabled bool  // 是否开启 thinking（部分平台会影响最终模型名）
 }
 
 // ParseGatewayRequest 解析网关请求体并返回结构化结果
@@ -67,6 +70,13 @@ func ParseGatewayRequest(body []byte) (*ParsedRequest, error) {
 	}
 	if messages, ok := req["messages"].([]any); ok {
 		parsed.Messages = messages
+	}
+
+	// thinking: {type: "enabled"}
+	if rawThinking, ok := req["thinking"].(map[string]any); ok {
+		if t, ok := rawThinking["type"].(string); ok && t == "enabled" {
+			parsed.ThinkingEnabled = true
+		}
 	}
 
 	return parsed, nil
@@ -466,7 +476,7 @@ func filterThinkingBlocksInternal(body []byte, _ bool) []byte {
 				// only keep thinking blocks with valid signatures
 				if thinkingEnabled && role == "assistant" {
 					signature, _ := blockMap["signature"].(string)
-					if signature != "" && signature != "skip_thought_signature_validator" {
+					if signature != "" && signature != antigravity.DummyThoughtSignature {
 						newContent = append(newContent, block)
 						continue
 					}
