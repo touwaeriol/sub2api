@@ -34,7 +34,7 @@ SET credentials = credentials || '{
   }
 }'::jsonb
 WHERE platform = 'antigravity'
-  AND account_type = 'oauth'
+  AND type = 'oauth'
   AND deleted_at IS NULL
   AND NOT (credentials ? 'model_mapping');
 
@@ -49,7 +49,7 @@ SET credentials = credentials - 'model_whitelist' ||
      FROM jsonb_array_elements_text(credentials->'model_whitelist') AS elem)
   )
 WHERE platform = 'antigravity'
-  AND account_type = 'oauth'
+  AND type = 'oauth'
   AND deleted_at IS NULL
   AND credentials ? 'model_whitelist'
   AND NOT (credentials ? 'model_mapping');
@@ -60,7 +60,7 @@ WHERE platform = 'antigravity'
 UPDATE accounts
 SET credentials = credentials - 'model_whitelist'
 WHERE platform = 'antigravity'
-  AND account_type = 'oauth'
+  AND type = 'oauth'
   AND deleted_at IS NULL
   AND credentials ? 'model_whitelist'
   AND credentials ? 'model_mapping';
