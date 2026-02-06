@@ -1,0 +1,150 @@
+package service
+
+import (
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/cespare/xxhash/v2"
+)
+
+// Gemini 会话 ID Fallback 相关常量
+const (
+	// geminiSessionTTLSeconds Gemini 会话缓存 TTL（5 分钟）
+	geminiSessionTTLSeconds = 300
+
+	// geminiSessionKeyPrefix Gemini 会话 Redis key 前缀
+	geminiSessionKeyPrefix = "gemini:sess:"
+)
+
+// GeminiSessionTTL 返回 Gemini 会话缓存 TTL
+func GeminiSessionTTL() time.Duration {
+	return geminiSessionTTLSeconds * time.Second
+}
+
+// shortHash 使用 XXHash64 + Base36 生成短 hash（16 字符）
+// XXHash64 比 SHA256 快约 10 倍，Base36 比 Hex 短约 20%
+func shortHash(data []byte) string {
+	h := xxhash.Sum64(data)
+	return strconv.FormatUint(h, 36)
+}
+
+// BuildGeminiDigestChain 根据 Gemini 请求生成摘要链
+// 格式: s:<hash>-u:<hash>-m:<hash>-u:<hash>-...
+// s = systemInstruction, u = user, m = model
+func BuildGeminiDigestChain(req *antigravity.GeminiRequest) string {
+	if req == nil {
+		return ""
+	}
+
+	var parts []string
+
+	// 1. system instruction
+	if req.SystemInstruction != nil && len(req.SystemInstruction.Parts) > 0 {
+		partsData, _ := json.Marshal(req.SystemInstruction.Parts)
+		parts = append(parts, "s:"+shortHash(partsData))
+	}
+
+	// 2. contents
+	for _, c := range req.Contents {
+		prefix := "u" // user
+		if c.Role == "model" {
+			prefix = "m"
+		}
+		partsData, _ := json.Marshal(c.Parts)
+		parts = append(parts, prefix+":"+shortHash(partsData))
+	}
+
+	return strings.Join(parts, "-")
+}
+
+// GenerateGeminiPrefixHash 生成前缀 hash（用于分区隔离）
+// 组合: userID + apiKeyID + ip + userAgent + platform + model
+// 返回 16 字符的 Base64 编码的 SHA256 前缀
+func GenerateGeminiPrefixHash(userID, apiKeyID int64, ip, userAgent, platform, model string) string {
+	// 组合所有标识符
+	combined := strconv.FormatInt(userID, 10) + ":" +
+		strconv.FormatInt(apiKeyID, 10) + ":" +
+		ip + ":" +
+		userAgent + ":" +
+		platform + ":" +
+		model
+
+	hash := sha256.Sum256([]byte(combined))
+	// 取前 12 字节，Base64 编码后正好 16 字符
+	return base64.RawURLEncoding.EncodeToString(hash[:12])
+}
+
+// BuildGeminiSessionKey 构建 Gemini 会话 Redis key
+// 格式: gemini:sess:{groupID}:{prefixHash}:{digestChain}
+func BuildGeminiSessionKey(groupID int64, prefixHash, digestChain string) string {
+	return geminiSessionKeyPrefix + strconv.FormatInt(groupID, 10) + ":" + prefixHash + ":" + digestChain
+}
+
+// GenerateDigestChainPrefixes 生成摘要链的所有前缀（从长到短）
+// 用于 MGET 批量查询最长匹配
+func GenerateDigestChainPrefixes(chain string) []string {
+	if chain == "" {
+		return nil
+	}
+
+	var prefixes []string
+	c := chain
+
+	for c != "" {
+		prefixes = append(prefixes, c)
+		// 找到最后一个 "-" 的位置
+		if i := strings.LastIndex(c, "-"); i > 0 {
+			c = c[:i]
+		} else {
+			break
+		}
+	}
+
+	return prefixes
+}
+
+// ParseGeminiSessionValue 解析 Gemini 会话缓存值
+// 格式: {uuid}:{accountID}
+func ParseGeminiSessionValue(value string) (uuid string, accountID int64, ok bool) {
+	if value == "" {
+		return "", 0, false
+	}
+
+	// 找到最后一个 ":" 的位置（因为 uuid 可能包含 ":"）
+	i := strings.LastIndex(value, ":")
+	if i <= 0 || i >= len(value)-1 {
+		return "", 0, false
+	}
+
+	uuid = value[:i]
+	accountID, err := strconv.ParseInt(value[i+1:], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+
+	return uuid, accountID, true
+}
+
+// FormatGeminiSessionValue 格式化 Gemini 会话缓存值
+// 格式: {uuid}:{accountID}
+func FormatGeminiSessionValue(uuid string, accountID int64) string {
+	return uuid + ":" + strconv.FormatInt(accountID, 10)
+}
+
+// geminiDigestSessionKeyPrefix Gemini 摘要 fallback 会话 key 前缀
+const geminiDigestSessionKeyPrefix = "gemini:digest:"
+
+// GenerateGeminiDigestSessionKey 生成 Gemini 摘要 fallback 的 sessionKey
+// 当原有会话标识无效时，使用 prefixHash 前 8 位生成 sessionKey
+// 用于在 SelectAccountWithLoadAwareness 中保持粘性会话
+func GenerateGeminiDigestSessionKey(prefixHash string) string {
+	if len(prefixHash) < 8 {
+		return geminiDigestSessionKeyPrefix + prefixHash
+	}
+	return geminiDigestSessionKeyPrefix + prefixHash[:8]
+}

@@ -11,6 +11,14 @@ import (
 
 const stickySessionPrefix = "sticky_session:"
 
+// 模型负载统计相关常量
+const (
+	modelLoadKeyPrefix     = "ag:model_load:"      // 模型调用次数 key 前缀
+	modelLastUsedKeyPrefix = "ag:model_last_used:" // 模型最后调度时间 key 前缀
+	modelLoadTTL           = 2 * time.Minute       // 调用次数 TTL（覆盖当前分钟+下一分钟）
+	modelLastUsedTTL       = 10 * time.Minute      // 最后调度时间 TTL
+)
+
 type gatewayCache struct {
 	rdb *redis.Client
 }
@@ -50,4 +58,146 @@ func (c *gatewayCache) RefreshSessionTTL(ctx context.Context, groupID int64, ses
 func (c *gatewayCache) DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error {
 	key := buildSessionKey(groupID, sessionHash)
 	return c.rdb.Del(ctx, key).Err()
+}
+
+// ============ Antigravity 模型负载统计方法 ============
+
+// getMinuteTimestamp 获取当前分钟的 Unix 时间戳
+func getMinuteTimestamp() int64 {
+	return time.Now().Truncate(time.Minute).Unix()
+}
+
+// modelLoadKey 构建模型调用次数 key
+// 格式: ag:model_load:{accountID}:{model}:{minuteTs}
+func modelLoadKey(accountID int64, model string, minuteTs int64) string {
+	return fmt.Sprintf("%s%d:%s:%d", modelLoadKeyPrefix, accountID, model, minuteTs)
+}
+
+// modelLastUsedKey 构建模型最后调度时间 key
+// 格式: ag:model_last_used:{accountID}:{model}
+func modelLastUsedKey(accountID int64, model string) string {
+	return fmt.Sprintf("%s%d:%s", modelLastUsedKeyPrefix, accountID, model)
+}
+
+// IncrModelCallCount 增加模型调用次数并更新最后调度时间
+// 返回更新后的调用次数
+func (c *gatewayCache) IncrModelCallCount(ctx context.Context, accountID int64, model string) (int64, error) {
+	minuteTs := getMinuteTimestamp()
+	loadKey := modelLoadKey(accountID, model, minuteTs)
+	lastUsedKey := modelLastUsedKey(accountID, model)
+
+	pipe := c.rdb.Pipeline()
+	incrCmd := pipe.Incr(ctx, loadKey)
+	pipe.Expire(ctx, loadKey, modelLoadTTL)
+	pipe.Set(ctx, lastUsedKey, time.Now().Unix(), modelLastUsedTTL)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return 0, err
+	}
+	return incrCmd.Val(), nil
+}
+
+// GetModelLoadBatch 批量获取账号的模型负载信息
+func (c *gatewayCache) GetModelLoadBatch(ctx context.Context, accountIDs []int64, model string) (map[int64]*service.ModelLoadInfo, error) {
+	if len(accountIDs) == 0 {
+		return make(map[int64]*service.ModelLoadInfo), nil
+	}
+
+	minuteTs := getMinuteTimestamp()
+	loadCmds, lastUsedCmds := c.pipelineModelLoadGet(ctx, accountIDs, model, minuteTs)
+	return c.parseModelLoadResults(accountIDs, loadCmds, lastUsedCmds), nil
+}
+
+// pipelineModelLoadGet 批量获取模型负载的 Pipeline 操作
+func (c *gatewayCache) pipelineModelLoadGet(
+	ctx context.Context,
+	accountIDs []int64,
+	model string,
+	minuteTs int64,
+) (map[int64]*redis.StringCmd, map[int64]*redis.StringCmd) {
+	pipe := c.rdb.Pipeline()
+	loadCmds := make(map[int64]*redis.StringCmd, len(accountIDs))
+	lastUsedCmds := make(map[int64]*redis.StringCmd, len(accountIDs))
+
+	for _, id := range accountIDs {
+		loadCmds[id] = pipe.Get(ctx, modelLoadKey(id, model, minuteTs))
+		lastUsedCmds[id] = pipe.Get(ctx, modelLastUsedKey(id, model))
+	}
+	_, _ = pipe.Exec(ctx) // 忽略错误，key 不存在是正常的
+	return loadCmds, lastUsedCmds
+}
+
+// parseModelLoadResults 解析 Pipeline 结果
+func (c *gatewayCache) parseModelLoadResults(
+	accountIDs []int64,
+	loadCmds map[int64]*redis.StringCmd,
+	lastUsedCmds map[int64]*redis.StringCmd,
+) map[int64]*service.ModelLoadInfo {
+	result := make(map[int64]*service.ModelLoadInfo, len(accountIDs))
+	for _, id := range accountIDs {
+		result[id] = &service.ModelLoadInfo{
+			CallCount:  getInt64OrZero(loadCmds[id]),
+			LastUsedAt: getTimeOrZero(lastUsedCmds[id]),
+		}
+	}
+	return result
+}
+
+// getInt64OrZero 从 StringCmd 获取 int64 值，失败返回 0
+func getInt64OrZero(cmd *redis.StringCmd) int64 {
+	val, _ := cmd.Int64()
+	return val
+}
+
+// getTimeOrZero 从 StringCmd 获取 time.Time，失败返回零值
+func getTimeOrZero(cmd *redis.StringCmd) time.Time {
+	val, err := cmd.Int64()
+	if err != nil {
+		return time.Time{}
+	}
+	return time.Unix(val, 0)
+}
+
+// ============ Gemini 会话 Fallback 方法 ============
+
+// FindGeminiSession 查找 Gemini 会话（MGET 倒序匹配）
+// 返回最长匹配的会话信息
+func (c *gatewayCache) FindGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain string) (uuid string, accountID int64, found bool) {
+	// 生成所有可能的前缀 key
+	prefixes := service.GenerateDigestChainPrefixes(digestChain)
+	if len(prefixes) == 0 {
+		return "", 0, false
+	}
+
+	// 构建所有 key
+	keys := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		keys[i] = service.BuildGeminiSessionKey(groupID, prefixHash, p)
+	}
+
+	// 一次 MGET
+	vals, err := c.rdb.MGet(ctx, keys...).Result()
+	if err != nil {
+		return "", 0, false
+	}
+
+	// 第一个非空 = 最长匹配
+	for _, v := range vals {
+		if v != nil {
+			if s, ok := v.(string); ok && s != "" {
+				uuid, accountID, ok := service.ParseGeminiSessionValue(s)
+				if ok {
+					return uuid, accountID, true
+				}
+			}
+		}
+	}
+
+	return "", 0, false
+}
+
+// SaveGeminiSession 保存 Gemini 会话
+func (c *gatewayCache) SaveGeminiSession(ctx context.Context, groupID int64, prefixHash, digestChain, uuid string, accountID int64) error {
+	key := service.BuildGeminiSessionKey(groupID, prefixHash, digestChain)
+	value := service.FormatGeminiSessionValue(uuid, accountID)
+	return c.rdb.Set(ctx, key, value, service.GeminiSessionTTL()).Err()
 }
