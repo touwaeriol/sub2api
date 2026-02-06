@@ -1334,6 +1334,7 @@ export default {
         tempUnschedulable: 'Temp Unschedulable',
         rateLimitedUntil: 'Rate limited until {time}',
         scopeRateLimitedUntil: '{scope} rate limited until {time}',
+        modelRateLimitedUntil: '{model} rate limited until {time}',
         overloadedUntil: 'Overloaded until {time}',
         viewTempUnschedDetails: 'View temp unschedulable details'
       },
@@ -2993,6 +2994,10 @@ export default {
         byPlatform: 'By Platform',
         byGroup: 'By Group',
         byAccount: 'By Account',
+        byUser: 'By User',
+        showByUserTooltip: 'Switch to user view to see concurrency usage per user',
+        switchToUser: 'Switch to user view',
+        switchToPlatform: 'Switch to platform view',
         totalRows: '{count} rows',
         disabledHint: 'Realtime monitoring is disabled in settings.',
         empty: 'No data',

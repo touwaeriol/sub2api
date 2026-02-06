@@ -1470,6 +1470,7 @@ export default {
         tempUnschedulable: '临时不可调度',
         rateLimitedUntil: '限流中，重置时间：{time}',
         scopeRateLimitedUntil: '{scope} 限流中，重置时间：{time}',
+        modelRateLimitedUntil: '{model} 限流至 {time}',
         overloadedUntil: '负载过重，重置时间：{time}',
         viewTempUnschedDetails: '查看临时不可调度详情'
       },
@@ -3166,6 +3167,10 @@ export default {
         byPlatform: '按平台',
         byGroup: '按分组',
         byAccount: '按账号',
+        byUser: '按用户',
+        showByUserTooltip: '切换用户视图，显示每个用户的并发使用情况',
+        switchToUser: '切换到用户视图',
+        switchToPlatform: '切换回平台视图',
         totalRows: '共 {count} 项',
         disabledHint: '已在设置中关闭实时监控。',
         empty: '暂无数据',
