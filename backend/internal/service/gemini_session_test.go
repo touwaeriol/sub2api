@@ -375,35 +375,46 @@ func TestGenerateGeminiDigestSessionKey(t *testing.T) {
 	tests := []struct {
 		name       string
 		prefixHash string
+		uuid       string
 		want       string
 	}{
 		{
-			name:       "normal 16 char hash",
+			name:       "normal 16 char hash with uuid",
 			prefixHash: "abcdefgh12345678",
-			want:       "gemini:digest:abcdefgh",
+			uuid:       "550e8400-e29b-41d4-a716-446655440000",
+			want:       "gemini:digest:abcdefgh:550e8400",
 		},
 		{
-			name:       "exactly 8 chars",
+			name:       "exactly 8 chars prefix and uuid",
 			prefixHash: "12345678",
-			want:       "gemini:digest:12345678",
+			uuid:       "abcdefgh",
+			want:       "gemini:digest:12345678:abcdefgh",
 		},
 		{
-			name:       "short hash (less than 8)",
+			name:       "short hash and short uuid (less than 8)",
 			prefixHash: "abc",
-			want:       "gemini:digest:abc",
+			uuid:       "xyz",
+			want:       "gemini:digest:abc:xyz",
 		},
 		{
-			name:       "empty hash",
+			name:       "empty hash and uuid",
 			prefixHash: "",
-			want:       "gemini:digest:",
+			uuid:       "",
+			want:       "gemini:digest::",
+		},
+		{
+			name:       "normal prefix with short uuid",
+			prefixHash: "abcdefgh12345678",
+			uuid:       "short",
+			want:       "gemini:digest:abcdefgh:short",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := GenerateGeminiDigestSessionKey(tt.prefixHash)
+			got := GenerateGeminiDigestSessionKey(tt.prefixHash, tt.uuid)
 			if got != tt.want {
-				t.Errorf("GenerateGeminiDigestSessionKey(%q) = %q, want %q", tt.prefixHash, got, tt.want)
+				t.Errorf("GenerateGeminiDigestSessionKey(%q, %q) = %q, want %q", tt.prefixHash, tt.uuid, got, tt.want)
 			}
 		})
 	}
@@ -411,10 +422,60 @@ func TestGenerateGeminiDigestSessionKey(t *testing.T) {
 	// 验证确定性：相同输入产生相同输出
 	t.Run("deterministic", func(t *testing.T) {
 		hash := "testprefix123456"
-		result1 := GenerateGeminiDigestSessionKey(hash)
-		result2 := GenerateGeminiDigestSessionKey(hash)
+		uuid := "test-uuid-12345"
+		result1 := GenerateGeminiDigestSessionKey(hash, uuid)
+		result2 := GenerateGeminiDigestSessionKey(hash, uuid)
 		if result1 != result2 {
 			t.Errorf("GenerateGeminiDigestSessionKey not deterministic: %s vs %s", result1, result2)
 		}
 	})
+
+	// 验证不同 uuid 产生不同 sessionKey（负载均衡核心逻辑）
+	t.Run("different uuid different key", func(t *testing.T) {
+		hash := "sameprefix123456"
+		uuid1 := "uuid0001-session-a"
+		uuid2 := "uuid0002-session-b"
+		result1 := GenerateGeminiDigestSessionKey(hash, uuid1)
+		result2 := GenerateGeminiDigestSessionKey(hash, uuid2)
+		if result1 == result2 {
+			t.Errorf("Different UUIDs should produce different session keys: %s vs %s", result1, result2)
+		}
+	})
+}
+
+func TestBuildGeminiTrieKey(t *testing.T) {
+	tests := []struct {
+		name       string
+		groupID    int64
+		prefixHash string
+		want       string
+	}{
+		{
+			name:       "normal",
+			groupID:    123,
+			prefixHash: "abcdef12",
+			want:       "gemini:trie:123:abcdef12",
+		},
+		{
+			name:       "zero group",
+			groupID:    0,
+			prefixHash: "xyz",
+			want:       "gemini:trie:0:xyz",
+		},
+		{
+			name:       "empty prefix",
+			groupID:    1,
+			prefixHash: "",
+			want:       "gemini:trie:1:",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := BuildGeminiTrieKey(tt.groupID, tt.prefixHash)
+			if got != tt.want {
+				t.Errorf("BuildGeminiTrieKey(%d, %q) = %q, want %q", tt.groupID, tt.prefixHash, got, tt.want)
+			}
+		})
+	}
 }
