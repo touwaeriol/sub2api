@@ -134,18 +134,18 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 
-		// 3. Gemini 2.5 → 3 映射
+		// 3. Gemini 2.5 直接透传
 		{
-			name:           "Gemini映射 - gemini-2.5-flash → gemini-3-flash",
+			name:           "Gemini透传 - gemini-2.5-flash",
 			requestedModel: "gemini-2.5-flash",
 			accountMapping: nil,
-			expected:       "gemini-3-flash",
+			expected:       "gemini-2.5-flash",
 		},
 		{
-			name:           "Gemini映射 - gemini-2.5-pro → gemini-3-pro-high",
+			name:           "Gemini透传 - gemini-2.5-pro",
 			requestedModel: "gemini-2.5-pro",
 			accountMapping: nil,
-			expected:       "gemini-3-pro-high",
+			expected:       "gemini-2.5-pro",
 		},
 		{
 			name:           "Gemini透传 - gemini-future-model",
@@ -266,4 +266,27 @@ func TestAntigravityGatewayService_IsModelSupported(t *testing.T) {
 			require.Equal(t, tt.expected, got)
 		})
 	}
+}
+
+func TestAntigravityGatewayService_GetMappedModel_Whitelist(t *testing.T) {
+	svc := &AntigravityGatewayService{}
+
+	account := &Account{
+		Platform: PlatformAntigravity,
+		Credentials: map[string]any{
+			"model_whitelist": []any{"claude-*"},
+		},
+	}
+
+	require.Equal(t, "claude-sonnet-4-5", svc.getMappedModel(account, "claude-unknown-model"))
+	require.Equal(t, "", svc.getMappedModel(account, "gemini-3-flash"))
+}
+
+func TestAccount_GetAntigravityModelWhitelist_TrimsStringSlice(t *testing.T) {
+	account := &Account{
+		Credentials: map[string]any{
+			"model_whitelist": []string{"  claude-*  ", "", "gemini-*"},
+		},
+	}
+	require.Equal(t, []string{"claude-*", "gemini-*"}, account.GetAntigravityModelWhitelist())
 }
