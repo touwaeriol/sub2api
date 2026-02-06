@@ -219,27 +219,11 @@ func (s *GatewayCacheModelLoadSuite) TestGetModelLoadBatch_ModelIsolation() {
 
 // ============ 辅助函数测试 ============
 
-func (s *GatewayCacheModelLoadSuite) TestGetMinuteTimestamp() {
-	t := s.T()
-
-	// getMinuteTimestamp 应该返回当前分钟的 Unix 时间戳（秒级，向下取整到分钟）
-	ts := getMinuteTimestamp()
-
-	// 验证是分钟对齐的（秒数为 0）
-	tm := time.Unix(ts, 0)
-	require.Equal(t, 0, tm.Second())
-
-	// 验证在当前分钟内
-	now := time.Now()
-	truncated := now.Truncate(time.Minute)
-	require.Equal(t, truncated.Unix(), ts)
-}
-
 func (s *GatewayCacheModelLoadSuite) TestModelLoadKey_Format() {
 	t := s.T()
 
-	key := modelLoadKey(123, "claude-sonnet-4", 1700000000)
-	require.Equal(t, "ag:model_load:123:claude-sonnet-4:1700000000", key)
+	key := modelLoadKey(123, "claude-sonnet-4")
+	require.Equal(t, "ag:model_load:123:claude-sonnet-4", key)
 }
 
 func (s *GatewayCacheModelLoadSuite) TestModelLastUsedKey_Format() {
