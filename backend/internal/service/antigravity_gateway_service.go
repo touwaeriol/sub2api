@@ -37,7 +37,6 @@ const (
 	antigravityMaxRetriesClaudeEnv      = "GATEWAY_ANTIGRAVITY_MAX_RETRIES_CLAUDE"
 	antigravityMaxRetriesGeminiTextEnv  = "GATEWAY_ANTIGRAVITY_MAX_RETRIES_GEMINI_TEXT"
 	antigravityMaxRetriesGeminiImageEnv = "GATEWAY_ANTIGRAVITY_MAX_RETRIES_GEMINI_IMAGE"
-	antigravityScopeRateLimitEnv        = "GATEWAY_ANTIGRAVITY_429_SCOPE_LIMIT"
 	antigravityBillingModelEnv          = "GATEWAY_ANTIGRAVITY_BILL_WITH_MAPPED_MODEL"
 	antigravityFallbackSecondsEnv       = "GATEWAY_ANTIGRAVITY_FALLBACK_COOLDOWN_SECONDS"
 )
@@ -51,12 +50,12 @@ type antigravityRetryLoopParams struct {
 	accessToken    string
 	action         string
 	body           []byte
-	quotaScope     AntigravityQuotaScope
+	requestedModel string // 请求的模型名称，用于模型级限流
 	maxRetries     int
 	c              *gin.Context
 	httpUpstream   HTTPUpstream
 	settingService *SettingService
-	handleError    func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope)
+	handleError    func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string)
 }
 
 // antigravityRetryLoopResult 重试循环的结果
@@ -185,7 +184,7 @@ urlFallbackLoop:
 				}
 
 				// 重试用尽，标记账户限流
-				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope)
+				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel)
 				log.Printf("%s status=429 rate_limited base_url=%s body=%s", p.prefix, baseURL, truncateForLog(respBody, 200))
 				resp = &http.Response{
 					StatusCode: resp.StatusCode,
@@ -841,7 +840,6 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	originalModel := claudeReq.Model
 	mappedModel := s.getMappedModel(account, claudeReq.Model)
-	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 	billingModel := originalModel
 	if antigravityUseMappedModelForBilling() && strings.TrimSpace(mappedModel) != "" {
 		billingModel = mappedModel
@@ -891,7 +889,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		accessToken:    accessToken,
 		action:         action,
 		body:           geminiBody,
-		quotaScope:     quotaScope,
+		requestedModel: originalModel,
 		c:              c,
 		httpUpstream:   s.httpUpstream,
 		settingService: s.settingService,
@@ -968,7 +966,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					accessToken:    accessToken,
 					action:         action,
 					body:           retryGeminiBody,
-					quotaScope:     quotaScope,
+					requestedModel: originalModel,
 					c:              c,
 					httpUpstream:   s.httpUpstream,
 					settingService: s.settingService,
@@ -1082,7 +1080,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					Body:       respBody,
 				}
 			}
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel)
 
 			if s.shouldFailoverUpstreamError(resp.StatusCode) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
@@ -1521,7 +1519,7 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 
 		// 429 错误时标记账号限流
 		if resp.StatusCode == http.StatusTooManyRequests {
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, AntigravityQuotaScopeClaude)
+			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel)
 		}
 
 		// 透传上游错误
@@ -1670,7 +1668,6 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	if len(body) == 0 {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Request body is empty")
 	}
-	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 解析请求以获取 image_size（用于图片计费）
 	imageSize := s.extractImageSize(body)
@@ -1759,7 +1756,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		accessToken:    accessToken,
 		action:         upstreamAction,
 		body:           wrappedBody,
-		quotaScope:     quotaScope,
+		requestedModel: originalModel,
 		c:              c,
 		httpUpstream:   s.httpUpstream,
 		settingService: s.settingService,
@@ -1822,7 +1819,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		if unwrapErr != nil || len(unwrappedForOps) == 0 {
 			unwrappedForOps = respBody
 		}
-		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel)
 		upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(unwrappedForOps))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 
@@ -1955,15 +1952,6 @@ func sleepAntigravityBackoffWithContext(ctx context.Context, attempt int) bool {
 	}
 }
 
-func antigravityUseScopeRateLimit() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(antigravityScopeRateLimitEnv)))
-	// 默认开启按配额域限流，只有明确设置为禁用值时才关闭
-	if v == "0" || v == "false" || v == "no" || v == "off" {
-		return false
-	}
-	return true
-}
-
 func antigravityHasAccountSwitch(ctx context.Context) bool {
 	if ctx == nil {
 		return false
@@ -2039,13 +2027,15 @@ func antigravityFallbackCooldownSeconds() (time.Duration, bool) {
 	}
 	return time.Duration(seconds) * time.Second, true
 }
-func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
-	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
+
+// handleUpstreamError 处理上游错误，使用模型级限流
+func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string) {
+	// 429 使用模型级限流
 	if statusCode == 429 {
-		useScopeLimit := antigravityUseScopeRateLimit() && quotaScope != ""
 		resetAt := ParseGeminiRateLimitResetTime(body)
+		var resetTime time.Time
 		if resetAt == nil {
-			// 解析失败：使用配置的 fallback 时间，直接限流整个账户
+			// 解析失败：使用配置的 fallback 时间
 			// 默认 30 秒，可通过配置覆盖（配置单位为分钟）
 			fallbackSeconds := 30
 			if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes > 0 {
@@ -2055,31 +2045,31 @@ func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, pre
 			if fallbackDur, ok := antigravityFallbackCooldownSeconds(); ok {
 				defaultDur = fallbackDur
 			}
-			ra := time.Now().Add(defaultDur)
-			if useScopeLimit {
-				log.Printf("%s status=429 rate_limited scope=%s reset_in=%v (fallback)", prefix, quotaScope, defaultDur)
-				if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, ra); err != nil {
-					log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
-				}
-			} else {
-				log.Printf("%s status=429 rate_limited account=%d reset_in=%v (fallback)", prefix, account.ID, defaultDur)
-				if err := s.accountRepo.SetRateLimited(ctx, account.ID, ra); err != nil {
-					log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
-				}
-			}
-			return
-		}
-		resetTime := time.Unix(*resetAt, 0)
-		if useScopeLimit {
-			log.Printf("%s status=429 rate_limited scope=%s reset_at=%v reset_in=%v", prefix, quotaScope, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
-			if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, resetTime); err != nil {
-				log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
-			}
+			resetTime = time.Now().Add(defaultDur)
+			log.Printf("%s status=429 rate_limited reset_in=%v (fallback)", prefix, defaultDur)
 		} else {
-			log.Printf("%s status=429 rate_limited account=%d reset_at=%v reset_in=%v", prefix, account.ID, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
+			resetTime = time.Unix(*resetAt, 0)
+			log.Printf("%s status=429 rate_limited reset_at=%v reset_in=%v", prefix, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
+		}
+
+		// 解析映射后的真实模型名
+		modelKey := resolveAntigravityModelKey(ctx, account, requestedModel)
+		if modelKey == "" {
+			log.Printf("%s status=429 model_key_resolve_failed model=%s account=%d, using account-level rate limit",
+				prefix, requestedModel, account.ID)
+			// 兜底：使用账号级限流
 			if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
 				log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
 			}
+			return
+		}
+
+		// 使用模型级限流
+		if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, resetTime); err != nil {
+			log.Printf("%s status=429 model_rate_limit_failed model=%s error=%v", prefix, modelKey, err)
+		} else {
+			log.Printf("%s status=429 model_rate_limited model=%s account=%d reset_in=%v",
+				prefix, modelKey, account.ID, time.Until(resetTime).Truncate(time.Second))
 		}
 		return
 	}
@@ -2091,6 +2081,19 @@ func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, pre
 	if shouldDisable {
 		log.Printf("%s status=%d marked_error", prefix, statusCode)
 	}
+}
+
+// resolveAntigravityModelKey 解析用于限流的模型键名
+// 优先使用账号的模型映射，若无映射则使用请求的模型名
+func resolveAntigravityModelKey(ctx context.Context, account *Account, requestedModel string) string {
+	if account == nil || requestedModel == "" {
+		return ""
+	}
+	// 使用账号的模型映射获取实际模型
+	modelKey := account.GetMappedModel(requestedModel)
+	// 标准化模型名称
+	modelKey = normalizeAntigravityModelName(modelKey)
+	return modelKey
 }
 
 type antigravityStreamResult struct {

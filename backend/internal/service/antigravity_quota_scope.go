@@ -3,7 +3,6 @@ package service
 import (
 	"slices"
 	"strings"
-	"time"
 )
 
 const antigravityQuotaScopesKey = "antigravity_quota_scopes"
@@ -57,7 +56,7 @@ func normalizeAntigravityModelName(model string) string {
 	return normalized
 }
 
-// IsSchedulableForModel 结合 Antigravity 配额域限流判断是否可调度
+// IsSchedulableForModel 判断账号是否可调度（只检查模型级限流）
 func (a *Account) IsSchedulableForModel(requestedModel string) bool {
 	if a == nil {
 		return false
@@ -65,70 +64,9 @@ func (a *Account) IsSchedulableForModel(requestedModel string) bool {
 	if !a.IsSchedulable() {
 		return false
 	}
+	// 只检查模型级限流，不再检查 Scope 级限流
 	if a.isModelRateLimited(requestedModel) {
 		return false
 	}
-	if a.Platform != PlatformAntigravity {
-		return true
-	}
-	scope, ok := resolveAntigravityQuotaScope(requestedModel)
-	if !ok {
-		return true
-	}
-	resetAt := a.antigravityQuotaScopeResetAt(scope)
-	if resetAt == nil {
-		return true
-	}
-	now := time.Now()
-	return !now.Before(*resetAt)
-}
-
-func (a *Account) antigravityQuotaScopeResetAt(scope AntigravityQuotaScope) *time.Time {
-	if a == nil || a.Extra == nil || scope == "" {
-		return nil
-	}
-	rawScopes, ok := a.Extra[antigravityQuotaScopesKey].(map[string]any)
-	if !ok {
-		return nil
-	}
-	rawScope, ok := rawScopes[string(scope)].(map[string]any)
-	if !ok {
-		return nil
-	}
-	resetAtRaw, ok := rawScope["rate_limit_reset_at"].(string)
-	if !ok || strings.TrimSpace(resetAtRaw) == "" {
-		return nil
-	}
-	resetAt, err := time.Parse(time.RFC3339, resetAtRaw)
-	if err != nil {
-		return nil
-	}
-	return &resetAt
-}
-
-var antigravityAllScopes = []AntigravityQuotaScope{
-	AntigravityQuotaScopeClaude,
-	AntigravityQuotaScopeGeminiText,
-	AntigravityQuotaScopeGeminiImage,
-}
-
-func (a *Account) GetAntigravityScopeRateLimits() map[string]int64 {
-	if a == nil || a.Platform != PlatformAntigravity {
-		return nil
-	}
-	now := time.Now()
-	result := make(map[string]int64)
-	for _, scope := range antigravityAllScopes {
-		resetAt := a.antigravityQuotaScopeResetAt(scope)
-		if resetAt != nil && now.Before(*resetAt) {
-			remainingSec := int64(time.Until(*resetAt).Seconds())
-			if remainingSec > 0 {
-				result[string(scope)] = remainingSec
-			}
-		}
-	}
-	if len(result) == 0 {
-		return nil
-	}
-	return result
+	return true
 }

@@ -42,9 +42,9 @@ func (s *stubAntigravityUpstream) DoWithTLS(req *http.Request, proxyURL string, 
 	return s.Do(req, proxyURL, accountID, accountConcurrency)
 }
 
-type scopeLimitCall struct {
+type modelRateLimitCall struct {
 	accountID int64
-	scope     AntigravityQuotaScope
+	modelKey  string
 	resetAt   time.Time
 }
 
@@ -55,12 +55,12 @@ type rateLimitCall struct {
 
 type stubAntigravityAccountRepo struct {
 	AccountRepository
-	scopeCalls []scopeLimitCall
+	modelCalls []modelRateLimitCall
 	rateCalls  []rateLimitCall
 }
 
-func (s *stubAntigravityAccountRepo) SetAntigravityQuotaScopeLimit(ctx context.Context, id int64, scope AntigravityQuotaScope, resetAt time.Time) error {
-	s.scopeCalls = append(s.scopeCalls, scopeLimitCall{accountID: id, scope: scope, resetAt: resetAt})
+func (s *stubAntigravityAccountRepo) SetModelRateLimit(ctx context.Context, id int64, modelKey string, resetAt time.Time) error {
+	s.modelCalls = append(s.modelCalls, modelRateLimitCall{accountID: id, modelKey: modelKey, resetAt: resetAt})
 	return nil
 }
 
@@ -94,16 +94,16 @@ func TestAntigravityRetryLoop_URLFallback_UsesLatestSuccess(t *testing.T) {
 
 	var handleErrorCalled bool
 	result, err := antigravityRetryLoop(antigravityRetryLoopParams{
-		prefix:       "[test]",
-		ctx:          context.Background(),
-		account:      account,
-		proxyURL:     "",
-		accessToken:  "token",
-		action:       "generateContent",
-		body:         []byte(`{"input":"test"}`),
-		quotaScope:   AntigravityQuotaScopeClaude,
-		httpUpstream: upstream,
-		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
+		prefix:         "[test]",
+		ctx:            context.Background(),
+		account:        account,
+		proxyURL:       "",
+		accessToken:    "token",
+		action:         "generateContent",
+		body:           []byte(`{"input":"test"}`),
+		requestedModel: "claude-sonnet-4-5",
+		httpUpstream:   upstream,
+		handleError: func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string) {
 			handleErrorCalled = true
 		},
 	})
@@ -123,40 +123,40 @@ func TestAntigravityRetryLoop_URLFallback_UsesLatestSuccess(t *testing.T) {
 	require.Equal(t, base2, available[0])
 }
 
-func TestAntigravityHandleUpstreamError_UsesScopeLimitWhenEnabled(t *testing.T) {
-	t.Setenv(antigravityScopeRateLimitEnv, "true")
+func TestAntigravityHandleUpstreamError_UsesModelRateLimit(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{accountRepo: repo}
 	account := &Account{ID: 9, Name: "acc-9", Platform: PlatformAntigravity}
 
 	body := buildGeminiRateLimitBody("3s")
-	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude)
+	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, "claude-sonnet-4-5")
 
-	require.Len(t, repo.scopeCalls, 1)
+	// 验证使用模型级限流
+	require.Len(t, repo.modelCalls, 1)
 	require.Empty(t, repo.rateCalls)
-	call := repo.scopeCalls[0]
+	call := repo.modelCalls[0]
 	require.Equal(t, account.ID, call.accountID)
-	require.Equal(t, AntigravityQuotaScopeClaude, call.scope)
+	require.Equal(t, "claude-sonnet-4-5", call.modelKey)
 	require.WithinDuration(t, time.Now().Add(3*time.Second), call.resetAt, 2*time.Second)
 }
 
-func TestAntigravityHandleUpstreamError_UsesAccountLimitWhenScopeDisabled(t *testing.T) {
-	t.Setenv(antigravityScopeRateLimitEnv, "false")
+func TestAntigravityHandleUpstreamError_FallbackToAccountRateLimitOnEmptyModel(t *testing.T) {
 	repo := &stubAntigravityAccountRepo{}
 	svc := &AntigravityGatewayService{accountRepo: repo}
 	account := &Account{ID: 10, Name: "acc-10", Platform: PlatformAntigravity}
 
 	body := buildGeminiRateLimitBody("2s")
-	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, AntigravityQuotaScopeClaude)
+	// 传入空模型名，应该使用账号级限流
+	svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusTooManyRequests, http.Header{}, body, "")
 
 	require.Len(t, repo.rateCalls, 1)
-	require.Empty(t, repo.scopeCalls)
+	require.Empty(t, repo.modelCalls)
 	call := repo.rateCalls[0]
 	require.Equal(t, account.ID, call.accountID)
 	require.WithinDuration(t, time.Now().Add(2*time.Second), call.resetAt, 2*time.Second)
 }
 
-func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
+func TestAccountIsSchedulableForModel_ModelRateLimits(t *testing.T) {
 	now := time.Now()
 	future := now.Add(10 * time.Minute)
 
@@ -168,19 +168,22 @@ func TestAccountIsSchedulableForModel_AntigravityRateLimits(t *testing.T) {
 		Schedulable: true,
 	}
 
+	// 账号级限流应该阻止所有模型
 	account.RateLimitResetAt = &future
 	require.False(t, account.IsSchedulableForModel("claude-sonnet-4-5"))
 	require.False(t, account.IsSchedulableForModel("gemini-3-flash"))
 
+	// 清除账号级限流，设置模型级限流
 	account.RateLimitResetAt = nil
 	account.Extra = map[string]any{
-		antigravityQuotaScopesKey: map[string]any{
-			"claude": map[string]any{
+		modelRateLimitsKey: map[string]any{
+			"claude_sonnet": map[string]any{
 				"rate_limit_reset_at": future.Format(time.RFC3339),
 			},
 		},
 	}
 
+	// claude-sonnet 被限流，gemini 不受影响
 	require.False(t, account.IsSchedulableForModel("claude-sonnet-4-5"))
 	require.True(t, account.IsSchedulableForModel("gemini-3-flash"))
 }
