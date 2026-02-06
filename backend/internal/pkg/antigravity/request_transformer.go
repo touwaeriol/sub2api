@@ -192,8 +192,6 @@ func GetDefaultIdentityPatch() string {
 
 // modelDisplayNameMap 模型前缀 → 显示名称映射
 var modelDisplayNameMap = map[string]string{
-	// Claude 4.6
-	"claude-opus-4-6": "Claude Opus 4.6",
 	// Claude 4.5
 	"claude-opus-4-5":   "Claude Opus 4.5",
 	"claude-sonnet-4-5": "Claude Sonnet 4.5",
