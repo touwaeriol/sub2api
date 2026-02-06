@@ -1336,7 +1336,7 @@ func TestGatewayService_selectAccountWithMixedScheduling(t *testing.T) {
 					Schedulable: true,
 					Extra: map[string]any{
 						"model_rate_limits": map[string]any{
-							"claude_sonnet": map[string]any{
+							"claude-3-5-sonnet-20241022": map[string]any{
 								"rate_limit_reset_at": resetAt.Format(time.RFC3339),
 							},
 						},
@@ -2776,7 +2776,7 @@ func TestGatewayService_SelectAccountWithLoadAwareness(t *testing.T) {
 					Concurrency: 5,
 					Extra: map[string]any{
 						"model_rate_limits": map[string]any{
-							"claude_sonnet": map[string]any{
+							"claude-3-5-sonnet-20241022": map[string]any{
 								"rate_limit_reset_at": now.Format(time.RFC3339),
 							},
 						},
