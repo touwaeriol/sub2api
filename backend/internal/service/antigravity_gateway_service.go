@@ -520,10 +520,10 @@ func logPrefix(sessionID, accountName string) string {
 }
 
 // Antigravity 直接支持的模型（精确匹配透传）
+// 注意：claude-opus-4-6 不在此列表中，因为它需要映射到 claude-opus-4-5-thinking
 var antigravitySupportedModels = map[string]bool{
 	// Claude 模型
 	"claude-opus-4-5-thinking":   true,
-	"claude-opus-4-6":            true,
 	"claude-sonnet-4-5":          true,
 	"claude-sonnet-4-5-thinking": true,
 	// Gemini 模型
@@ -551,8 +551,8 @@ var antigravityPrefixMapping = []struct {
 	// gemini-2.5 前缀映射（直接透传）
 	{"gemini-2.5-flash", "gemini-2.5-flash"}, // gemini-2.5-flash-xxx → gemini-2.5-flash
 	{"gemini-2.5-pro", "gemini-2.5-pro"},     // gemini-2.5-pro-xxx → gemini-2.5-pro
-	// Claude 4.6 映射（最长前缀优先）
-	{"claude-opus-4-6", "claude-opus-4-6"}, // claude-opus-4-6-xxx → claude-opus-4-6
+	// Claude 4.6 映射 → 4.5 thinking
+	{"claude-opus-4-6", "claude-opus-4-5-thinking"}, // claude-opus-4-6-xxx → claude-opus-4-5-thinking
 	// Claude 4.5 映射
 	{"claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking"}, // claude-sonnet-4-5-thinking-xxx
 	{"claude-opus-4-5-thinking", "claude-opus-4-5-thinking"},     // claude-opus-4-5-thinking-xxx
