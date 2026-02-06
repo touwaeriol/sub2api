@@ -22,11 +22,11 @@ func TestIsAntigravityModelSupported(t *testing.T) {
 		{"直接支持 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
 		{"直接支持 - gemini-3-pro-high", "gemini-3-pro-high", true},
 
-		// 可映射的模型
+		// 可映射的模型（有明确前缀映射的）
 		{"可映射 - claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", true},
 		{"可映射 - claude-3-5-sonnet-20240620", "claude-3-5-sonnet-20240620", true},
-		{"可映射 - claude-opus-4", "claude-opus-4", true},
-		{"可映射 - claude-haiku-4", "claude-haiku-4", true},
+		{"可映射 - claude-opus-4-6", "claude-opus-4-6", true},
+		{"可映射 - claude-haiku-4-5", "claude-haiku-4-5", true},
 		{"可映射 - claude-3-haiku-20240307", "claude-3-haiku-20240307", true},
 
 		// Gemini 前缀透传
@@ -72,7 +72,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "custom-model",
 		},
 		{
-			name:           "账户映射覆盖系统映射",
+			name:           "账户映射 - 可覆盖未知模型",
 			requestedModel: "claude-opus-4",
 			accountMapping: map[string]string{"claude-opus-4": "my-opus"},
 			expected:       "my-opus",
@@ -92,7 +92,7 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "gemini-2.5-flash",
 		},
 
-		// 2. 系统默认映射
+		// 2. 系统默认映射（前缀映射）
 		{
 			name:           "系统映射 - claude-3-5-sonnet-20241022",
 			requestedModel: "claude-3-5-sonnet-20241022",
@@ -106,22 +106,16 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "系统映射 - claude-opus-4",
-			requestedModel: "claude-opus-4",
+			name:           "系统映射 - claude-opus-4-6 → claude-opus-4-5-thinking",
+			requestedModel: "claude-opus-4-6",
 			accountMapping: nil,
 			expected:       "claude-opus-4-5-thinking",
 		},
 		{
-			name:           "系统映射 - claude-opus-4-5-20251101",
+			name:           "系统映射 - claude-opus-4-5-20251101 → claude-opus-4-5-thinking",
 			requestedModel: "claude-opus-4-5-20251101",
 			accountMapping: nil,
 			expected:       "claude-opus-4-5-thinking",
-		},
-		{
-			name:           "系统映射 - claude-haiku-4 → claude-sonnet-4-5",
-			requestedModel: "claude-haiku-4",
-			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
 		},
 		{
 			name:           "系统映射 - claude-haiku-4-5 → claude-sonnet-4-5",
@@ -188,18 +182,30 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5-thinking",
 		},
 
-		// 5. 默认值 fallback（未知 claude 模型）
+		// 5. 未知模型返回空字符串（不再兜底到默认值）
 		{
-			name:           "默认值 - claude-unknown",
+			name:           "未知模型 - claude-unknown 返回空",
 			requestedModel: "claude-unknown",
 			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
+			expected:       "",
 		},
 		{
-			name:           "默认值 - claude-3-opus-20240229",
+			name:           "未知模型 - claude-3-opus-20240229 返回空",
 			requestedModel: "claude-3-opus-20240229",
 			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
+			expected:       "",
+		},
+		{
+			name:           "未知模型 - claude-opus-4 返回空（太宽泛的前缀）",
+			requestedModel: "claude-opus-4",
+			accountMapping: nil,
+			expected:       "",
+		},
+		{
+			name:           "未知模型 - claude-haiku-4 返回空（太宽泛的前缀）",
+			requestedModel: "claude-haiku-4",
+			accountMapping: nil,
+			expected:       "",
 		},
 	}
 
@@ -233,12 +239,10 @@ func TestAntigravityGatewayService_GetMappedModel_EdgeCases(t *testing.T) {
 		requestedModel string
 		expected       string
 	}{
-		// 空字符串回退到默认值
-		{"空字符串", "", "claude-sonnet-4-5"},
-
-		// 非 claude/gemini 前缀回退到默认值
-		{"非claude/gemini前缀 - gpt", "gpt-4", "claude-sonnet-4-5"},
-		{"非claude/gemini前缀 - llama", "llama-3", "claude-sonnet-4-5"},
+		// 空字符串和非 claude/gemini 前缀返回空字符串
+		{"空字符串", "", ""},
+		{"非claude/gemini前缀 - gpt", "gpt-4", ""},
+		{"非claude/gemini前缀 - llama", "llama-3", ""},
 	}
 
 	for _, tt := range tests {
@@ -262,10 +266,10 @@ func TestAntigravityGatewayService_IsModelSupported(t *testing.T) {
 		{"直接支持 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
 		{"直接支持 - gemini-3-flash", "gemini-3-flash", true},
 
-		// 可映射
-		{"可映射 - claude-opus-4", "claude-opus-4", true},
+		// 可映射（有明确前缀映射）
+		{"可映射 - claude-opus-4-6", "claude-opus-4-6", true},
 
-		// 前缀透传
+		// 前缀透传（claude 和 gemini 前缀）
 		{"Gemini前缀", "gemini-unknown", true},
 		{"Claude前缀", "claude-unknown", true},
 
