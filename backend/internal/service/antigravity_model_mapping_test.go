@@ -16,7 +16,8 @@ func TestIsAntigravityModelSupported(t *testing.T) {
 	}{
 		// 直接支持的模型
 		{"直接支持 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
-		{"直接支持 - claude-opus-4-5-thinking", "claude-opus-4-5-thinking", true},
+		{"直接支持 - claude-opus-4-6-thinking", "claude-opus-4-6-thinking", true},
+		{"直接支持 - claude-opus-4-5-thinking (迁移到4.6)", "claude-opus-4-5-thinking", true},
 		{"直接支持 - claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking", true},
 		{"直接支持 - gemini-2.5-flash", "gemini-2.5-flash", true},
 		{"直接支持 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
@@ -106,16 +107,22 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "系统映射 - claude-opus-4-6 → claude-opus-4-5-thinking",
+			name:           "系统映射 - claude-opus-4-6 → claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-6",
 			accountMapping: nil,
-			expected:       "claude-opus-4-5-thinking",
+			expected:       "claude-opus-4-6-thinking",
 		},
 		{
-			name:           "系统映射 - claude-opus-4-5-20251101 → claude-opus-4-5-thinking",
+			name:           "系统映射 - claude-opus-4-5-20251101 → claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-5-20251101",
 			accountMapping: nil,
-			expected:       "claude-opus-4-5-thinking",
+			expected:       "claude-opus-4-6-thinking",
+		},
+		{
+			name:           "系统映射 - claude-opus-4-5-thinking → claude-opus-4-6-thinking",
+			requestedModel: "claude-opus-4-5-thinking",
+			accountMapping: nil,
+			expected:       "claude-opus-4-6-thinking",
 		},
 		{
 			name:           "系统映射 - claude-haiku-4-5 → claude-sonnet-4-5",
@@ -170,10 +177,10 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "直接支持 - claude-opus-4-5-thinking",
-			requestedModel: "claude-opus-4-5-thinking",
+			name:           "直接支持 - claude-opus-4-6-thinking",
+			requestedModel: "claude-opus-4-6-thinking",
 			accountMapping: nil,
-			expected:       "claude-opus-4-5-thinking",
+			expected:       "claude-opus-4-6-thinking",
 		},
 		{
 			name:           "直接支持 - claude-sonnet-4-5-thinking",

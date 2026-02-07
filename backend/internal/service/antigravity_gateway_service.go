@@ -520,10 +520,10 @@ func logPrefix(sessionID, accountName string) string {
 }
 
 // Antigravity 直接支持的模型（精确匹配透传）
-// 注意：claude-opus-4-6 不在此列表中，因为它需要映射到 claude-opus-4-5-thinking
+// 注意：claude-opus-4-6 不在此列表中，因为它需要映射到 claude-opus-4-6-thinking
 var antigravitySupportedModels = map[string]bool{
 	// Claude 模型
-	"claude-opus-4-5-thinking":   true,
+	"claude-opus-4-6-thinking":   true, // 新增：官方支持的新模型
 	"claude-sonnet-4-5":          true,
 	"claude-sonnet-4-5-thinking": true,
 	// Gemini 模型
@@ -551,15 +551,15 @@ var antigravityPrefixMapping = []struct {
 	// gemini-2.5 前缀映射（直接透传）
 	{"gemini-2.5-flash", "gemini-2.5-flash"}, // gemini-2.5-flash-xxx → gemini-2.5-flash
 	{"gemini-2.5-pro", "gemini-2.5-pro"},     // gemini-2.5-pro-xxx → gemini-2.5-pro
-	// Claude 4.6 映射 → 4.5 thinking
-	{"claude-opus-4-6", "claude-opus-4-5-thinking"}, // claude-opus-4-6-xxx → claude-opus-4-5-thinking
+	// Claude 4.6 映射
+	{"claude-opus-4-6", "claude-opus-4-6-thinking"}, // claude-opus-4-6-xxx → claude-opus-4-6-thinking
 	// Claude 4.5 映射
 	{"claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking"}, // claude-sonnet-4-5-thinking-xxx
-	{"claude-opus-4-5-thinking", "claude-opus-4-5-thinking"},     // claude-opus-4-5-thinking-xxx
+	{"claude-opus-4-5-thinking", "claude-opus-4-6-thinking"},     // claude-opus-4-5-thinking-xxx → 迁移到 4.6
 	{"claude-3-5-sonnet", "claude-sonnet-4-5"},                   // 旧版 claude-3-5-sonnet-xxx
 	{"claude-sonnet-4-5", "claude-sonnet-4-5"},                   // claude-sonnet-4-5-xxx
 	{"claude-haiku-4-5", "claude-sonnet-4-5"},                    // claude-haiku-4-5-xxx → sonnet
-	{"claude-opus-4-5", "claude-opus-4-5-thinking"},              // claude-opus-4-5-xxx → thinking
+	{"claude-opus-4-5", "claude-opus-4-6-thinking"},              // claude-opus-4-5-xxx → 迁移到 4.6
 	{"claude-3-haiku", "claude-sonnet-4-5"},                      // 旧版 claude-3-haiku-xxx → sonnet
 	// 注意：不要添加太宽泛的前缀如 claude-opus-4、claude-sonnet-4
 	// 这会导致未知模型（如 claude-opus-4.7）被错误映射
