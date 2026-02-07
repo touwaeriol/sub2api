@@ -100,12 +100,11 @@ type antigravityRetryLoopParams struct {
 	accessToken     string
 	action          string
 	body            []byte
-	quotaScope      AntigravityQuotaScope
 	c               *gin.Context
 	httpUpstream    HTTPUpstream
 	settingService  *SettingService
 	accountRepo     AccountRepository // 用于智能重试的模型级别限流
-	handleError     func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult
+	handleError     func(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, requestedModel string, groupID int64, sessionHash string, isStickySession bool) *handleModelRateLimitResult
 	requestedModel  string // 用于限流检查的原始请求模型
 	isStickySession bool   // 是否为粘性会话（用于账号切换时的缓存计费判断）
 	groupID         int64  // 用于模型级限流时清除粘性会话
@@ -148,13 +147,17 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 
 	// 情况1: retryDelay >= 阈值，限流模型并切换账号
 	if shouldRateLimitModel {
-		log.Printf("%s status=%d oauth_long_delay model=%s account=%d (model rate limit, switch account)",
-			p.prefix, resp.StatusCode, modelName, p.account.ID)
+		rateLimitDuration := waitDuration
+		if rateLimitDuration <= 0 {
+			rateLimitDuration = antigravityDefaultRateLimitDuration
+		}
+		log.Printf("%s status=%d oauth_long_delay model=%s account=%d upstream_retry_delay=%v body=%s (model rate limit, switch account)",
+			p.prefix, resp.StatusCode, modelName, p.account.ID, rateLimitDuration, truncateForLog(respBody, 200))
 
-		resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
+		resetAt := time.Now().Add(rateLimitDuration)
 		if !setModelRateLimitByModelName(p.ctx, p.accountRepo, p.account.ID, modelName, p.prefix, resp.StatusCode, resetAt, false) {
-			p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
-			log.Printf("%s status=%d rate_limited account=%d (no scope mapping)", p.prefix, resp.StatusCode, p.account.ID)
+			p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
+			log.Printf("%s status=%d rate_limited account=%d (no model mapping)", p.prefix, resp.StatusCode, p.account.ID)
 		} else {
 			s.updateAccountModelRateLimitInCache(p.ctx, p.account, modelName, resetAt)
 		}
@@ -190,7 +193,7 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 			retryReq, err := antigravity.NewAPIRequestWithURL(p.ctx, baseURL, p.action, p.accessToken, p.body)
 			if err != nil {
 				log.Printf("%s status=smart_retry_request_build_failed error=%v", p.prefix, err)
-				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
+				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
 				return &smartRetryResult{
 					action: smartRetryActionBreakWithResp,
 					resp: &http.Response{
@@ -233,16 +236,24 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		}
 
 		// 所有重试都失败，限流当前模型并切换账号
-		log.Printf("%s status=%d smart_retry_exhausted attempts=%d model=%s account=%d (switch account)",
-			p.prefix, resp.StatusCode, antigravitySmartRetryMaxAttempts, modelName, p.account.ID)
+		rateLimitDuration := waitDuration
+		if rateLimitDuration <= 0 {
+			rateLimitDuration = antigravityDefaultRateLimitDuration
+		}
+		retryBody := lastRetryBody
+		if retryBody == nil {
+			retryBody = respBody
+		}
+		log.Printf("%s status=%d smart_retry_exhausted attempts=%d model=%s account=%d upstream_retry_delay=%v body=%s (switch account)",
+			p.prefix, resp.StatusCode, antigravitySmartRetryMaxAttempts, modelName, p.account.ID, rateLimitDuration, truncateForLog(retryBody, 200))
 
-		resetAt := time.Now().Add(antigravityDefaultRateLimitDuration)
+		resetAt := time.Now().Add(rateLimitDuration)
 		if p.accountRepo != nil && modelName != "" {
 			if err := p.accountRepo.SetModelRateLimit(p.ctx, p.account.ID, modelName, resetAt); err != nil {
 				log.Printf("%s status=%d model_rate_limit_failed model=%s error=%v", p.prefix, resp.StatusCode, modelName, err)
 			} else {
 				log.Printf("%s status=%d model_rate_limited_after_smart_retry model=%s account=%d reset_in=%v",
-					p.prefix, resp.StatusCode, modelName, p.account.ID, antigravityDefaultRateLimitDuration)
+					p.prefix, resp.StatusCode, modelName, p.account.ID, rateLimitDuration)
 				s.updateAccountModelRateLimitInCache(p.ctx, p.account, modelName, resetAt)
 			}
 		}
@@ -399,7 +410,7 @@ urlFallbackLoop:
 				}
 
 				// 重试用尽，标记账户限流
-				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.quotaScope, p.groupID, p.sessionHash, p.isStickySession)
+				p.handleError(p.ctx, p.prefix, p.account, resp.StatusCode, resp.Header, respBody, p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
 				log.Printf("%s status=%d rate_limited base_url=%s body=%s", p.prefix, resp.StatusCode, baseURL, truncateForLog(respBody, 200))
 				resp = &http.Response{
 					StatusCode: resp.StatusCode,
@@ -990,7 +1001,6 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	// 应用 thinking 模式自动后缀：如果 thinking 开启且目标是 claude-sonnet-4-5，自动改为 thinking 版本
 	thinkingEnabled := claudeReq.Thinking != nil && claudeReq.Thinking.Type == "enabled"
 	mappedModel = applyThinkingModelSuffix(mappedModel, thinkingEnabled)
-	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 获取 access_token
 	if s.tokenProvider == nil {
@@ -1039,7 +1049,6 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		accessToken:     accessToken,
 		action:          action,
 		body:            geminiBody,
-		quotaScope:      quotaScope,
 		c:               c,
 		httpUpstream:    s.httpUpstream,
 		settingService:  s.settingService,
@@ -1120,7 +1129,6 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					accessToken:     accessToken,
 					action:          action,
 					body:            retryGeminiBody,
-					quotaScope:      quotaScope,
 					c:               c,
 					httpUpstream:    s.httpUpstream,
 					settingService:  s.settingService,
@@ -1231,7 +1239,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				}
 			}
 
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope, 0, "", isStickySession)
+			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", isStickySession)
 
 			if s.shouldFailoverUpstreamError(resp.StatusCode) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
@@ -1610,7 +1618,6 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	if len(body) == 0 {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Request body is empty")
 	}
-	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 解析请求以获取 image_size（用于图片计费）
 	imageSize := s.extractImageSize(body)
@@ -1694,7 +1701,6 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		accessToken:     accessToken,
 		action:          upstreamAction,
 		body:            wrappedBody,
-		quotaScope:      quotaScope,
 		c:               c,
 		httpUpstream:    s.httpUpstream,
 		settingService:  s.settingService,
@@ -1768,7 +1774,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		if unwrapErr != nil || len(unwrappedForOps) == 0 {
 			unwrappedForOps = respBody
 		}
-		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope, 0, "", isStickySession)
+		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", isStickySession)
 		upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(unwrappedForOps))
 		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 		upstreamDetail := s.getUpstreamErrorDetail(unwrappedForOps)
@@ -2064,9 +2070,9 @@ func shouldTriggerAntigravitySmartRetry(account *Account, respBody []byte) (shou
 	}
 
 	// retryDelay >= 阈值：直接限流模型，不重试
-	// 注意：如果上游未提供 retryDelay，parseAntigravitySmartRetryInfo 已设置为默认 5 分钟
+	// 注意：如果上游未提供 retryDelay，parseAntigravitySmartRetryInfo 已设置为默认 30s
 	if info.RetryDelay >= antigravityRateLimitThreshold {
-		return false, true, 0, info.ModelName
+		return false, true, info.RetryDelay, info.ModelName
 	}
 
 	// retryDelay < 阈值：智能重试
@@ -2188,10 +2194,10 @@ func (s *AntigravityGatewayService) updateAccountModelRateLimitInCache(ctx conte
 func (s *AntigravityGatewayService) handleUpstreamError(
 	ctx context.Context, prefix string, account *Account,
 	statusCode int, headers http.Header, body []byte,
-	quotaScope AntigravityQuotaScope,
+	requestedModel string,
 	groupID int64, sessionHash string, isStickySession bool,
 ) *handleModelRateLimitResult {
-	// ✨ 模型级限流处理（在原有逻辑之前）
+	// 模型级限流处理（优先）
 	result := s.handleModelRateLimit(&handleModelRateLimitParams{
 		ctx:             ctx,
 		prefix:          prefix,
@@ -2213,52 +2219,35 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		return nil
 	}
 
-	// ========== 原有逻辑，保持不变 ==========
-	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
+	// 429：尝试解析模型级限流，解析失败时兜底为账号级限流
 	if statusCode == 429 {
-		// 调试日志遵循统一日志开关与长度限制，避免无条件记录完整上游响应体。
 		if logBody, maxBytes := s.getLogConfig(); logBody {
 			log.Printf("[Antigravity-Debug] 429 response body: %s", truncateString(string(body), maxBytes))
 		}
 
-		useScopeLimit := quotaScope != ""
 		resetAt := ParseGeminiRateLimitResetTime(body)
-		if resetAt == nil {
-			// 解析失败：使用默认限流时间（与临时限流保持一致）
-			// 可通过配置或环境变量覆盖
-			defaultDur := antigravityDefaultRateLimitDuration
-			if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes > 0 {
-				defaultDur = time.Duration(s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes) * time.Minute
-			}
-			// 秒级环境变量优先级最高
-			if override, ok := antigravityFallbackCooldownSeconds(); ok {
-				defaultDur = override
-			}
-			ra := time.Now().Add(defaultDur)
-			if useScopeLimit {
-				log.Printf("%s status=429 rate_limited scope=%s reset_in=%v (fallback)", prefix, quotaScope, defaultDur)
-				if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, ra); err != nil {
-					log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
-				}
+		defaultDur := s.getDefaultRateLimitDuration()
+
+		// 尝试解析模型 key 并设置模型级限流
+		modelKey := resolveAntigravityModelKey(requestedModel)
+		if modelKey != "" {
+			ra := s.resolveResetTime(resetAt, defaultDur)
+			if err := s.accountRepo.SetModelRateLimit(ctx, account.ID, modelKey, ra); err != nil {
+				log.Printf("%s status=429 model_rate_limit_set_failed model=%s error=%v", prefix, modelKey, err)
 			} else {
-				log.Printf("%s status=429 rate_limited account=%d reset_in=%v (fallback)", prefix, account.ID, defaultDur)
-				if err := s.accountRepo.SetRateLimited(ctx, account.ID, ra); err != nil {
-					log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
-				}
+				log.Printf("%s status=429 model_rate_limited model=%s account=%d reset_at=%v reset_in=%v",
+					prefix, modelKey, account.ID, ra.Format("15:04:05"), time.Until(ra).Truncate(time.Second))
+				s.updateAccountModelRateLimitInCache(ctx, account, modelKey, ra)
 			}
 			return nil
 		}
-		resetTime := time.Unix(*resetAt, 0)
-		if useScopeLimit {
-			log.Printf("%s status=429 rate_limited scope=%s reset_at=%v reset_in=%v", prefix, quotaScope, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
-			if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, resetTime); err != nil {
-				log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
-			}
-		} else {
-			log.Printf("%s status=429 rate_limited account=%d reset_at=%v reset_in=%v", prefix, account.ID, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
-			if err := s.accountRepo.SetRateLimited(ctx, account.ID, resetTime); err != nil {
-				log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
-			}
+
+		// 无法解析模型 key，兜底为账号级限流
+		ra := s.resolveResetTime(resetAt, defaultDur)
+		log.Printf("%s status=429 rate_limited account=%d reset_at=%v reset_in=%v (fallback)",
+			prefix, account.ID, ra.Format("15:04:05"), time.Until(ra).Truncate(time.Second))
+		if err := s.accountRepo.SetRateLimited(ctx, account.ID, ra); err != nil {
+			log.Printf("%s status=429 rate_limit_set_failed account=%d error=%v", prefix, account.ID, err)
 		}
 		return nil
 	}
@@ -2271,6 +2260,26 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		log.Printf("%s status=%d marked_error", prefix, statusCode)
 	}
 	return nil
+}
+
+// getDefaultRateLimitDuration 获取默认限流时间
+func (s *AntigravityGatewayService) getDefaultRateLimitDuration() time.Duration {
+	defaultDur := antigravityDefaultRateLimitDuration
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes > 0 {
+		defaultDur = time.Duration(s.settingService.cfg.Gateway.AntigravityFallbackCooldownMinutes) * time.Minute
+	}
+	if override, ok := antigravityFallbackCooldownSeconds(); ok {
+		defaultDur = override
+	}
+	return defaultDur
+}
+
+// resolveResetTime 根据解析的重置时间或默认时长计算重置时间点
+func (s *AntigravityGatewayService) resolveResetTime(resetAt *int64, defaultDur time.Duration) time.Time {
+	if resetAt != nil {
+		return time.Unix(*resetAt, 0)
+	}
+	return time.Now().Add(defaultDur)
 }
 
 type antigravityStreamResult struct {
