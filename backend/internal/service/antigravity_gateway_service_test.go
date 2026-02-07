@@ -241,7 +241,7 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash:generateContent", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
 	c.Request = req
 
 	// 不需要真正调用上游，因为预检查会直接返回切换信号
@@ -264,14 +264,14 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 		},
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"gemini-2.0-flash": map[string]any{
+				"gemini-2.5-flash": map[string]any{
 					"rate_limit_reset_at": futureResetAt,
 				},
 			},
 		},
 	}
 
-	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.0-flash", "generateContent", false, body, false)
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, false)
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 
@@ -291,7 +291,7 @@ func TestAntigravityGatewayService_Forward_StickySessionForceCacheBilling(t *tes
 	c, _ := gin.CreateTestContext(writer)
 
 	body, err := json.Marshal(map[string]any{
-		"model":    "claude-opus-4-5",
+		"model":    "claude-opus-4-6",
 		"messages": []map[string]string{{"role": "user", "content": "hello"}},
 	})
 	require.NoError(t, err)
@@ -351,7 +351,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 	})
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.0-flash:generateContent", bytes.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-flash:generateContent", bytes.NewReader(body))
 	c.Request = req
 
 	svc := &AntigravityGatewayService{
@@ -373,7 +373,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 		},
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"gemini-2.0-flash": map[string]any{
+				"gemini-2.5-flash": map[string]any{
 					"rate_limit_reset_at": futureResetAt,
 				},
 			},
@@ -381,7 +381,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 	}
 
 	// 传入 isStickySession = true
-	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.0-flash", "generateContent", false, body, true)
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, true)
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 

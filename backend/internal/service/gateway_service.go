@@ -2864,10 +2864,14 @@ func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Contex
 		if !IsAntigravityModelSupported(requestedModel) {
 			return false
 		}
-		// 获取映射后的最终模型名（包括 thinking 后缀）
-		finalModel := resolveFinalAntigravityModelKey(ctx, account, requestedModel)
-		if finalModel == "" {
+		// 先用默认映射获取基础模型名，再应用 thinking 后缀
+		defaultMapped, exists := domain.DefaultAntigravityModelMapping[requestedModel]
+		if !exists || defaultMapped == "" {
 			return false
+		}
+		finalModel := defaultMapped
+		if enabled, ok := ctx.Value(ctxkey.ThinkingEnabled).(bool); ok {
+			finalModel = applyThinkingModelSuffix(finalModel, enabled)
 		}
 		// 使用最终模型名检查 model_mapping 支持
 		return account.IsModelSupported(finalModel)
