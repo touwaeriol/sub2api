@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -2900,10 +2901,11 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 }
 
 // IsAntigravityModelSupported 检查 Antigravity 平台是否支持指定模型
-// 所有 claude- 和 gemini- 前缀的模型都能通过映射或透传支持
+// 只有在默认映射（DefaultAntigravityModelMapping）中配置的模型才被支持
 func IsAntigravityModelSupported(requestedModel string) bool {
-	return strings.HasPrefix(requestedModel, "claude-") ||
-		strings.HasPrefix(requestedModel, "gemini-")
+	// 检查是否在默认映射的 key 中
+	_, exists := domain.DefaultAntigravityModelMapping[requestedModel]
+	return exists
 }
 
 // GetAccessToken 获取账号凭证

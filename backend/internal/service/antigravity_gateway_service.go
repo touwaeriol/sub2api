@@ -519,52 +519,6 @@ func logPrefix(sessionID, accountName string) string {
 	return fmt.Sprintf("[antigravity-Forward] account=%s", accountName)
 }
 
-// Antigravity 直接支持的模型（精确匹配透传）
-// 注意：claude-opus-4-6 不在此列表中，因为它需要映射到 claude-opus-4-6-thinking
-var antigravitySupportedModels = map[string]bool{
-	// Claude 模型
-	"claude-opus-4-6-thinking":   true, // 新增：官方支持的新模型
-	"claude-sonnet-4-5":          true,
-	"claude-sonnet-4-5-thinking": true,
-	// Gemini 模型
-	"gemini-2.5-flash":          true,
-	"gemini-2.5-flash-lite":     true,
-	"gemini-2.5-flash-thinking": true,
-	"gemini-2.5-pro":            true,
-	"gemini-3-flash":            true,
-	"gemini-3-pro-low":          true,
-	"gemini-3-pro-high":         true,
-	"gemini-3-pro-image":        true,
-}
-
-// Antigravity 前缀映射表（按前缀长度降序排列，确保最长匹配优先）
-// 用于处理模型版本号变化（如 -20251111, -thinking, -preview 等后缀）
-// 注意：只映射明确的版本后缀，不要使用太宽泛的前缀（如 claude-opus-4）
-var antigravityPrefixMapping = []struct {
-	prefix string
-	target string
-}{
-	// gemini-3 前缀映射
-	{"gemini-3-pro-image", "gemini-3-pro-image"}, // gemini-3-pro-image-preview 等
-	{"gemini-3-flash", "gemini-3-flash"},         // gemini-3-flash-preview 等 → gemini-3-flash
-	{"gemini-3-pro", "gemini-3-pro-high"},        // gemini-3-pro, gemini-3-pro-preview 等
-	// gemini-2.5 前缀映射（直接透传）
-	{"gemini-2.5-flash", "gemini-2.5-flash"}, // gemini-2.5-flash-xxx → gemini-2.5-flash
-	{"gemini-2.5-pro", "gemini-2.5-pro"},     // gemini-2.5-pro-xxx → gemini-2.5-pro
-	// Claude 4.6 映射
-	{"claude-opus-4-6", "claude-opus-4-6-thinking"}, // claude-opus-4-6-xxx → claude-opus-4-6-thinking
-	// Claude 4.5 映射
-	{"claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking"}, // claude-sonnet-4-5-thinking-xxx
-	{"claude-opus-4-5-thinking", "claude-opus-4-6-thinking"},     // claude-opus-4-5-thinking-xxx → 迁移到 4.6
-	{"claude-3-5-sonnet", "claude-sonnet-4-5"},                   // 旧版 claude-3-5-sonnet-xxx
-	{"claude-sonnet-4-5", "claude-sonnet-4-5"},                   // claude-sonnet-4-5-xxx
-	{"claude-haiku-4-5", "claude-sonnet-4-5"},                    // claude-haiku-4-5-xxx → sonnet
-	{"claude-opus-4-5", "claude-opus-4-6-thinking"},              // claude-opus-4-5-xxx → 迁移到 4.6
-	{"claude-3-haiku", "claude-sonnet-4-5"},                      // 旧版 claude-3-haiku-xxx → sonnet
-	// 注意：不要添加太宽泛的前缀如 claude-opus-4、claude-sonnet-4
-	// 这会导致未知模型（如 claude-opus-4.7）被错误映射
-}
-
 // AntigravityGatewayService 处理 Antigravity 平台的 API 转发
 type AntigravityGatewayService struct {
 	accountRepo       AccountRepository
@@ -625,41 +579,41 @@ func (s *AntigravityGatewayService) getUpstreamErrorDetail(body []byte) string {
 }
 
 // mapAntigravityModel 获取映射后的模型名
-// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 空（不支持）
+// 完全依赖映射配置：账户映射（通配符）→ 默认映射兜底（DefaultAntigravityModelMapping）
 // 注意：返回空字符串表示模型不被支持，调度时会过滤掉该账号
 func mapAntigravityModel(account *Account, requestedModel string) string {
 	if account == nil {
 		return ""
 	}
 
-	// 1. 原生支持的模型：直接透传（不允许被账号映射覆盖）
-	if antigravitySupportedModels[requestedModel] {
-		return requestedModel
+	// 获取映射表（未配置时自动使用 DefaultAntigravityModelMapping）
+	mapping := account.GetModelMapping()
+	if len(mapping) == 0 {
+		return "" // 无映射配置（非 Antigravity 平台）
 	}
 
-	// 2. 账户级映射（统一使用 model_mapping，支持通配符）
-	if mapped := account.GetMappedModel(requestedModel); mapped != requestedModel {
+	// 通过映射表查询（支持精确匹配 + 通配符）
+	mapped := account.GetMappedModel(requestedModel)
+
+	// 判断是否映射成功（mapped != requestedModel 说明找到了映射规则）
+	if mapped != requestedModel {
 		return mapped
 	}
 
-	// 3. 前缀映射（处理版本号变化，如 -20251111, -thinking, -preview）
-	for _, pm := range antigravityPrefixMapping {
-		if strings.HasPrefix(requestedModel, pm.prefix) {
-			return pm.target
-		}
-	}
-
-	// 4. Gemini 模型透传（未匹配到前缀的 gemini 模型）
-	if strings.HasPrefix(requestedModel, "gemini-") {
+	// 如果 mapped == requestedModel，检查是否在映射表 key 中显式配置
+	// 这区分两种情况：
+	// 1. 映射表中有 "model-a": "model-a"（显式透传）→ 返回 model-a
+	// 2. 映射表中没有 model-a 的配置 → 返回空（不支持）
+	if _, exists := mapping[requestedModel]; exists {
 		return requestedModel
 	}
 
-	// 5. 未知模型：返回空字符串，调度时会因为模型不支持而过滤
+	// 未在映射表中配置的模型，返回空字符串（不支持）
 	return ""
 }
 
 // getMappedModel 获取映射后的模型名
-// 优先级：直接支持透传 → 账户映射（通配符）→ 前缀映射 → gemini透传 → 默认值
+// 完全依赖映射配置：账户映射（通配符）→ 默认映射兜底
 func (s *AntigravityGatewayService) getMappedModel(account *Account, requestedModel string) string {
 	return mapAntigravityModel(account, requestedModel)
 }

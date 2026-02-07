@@ -14,33 +14,28 @@ func TestIsAntigravityModelSupported(t *testing.T) {
 		model    string
 		expected bool
 	}{
-		// 直接支持的模型
-		{"直接支持 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
-		{"直接支持 - claude-opus-4-6-thinking", "claude-opus-4-6-thinking", true},
-		{"直接支持 - claude-opus-4-5-thinking (迁移到4.6)", "claude-opus-4-5-thinking", true},
-		{"直接支持 - claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking", true},
-		{"直接支持 - gemini-2.5-flash", "gemini-2.5-flash", true},
-		{"直接支持 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
-		{"直接支持 - gemini-3-pro-high", "gemini-3-pro-high", true},
+		// 在默认映射中的模型（支持）
+		{"默认映射 - claude-sonnet-4-5", "claude-sonnet-4-5", true},
+		{"默认映射 - claude-opus-4-6-thinking", "claude-opus-4-6-thinking", true},
+		{"默认映射 - claude-opus-4-6", "claude-opus-4-6", true},
+		{"默认映射 - claude-opus-4-5-thinking", "claude-opus-4-5-thinking", true},
+		{"默认映射 - claude-sonnet-4-5-thinking", "claude-sonnet-4-5-thinking", true},
+		{"默认映射 - gemini-2.5-flash", "gemini-2.5-flash", true},
+		{"默认映射 - gemini-2.5-flash-lite", "gemini-2.5-flash-lite", true},
+		{"默认映射 - gemini-3-pro-high", "gemini-3-pro-high", true},
+		{"默认映射 - claude-haiku-4-5", "claude-haiku-4-5", true},
 
-		// 可映射的模型（有明确前缀映射的）
-		{"可映射 - claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", true},
-		{"可映射 - claude-3-5-sonnet-20240620", "claude-3-5-sonnet-20240620", true},
-		{"可映射 - claude-opus-4-6", "claude-opus-4-6", true},
-		{"可映射 - claude-haiku-4-5", "claude-haiku-4-5", true},
-		{"可映射 - claude-3-haiku-20240307", "claude-3-haiku-20240307", true},
+		// 不在默认映射中的模型（不支持）
+		{"未配置 - claude-3-5-sonnet-20241022", "claude-3-5-sonnet-20241022", false},
+		{"未配置 - claude-3-5-sonnet-20240620", "claude-3-5-sonnet-20240620", false},
+		{"未配置 - claude-3-haiku-20240307", "claude-3-haiku-20240307", false},
+		{"未配置 - gemini-unknown-model", "gemini-unknown-model", false},
+		{"未配置 - gemini-future-version", "gemini-future-version", false},
+		{"未配置 - claude-unknown-model", "claude-unknown-model", false},
+		{"未配置 - claude-3-opus-20240229", "claude-3-opus-20240229", false},
+		{"未配置 - claude-future-version", "claude-future-version", false},
 
-		// Gemini 前缀透传
-		{"Gemini前缀 - gemini-2.5-pro", "gemini-2.5-pro", true},
-		{"Gemini前缀 - gemini-unknown-model", "gemini-unknown-model", true},
-		{"Gemini前缀 - gemini-future-version", "gemini-future-version", true},
-
-		// Claude 前缀兜底
-		{"Claude前缀 - claude-unknown-model", "claude-unknown-model", true},
-		{"Claude前缀 - claude-3-opus-20240229", "claude-3-opus-20240229", true},
-		{"Claude前缀 - claude-future-version", "claude-future-version", true},
-
-		// 不支持的模型
+		// 非 Claude/Gemini 模型（不支持）
 		{"不支持 - gpt-4", "gpt-4", false},
 		{"不支持 - gpt-4o", "gpt-4o", false},
 		{"不支持 - llama-3", "llama-3", false},
@@ -65,12 +60,18 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 		accountMapping map[string]string
 		expected       string
 	}{
-		// 1. 账户级映射优先（注意：model_mapping 在 credentials 中存储为 map[string]any）
+		// 1. 账户级映射优先
 		{
 			name:           "账户映射优先",
 			requestedModel: "claude-3-5-sonnet-20241022",
 			accountMapping: map[string]string{"claude-3-5-sonnet-20241022": "custom-model"},
 			expected:       "custom-model",
+		},
+		{
+			name:           "账户映射 - 可覆盖默认映射的模型",
+			requestedModel: "claude-sonnet-4-5",
+			accountMapping: map[string]string{"claude-sonnet-4-5": "my-custom-sonnet"},
+			expected:       "my-custom-sonnet",
 		},
 		{
 			name:           "账户映射 - 可覆盖未知模型",
@@ -79,120 +80,92 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "my-opus",
 		},
 
-		// 原生支持的模型必须直接透传（不允许被账号映射覆盖）
+		// 2. 默认映射（DefaultAntigravityModelMapping）
 		{
-			name:           "原生透传优先 - claude-sonnet-4-5 不可被覆盖",
-			requestedModel: "claude-sonnet-4-5",
-			accountMapping: map[string]string{"claude-sonnet-4-5": "my-sonnet"},
-			expected:       "claude-sonnet-4-5",
-		},
-		{
-			name:           "原生透传优先 - gemini-2.5-flash 不可被覆盖",
-			requestedModel: "gemini-2.5-flash",
-			accountMapping: map[string]string{"gemini-2.5-flash": "my-gemini"},
-			expected:       "gemini-2.5-flash",
-		},
-
-		// 2. 系统默认映射（前缀映射）
-		{
-			name:           "系统映射 - claude-3-5-sonnet-20241022",
-			requestedModel: "claude-3-5-sonnet-20241022",
-			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
-		},
-		{
-			name:           "系统映射 - claude-3-5-sonnet-20240620",
-			requestedModel: "claude-3-5-sonnet-20240620",
-			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
-		},
-		{
-			name:           "系统映射 - claude-opus-4-6 → claude-opus-4-6-thinking",
+			name:           "默认映射 - claude-opus-4-6 → claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-6",
 			accountMapping: nil,
 			expected:       "claude-opus-4-6-thinking",
 		},
 		{
-			name:           "系统映射 - claude-opus-4-5-20251101 → claude-opus-4-6-thinking",
+			name:           "默认映射 - claude-opus-4-5-20251101 → claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-5-20251101",
 			accountMapping: nil,
 			expected:       "claude-opus-4-6-thinking",
 		},
 		{
-			name:           "系统映射 - claude-opus-4-5-thinking → claude-opus-4-6-thinking",
+			name:           "默认映射 - claude-opus-4-5-thinking → claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-5-thinking",
 			accountMapping: nil,
 			expected:       "claude-opus-4-6-thinking",
 		},
 		{
-			name:           "系统映射 - claude-haiku-4-5 → claude-sonnet-4-5",
+			name:           "默认映射 - claude-haiku-4-5 → claude-sonnet-4-5",
 			requestedModel: "claude-haiku-4-5",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "系统映射 - claude-3-haiku-20240307 → claude-sonnet-4-5",
-			requestedModel: "claude-3-haiku-20240307",
-			accountMapping: nil,
-			expected:       "claude-sonnet-4-5",
-		},
-		{
-			name:           "系统映射 - claude-haiku-4-5-20251001 → claude-sonnet-4-5",
+			name:           "默认映射 - claude-haiku-4-5-20251001 → claude-sonnet-4-5",
 			requestedModel: "claude-haiku-4-5-20251001",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "系统映射 - claude-sonnet-4-5-20250929",
+			name:           "默认映射 - claude-sonnet-4-5-20250929 → claude-sonnet-4-5",
 			requestedModel: "claude-sonnet-4-5-20250929",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-5",
 		},
 
-		// 3. Gemini 2.5 直接透传
+		// 3. 默认映射中的透传（映射到自己）
 		{
-			name:           "Gemini透传 - gemini-2.5-flash",
-			requestedModel: "gemini-2.5-flash",
-			accountMapping: nil,
-			expected:       "gemini-2.5-flash",
-		},
-		{
-			name:           "Gemini透传 - gemini-2.5-pro",
-			requestedModel: "gemini-2.5-pro",
-			accountMapping: nil,
-			expected:       "gemini-2.5-pro",
-		},
-		{
-			name:           "Gemini透传 - gemini-future-model",
-			requestedModel: "gemini-future-model",
-			accountMapping: nil,
-			expected:       "gemini-future-model",
-		},
-
-		// 4. 直接支持的模型
-		{
-			name:           "直接支持 - claude-sonnet-4-5",
+			name:           "默认映射透传 - claude-sonnet-4-5",
 			requestedModel: "claude-sonnet-4-5",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-5",
 		},
 		{
-			name:           "直接支持 - claude-opus-4-6-thinking",
+			name:           "默认映射透传 - claude-opus-4-6-thinking",
 			requestedModel: "claude-opus-4-6-thinking",
 			accountMapping: nil,
 			expected:       "claude-opus-4-6-thinking",
 		},
 		{
-			name:           "直接支持 - claude-sonnet-4-5-thinking",
+			name:           "默认映射透传 - claude-sonnet-4-5-thinking",
 			requestedModel: "claude-sonnet-4-5-thinking",
 			accountMapping: nil,
 			expected:       "claude-sonnet-4-5-thinking",
 		},
+		{
+			name:           "默认映射透传 - gemini-2.5-flash",
+			requestedModel: "gemini-2.5-flash",
+			accountMapping: nil,
+			expected:       "gemini-2.5-flash",
+		},
+		{
+			name:           "默认映射透传 - gemini-2.5-pro",
+			requestedModel: "gemini-2.5-pro",
+			accountMapping: nil,
+			expected:       "gemini-2.5-pro",
+		},
+		{
+			name:           "默认映射透传 - gemini-3-flash",
+			requestedModel: "gemini-3-flash",
+			accountMapping: nil,
+			expected:       "gemini-3-flash",
+		},
 
-		// 5. 未知模型返回空字符串（不再兜底到默认值）
+		// 4. 未在默认映射中的模型返回空字符串（不支持）
 		{
 			name:           "未知模型 - claude-unknown 返回空",
 			requestedModel: "claude-unknown",
+			accountMapping: nil,
+			expected:       "",
+		},
+		{
+			name:           "未知模型 - claude-3-5-sonnet-20241022 返回空（未在默认映射）",
+			requestedModel: "claude-3-5-sonnet-20241022",
 			accountMapping: nil,
 			expected:       "",
 		},
@@ -203,14 +176,14 @@ func TestAntigravityGatewayService_GetMappedModel(t *testing.T) {
 			expected:       "",
 		},
 		{
-			name:           "未知模型 - claude-opus-4 返回空（太宽泛的前缀）",
+			name:           "未知模型 - claude-opus-4 返回空",
 			requestedModel: "claude-opus-4",
 			accountMapping: nil,
 			expected:       "",
 		},
 		{
-			name:           "未知模型 - claude-haiku-4 返回空（太宽泛的前缀）",
-			requestedModel: "claude-haiku-4",
+			name:           "未知模型 - gemini-future-model 返回空",
+			requestedModel: "gemini-future-model",
 			accountMapping: nil,
 			expected:       "",
 		},
