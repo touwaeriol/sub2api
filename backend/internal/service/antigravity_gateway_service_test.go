@@ -114,7 +114,7 @@ func TestAntigravityGatewayService_Forward_PromptTooLong(t *testing.T) {
 	c, _ := gin.CreateTestContext(writer)
 
 	body, err := json.Marshal(map[string]any{
-		"model": "claude-opus-4-5",
+		"model": "claude-opus-4-6",
 		"messages": []map[string]any{
 			{"role": "user", "content": "hi"},
 		},
@@ -176,7 +176,7 @@ func TestAntigravityGatewayService_Forward_ModelRateLimitTriggersFailover(t *tes
 	c, _ := gin.CreateTestContext(writer)
 
 	body, err := json.Marshal(map[string]any{
-		"model": "claude-opus-4-5",
+		"model": "claude-opus-4-6",
 		"messages": []map[string]any{
 			{"role": "user", "content": "hi"},
 		},
@@ -208,7 +208,7 @@ func TestAntigravityGatewayService_Forward_ModelRateLimitTriggersFailover(t *tes
 		},
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"claude-opus-4-5-thinking": map[string]any{
+				"claude-opus-4-6-thinking": map[string]any{
 					"rate_limit_reset_at": futureResetAt,
 				},
 			},
@@ -318,7 +318,7 @@ func TestAntigravityGatewayService_Forward_StickySessionForceCacheBilling(t *tes
 		},
 		Extra: map[string]any{
 			modelRateLimitsKey: map[string]any{
-				"claude-opus-4-5-thinking": map[string]any{
+				"claude-opus-4-6-thinking": map[string]any{
 					"rate_limit_reset_at": futureResetAt,
 				},
 			},

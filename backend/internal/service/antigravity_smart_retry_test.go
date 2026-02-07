@@ -496,7 +496,7 @@ func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing
 		"error": {
 			"status": "RESOURCE_EXHAUSTED",
 			"details": [
-				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-opus-4-5"}, "reason": "RATE_LIMIT_EXCEEDED"},
+				{"@type": "type.googleapis.com/google.rpc.ErrorInfo", "metadata": {"model": "claude-opus-4-6"}, "reason": "RATE_LIMIT_EXCEEDED"},
 				{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "30s"}
 			]
 		}
@@ -543,7 +543,7 @@ func TestAntigravityRetryLoop_HandleSmartRetry_SwitchError_Propagates(t *testing
 	var switchErr *AntigravityAccountSwitchError
 	require.ErrorAs(t, err, &switchErr, "error should be AntigravityAccountSwitchError")
 	require.Equal(t, account.ID, switchErr.OriginalAccountID)
-	require.Equal(t, "claude-opus-4-5", switchErr.RateLimitedModel)
+	require.Equal(t, "claude-opus-4-6", switchErr.RateLimitedModel)
 	require.True(t, switchErr.IsStickySession)
 }
 

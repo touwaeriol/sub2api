@@ -137,18 +137,18 @@ func TestIsModelRateLimited(t *testing.T) {
 			expected:       false, // gemini 平台不走 antigravity 映射
 		},
 		{
-			name: "antigravity platform - claude-opus-4-5 mapped to thinking",
+			name: "antigravity platform - claude-opus-4-5-thinking mapped to opus-4-6-thinking",
 			account: &Account{
 				Platform: PlatformAntigravity,
 				Extra: map[string]any{
 					modelRateLimitsKey: map[string]any{
-						"claude-opus-4-5-thinking": map[string]any{
+						"claude-opus-4-6-thinking": map[string]any{
 							"rate_limit_reset_at": future,
 						},
 					},
 				},
 			},
-			requestedModel: "claude-opus-4-5",
+			requestedModel: "claude-opus-4-5-thinking",
 			expected:       true,
 		},
 		{
@@ -291,18 +291,18 @@ func TestGetModelRateLimitRemainingTime(t *testing.T) {
 			maxExpected:    0,
 		},
 		{
-			name: "antigravity platform - claude-opus-4-5 mapped to thinking",
+			name: "antigravity platform - claude-opus-4-5-thinking mapped to opus-4-6-thinking",
 			account: &Account{
 				Platform: PlatformAntigravity,
 				Extra: map[string]any{
 					modelRateLimitsKey: map[string]any{
-						"claude-opus-4-5-thinking": map[string]any{
+						"claude-opus-4-6-thinking": map[string]any{
 							"rate_limit_reset_at": future5m,
 						},
 					},
 				},
 			},
-			requestedModel: "claude-opus-4-5",
+			requestedModel: "claude-opus-4-5-thinking",
 			minExpected:    4 * time.Minute,
 			maxExpected:    6 * time.Minute,
 		},

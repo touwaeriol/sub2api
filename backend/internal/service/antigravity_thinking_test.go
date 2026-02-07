@@ -22,9 +22,9 @@ func TestApplyThinkingModelSuffix(t *testing.T) {
 		},
 		{
 			name:            "thinking disabled - other model unchanged",
-			mappedModel:     "claude-opus-4-5-thinking",
+			mappedModel:     "claude-opus-4-6-thinking",
 			thinkingEnabled: false,
-			expected:        "claude-opus-4-5-thinking",
+			expected:        "claude-opus-4-6-thinking",
 		},
 
 		// Thinking 开启 + claude-sonnet-4-5：自动添加后缀
@@ -43,10 +43,10 @@ func TestApplyThinkingModelSuffix(t *testing.T) {
 			expected:        "claude-sonnet-4-5-thinking",
 		},
 		{
-			name:            "thinking enabled - claude-opus-4-5-thinking unchanged",
-			mappedModel:     "claude-opus-4-5-thinking",
+			name:            "thinking enabled - claude-opus-4-6-thinking unchanged",
+			mappedModel:     "claude-opus-4-6-thinking",
 			thinkingEnabled: true,
-			expected:        "claude-opus-4-5-thinking",
+			expected:        "claude-opus-4-6-thinking",
 		},
 		{
 			name:            "thinking enabled - gemini model unchanged",

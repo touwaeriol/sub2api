@@ -26,8 +26,8 @@ func TestGatewayService_isModelSupportedByAccount_AntigravityModelMapping(t *tes
 
 	// claude-* 通配符匹配
 	require.True(t, svc.isModelSupportedByAccount(account, "claude-sonnet-4-5"))
-	require.True(t, svc.isModelSupportedByAccount(account, "claude-3-5-sonnet-20241022"))
-	require.True(t, svc.isModelSupportedByAccount(account, "claude-opus-4-5"))
+	require.True(t, svc.isModelSupportedByAccount(account, "claude-haiku-4-5"))
+	require.True(t, svc.isModelSupportedByAccount(account, "claude-opus-4-6"))
 
 	// gemini-3-* 通配符匹配
 	require.True(t, svc.isModelSupportedByAccount(account, "gemini-3-flash"))
@@ -149,11 +149,11 @@ func TestGatewayService_isModelSupportedByAccountWithContext_ThinkingMode(t *tes
 		{
 			name: "opus_thinking_unchanged",
 			modelMapping: map[string]any{
-				"claude-opus-4-5-thinking": "claude-opus-4-5-thinking",
+				"claude-opus-4-6-thinking": "claude-opus-4-6-thinking",
 			},
-			requestedModel:  "claude-opus-4-5",
+			requestedModel:  "claude-opus-4-6",
 			thinkingEnabled: true,
-			expected:        true, // claude-opus-4-5 映射到 claude-opus-4-5-thinking，匹配
+			expected:        true, // claude-opus-4-6 映射到 claude-opus-4-6-thinking，匹配
 		},
 	}
 
