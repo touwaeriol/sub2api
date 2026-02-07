@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/domain"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
@@ -1388,14 +1387,14 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// Antigravity 平台：优先级硬过滤 →（同优先级内）并发最低 → 调用次数最少 → LRU → 随机
+		// Antigravity 平台：优先级硬过滤 →（同优先级内）按调用次数选择（最少优先，新账号用平均值）
 		// 其他平台：分层过滤选择：优先级 → 负载率 → LRU
 		if isAntigravity {
 			for len(available) > 0 {
 				// 1. 取优先级最小的集合（硬过滤）
 				candidates := filterByMinPriority(available)
-				// 2. 同优先级内多级筛选：并发最低 → 调用次数最少 → LRU → 随机
-				selected := selectByLoadBalance(candidates, modelLoadMap, preferOAuth)
+				// 2. 同优先级内按调用次数选择（调用次数最少优先，新账号使用平均值）
+				selected := selectByCallCount(candidates, modelLoadMap, preferOAuth)
 				if selected == nil {
 					break
 				}
@@ -2003,9 +2002,10 @@ func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 	})
 }
 
-// selectByLoadBalance 从候选账号中按多级筛选选择最优账号（Antigravity 专用）
-// 排序优先级：并发最低 → 调用次数最少（冷启动保护）→ LastUsedAt 最早 → preferOAuth → 随机
-func selectByLoadBalance(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo, preferOAuth bool) *accountWithLoad {
+// selectByCallCount 从候选账号中选择调用次数最少的账号（Antigravity 专用）
+// 新账号（CallCount=0）使用平均调用次数作为虚拟值，避免冷启动被猛调
+// 如果有多个账号具有相同的最小调用次数，则随机选择一个
+func selectByCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo, preferOAuth bool) *accountWithLoad {
 	if len(accounts) == 0 {
 		return nil
 	}
@@ -2018,49 +2018,7 @@ func selectByLoadBalance(accounts []accountWithLoad, modelLoadMap map[int64]*Mod
 		return selectByLRU(accounts, preferOAuth)
 	}
 
-	// 第 1 级：按 CurrentConcurrency 最小筛选
-	candidates := filterByMinConcurrency(accounts)
-
-	// 第 2 级：按调用次数最小筛选（保留冷启动平均值逻辑）
-	candidates = filterByMinCallCount(candidates, modelLoadMap)
-
-	// 第 3 级：按 LastUsedAt 最早筛选
-	candidates = filterByMinLastUsed(candidates, modelLoadMap)
-
-	// 第 4 级：preferOAuth + 随机
-	return randomSelectWithOAuthPreference(candidates, preferOAuth)
-}
-
-// filterByMinConcurrency 筛选出并发数最小的账号集合
-func filterByMinConcurrency(accounts []accountWithLoad) []accountWithLoad {
-	if len(accounts) <= 1 {
-		return accounts
-	}
-
-	minConcurrency := accounts[0].loadInfo.CurrentConcurrency
-	for _, acc := range accounts[1:] {
-		if acc.loadInfo.CurrentConcurrency < minConcurrency {
-			minConcurrency = acc.loadInfo.CurrentConcurrency
-		}
-	}
-
-	var result []accountWithLoad
-	for _, acc := range accounts {
-		if acc.loadInfo.CurrentConcurrency == minConcurrency {
-			result = append(result, acc)
-		}
-	}
-	return result
-}
-
-// filterByMinCallCount 筛选出调用次数最小的账号集合
-// 新账号（CallCount=0）使用平均调用次数作为虚拟值，避免冷启动被猛调
-func filterByMinCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo) []accountWithLoad {
-	if len(accounts) <= 1 {
-		return accounts
-	}
-
-	// 计算平均调用次数（用于新账号冷启动）
+	// 1. 计算平均调用次数（用于新账号冷启动）
 	var totalCallCount int64
 	var countWithCalls int
 	for _, acc := range accounts {
@@ -2075,17 +2033,19 @@ func filterByMinCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*Mo
 		avgCallCount = totalCallCount / int64(countWithCalls)
 	}
 
+	// 2. 获取每个账号的有效调用次数
 	getEffectiveCallCount := func(acc accountWithLoad) int64 {
 		if acc.account == nil {
 			return 0
 		}
 		info := modelLoadMap[acc.account.ID]
 		if info == nil || info.CallCount == 0 {
-			return avgCallCount
+			return avgCallCount // 新账号使用平均值
 		}
 		return info.CallCount
 	}
 
+	// 3. 找到最小调用次数
 	minCount := getEffectiveCallCount(accounts[0])
 	for _, acc := range accounts[1:] {
 		if c := getEffectiveCallCount(acc); c < minCount {
@@ -2093,86 +2053,34 @@ func filterByMinCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*Mo
 		}
 	}
 
-	var result []accountWithLoad
-	for _, acc := range accounts {
+	// 4. 收集所有具有最小调用次数的账号
+	var candidateIdxs []int
+	for i, acc := range accounts {
 		if getEffectiveCallCount(acc) == minCount {
-			result = append(result, acc)
-		}
-	}
-	return result
-}
-
-// filterByMinLastUsed 筛选出 LastUsedAt 最早的账号集合
-// 使用 ModelLoadInfo 中的 LastUsedAt（调度时间），nil/zero 视为最早
-func filterByMinLastUsed(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo) []accountWithLoad {
-	if len(accounts) <= 1 {
-		return accounts
-	}
-
-	getLastUsed := func(acc accountWithLoad) time.Time {
-		if acc.account == nil {
-			return time.Time{}
-		}
-		if info := modelLoadMap[acc.account.ID]; info != nil {
-			return info.LastUsedAt
-		}
-		return time.Time{}
-	}
-
-	hasZero := false
-	var minTime time.Time
-	first := true
-	for _, acc := range accounts {
-		t := getLastUsed(acc)
-		if t.IsZero() {
-			hasZero = true
-			break
-		}
-		if first || t.Before(minTime) {
-			minTime = t
-			first = false
+			candidateIdxs = append(candidateIdxs, i)
 		}
 	}
 
-	var result []accountWithLoad
-	for _, acc := range accounts {
-		t := getLastUsed(acc)
-		if hasZero {
-			if t.IsZero() {
-				result = append(result, acc)
-			}
-		} else {
-			if t.Equal(minTime) {
-				result = append(result, acc)
-			}
-		}
-	}
-	return result
-}
-
-// randomSelectWithOAuthPreference 在最终候选中按 OAuth 偏好 + 随机选择
-func randomSelectWithOAuthPreference(accounts []accountWithLoad, preferOAuth bool) *accountWithLoad {
-	if len(accounts) == 0 {
-		return nil
-	}
-	if len(accounts) == 1 {
-		return &accounts[0]
+	// 5. 如果只有一个候选，直接返回
+	if len(candidateIdxs) == 1 {
+		return &accounts[candidateIdxs[0]]
 	}
 
-	candidates := accounts
+	// 6. preferOAuth 处理
 	if preferOAuth {
-		var oauthAccounts []accountWithLoad
-		for _, acc := range accounts {
-			if acc.account.Type == AccountTypeOAuth {
-				oauthAccounts = append(oauthAccounts, acc)
+		var oauthIdxs []int
+		for _, idx := range candidateIdxs {
+			if accounts[idx].account.Type == AccountTypeOAuth {
+				oauthIdxs = append(oauthIdxs, idx)
 			}
 		}
-		if len(oauthAccounts) > 0 {
-			candidates = oauthAccounts
+		if len(oauthIdxs) > 0 {
+			candidateIdxs = oauthIdxs
 		}
 	}
 
-	return &candidates[mathrand.Intn(len(candidates))]
+	// 7. 随机选择
+	return &accounts[candidateIdxs[mathrand.Intn(len(candidateIdxs))]]
 }
 
 // sortCandidatesForFallback 根据配置选择排序策略
@@ -2667,24 +2575,23 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 // 对于 Antigravity 平台，会先获取映射后的最终模型名（包括 thinking 后缀）再检查支持
 func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Context, account *Account, requestedModel string) bool {
 	if account.Platform == PlatformAntigravity {
-		// Antigravity 平台使用专门的模型支持检查
 		if strings.TrimSpace(requestedModel) == "" {
 			return true
 		}
-		if !IsAntigravityModelSupported(requestedModel) {
+		// 使用与转发阶段一致的映射逻辑：自定义映射优先 → 默认映射兜底
+		mapped := mapAntigravityModel(account, requestedModel)
+		if mapped == "" {
 			return false
 		}
-		// 先用默认映射获取基础模型名，再应用 thinking 后缀
-		defaultMapped, exists := domain.DefaultAntigravityModelMapping[requestedModel]
-		if !exists || defaultMapped == "" {
-			return false
-		}
-		finalModel := defaultMapped
+		// 应用 thinking 后缀后检查最终模型是否在账号映射中
 		if enabled, ok := ctx.Value(ctxkey.ThinkingEnabled).(bool); ok {
-			finalModel = applyThinkingModelSuffix(finalModel, enabled)
+			finalModel := applyThinkingModelSuffix(mapped, enabled)
+			if finalModel == mapped {
+				return true // thinking 后缀未改变模型名，映射已通过
+			}
+			return account.IsModelSupported(finalModel)
 		}
-		// 使用最终模型名检查 model_mapping 支持
-		return account.IsModelSupported(finalModel)
+		return true
 	}
 	return s.isModelSupportedByAccount(account, requestedModel)
 }
@@ -2692,15 +2599,10 @@ func (s *GatewayService) isModelSupportedByAccountWithContext(ctx context.Contex
 // isModelSupportedByAccount 根据账户平台检查模型支持（无 context，用于非 Antigravity 平台）
 func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedModel string) bool {
 	if account.Platform == PlatformAntigravity {
-		// Antigravity 应使用 isModelSupportedByAccountWithContext
-		// 这里作为兼容保留，使用原始模型名检查
 		if strings.TrimSpace(requestedModel) == "" {
 			return true
 		}
-		if !IsAntigravityModelSupported(requestedModel) {
-			return false
-		}
-		return account.IsModelSupported(requestedModel)
+		return mapAntigravityModel(account, requestedModel) != ""
 	}
 	// OAuth/SetupToken 账号使用 Anthropic 标准映射（短ID → 长ID）
 	if account.Platform == PlatformAnthropic && account.Type != AccountTypeAPIKey {
@@ -2714,13 +2616,6 @@ func (s *GatewayService) isModelSupportedByAccount(account *Account, requestedMo
 	return account.IsModelSupported(requestedModel)
 }
 
-// IsAntigravityModelSupported 检查 Antigravity 平台是否支持指定模型
-// 只有在默认映射（DefaultAntigravityModelMapping）中配置的模型才被支持
-func IsAntigravityModelSupported(requestedModel string) bool {
-	// 检查是否在默认映射的 key 中
-	_, exists := domain.DefaultAntigravityModelMapping[requestedModel]
-	return exists
-}
 
 // GetAccessToken 获取账号凭证
 func (s *GatewayService) GetAccessToken(ctx context.Context, account *Account) (string, string, error) {
