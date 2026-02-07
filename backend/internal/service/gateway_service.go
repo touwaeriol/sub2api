@@ -273,13 +273,6 @@ var allowedHeaders = map[string]bool{
 // GatewayCache 定义网关服务的缓存操作接口。
 // 提供粘性会话（Sticky Session）的存储、查询、刷新和删除功能。
 //
-// ModelLoadInfo 模型负载信息（用于 Antigravity 调度）
-// Model load info for Antigravity scheduling
-type ModelLoadInfo struct {
-	CallCount  int64     // 当前分钟调用次数 / Call count in current minute
-	LastUsedAt time.Time // 最后调度时间（零值表示未调度过）/ Last scheduling time (zero means never scheduled)
-}
-
 // GatewayCache defines cache operations for gateway service.
 // Provides sticky session storage, retrieval, refresh and deletion capabilities.
 type GatewayCache interface {
@@ -295,15 +288,6 @@ type GatewayCache interface {
 	// DeleteSessionAccountID 删除粘性会话绑定，用于账号不可用时主动清理
 	// Delete sticky session binding, used to proactively clean up when account becomes unavailable
 	DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error
-
-	// IncrModelCallCount 增加模型调用次数并更新最后调度时间（Antigravity 专用）
-	// Increment model call count and update last scheduling time (Antigravity only)
-	// 返回更新后的调用次数
-	IncrModelCallCount(ctx context.Context, accountID int64, model string) (int64, error)
-
-	// GetModelLoadBatch 批量获取账号的模型负载信息（Antigravity 专用）
-	// Batch get model load info for accounts (Antigravity only)
-	GetModelLoadBatch(ctx context.Context, accountIDs []int64, model string) (map[int64]*ModelLoadInfo, error)
 
 	// FindGeminiSession 查找 Gemini 会话（MGET 倒序匹配）
 	// Find Gemini session using MGET reverse order matching
@@ -1209,6 +1193,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						return a.account.LastUsedAt.Before(*b.account.LastUsedAt)
 					}
 				})
+				shuffleWithinSortGroups(routingAvailable)
 
 				// 4. 尝试获取槽位
 				for _, item := range routingAvailable {
@@ -1362,10 +1347,6 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			return result, nil
 		}
 	} else {
-		// Antigravity 平台：获取模型负载信息
-		var modelLoadMap map[int64]*ModelLoadInfo
-		isAntigravity := platform == PlatformAntigravity
-
 		var available []accountWithLoad
 		for _, acc := range candidates {
 			loadInfo := loadMap[acc.ID]
@@ -1380,109 +1361,44 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			}
 		}
 
-		// Antigravity 平台：按账号实际映射后的模型名获取模型负载（与 Forward 的统计保持一致）
-		if isAntigravity && requestedModel != "" && s.cache != nil && len(available) > 0 {
-			modelLoadMap = make(map[int64]*ModelLoadInfo, len(available))
-			modelToAccountIDs := make(map[string][]int64)
-			for _, item := range available {
-				mappedModel := mapAntigravityModel(item.account, requestedModel)
-				if mappedModel == "" {
-					continue
-				}
-				modelToAccountIDs[mappedModel] = append(modelToAccountIDs[mappedModel], item.account.ID)
+		// 分层过滤选择：优先级 → 负载率 → LRU
+		for len(available) > 0 {
+			// 1. 取优先级最小的集合
+			candidates := filterByMinPriority(available)
+			// 2. 取负载率最低的集合
+			candidates = filterByMinLoadRate(candidates)
+			// 3. LRU 选择最久未用的账号
+			selected := selectByLRU(candidates, preferOAuth)
+			if selected == nil {
+				break
 			}
-			for model, ids := range modelToAccountIDs {
-				batch, err := s.cache.GetModelLoadBatch(ctx, ids, model)
-				if err != nil {
-					continue
-				}
-				for id, info := range batch {
-					modelLoadMap[id] = info
-				}
-			}
-			if len(modelLoadMap) == 0 {
-				modelLoadMap = nil
-			}
-		}
 
-		// Antigravity 平台：优先级硬过滤 →（同优先级内）按调用次数选择（最少优先，新账号用平均值）
-		// 其他平台：分层过滤选择：优先级 → 负载率 → LRU
-		if isAntigravity {
-			for len(available) > 0 {
-				// 1. 取优先级最小的集合（硬过滤）
-				candidates := filterByMinPriority(available)
-				// 2. 同优先级内按调用次数选择（调用次数最少优先，新账号使用平均值）
-				selected := selectByCallCount(candidates, modelLoadMap, preferOAuth)
-				if selected == nil {
-					break
-				}
-
-				result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
-				if err == nil && result.Acquired {
-					// 会话数量限制检查
-					if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
-						result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
-					} else {
-						if sessionHash != "" && s.cache != nil {
-							_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
-						}
-						return &AccountSelectionResult{
-							Account:     selected.account,
-							Acquired:    true,
-							ReleaseFunc: result.ReleaseFunc,
-						}, nil
+			result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
+			if err == nil && result.Acquired {
+				// 会话数量限制检查
+				if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
+					result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
+				} else {
+					if sessionHash != "" && s.cache != nil {
+						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
 					}
+					return &AccountSelectionResult{
+						Account:     selected.account,
+						Acquired:    true,
+						ReleaseFunc: result.ReleaseFunc,
+					}, nil
 				}
-
-				// 移除已尝试的账号，重新选择
-				selectedID := selected.account.ID
-				newAvailable := make([]accountWithLoad, 0, len(available)-1)
-				for _, acc := range available {
-					if acc.account.ID != selectedID {
-						newAvailable = append(newAvailable, acc)
-					}
-				}
-				available = newAvailable
 			}
-		} else {
-			for len(available) > 0 {
-				// 1. 取优先级最小的集合
-				candidates := filterByMinPriority(available)
-				// 2. 取负载率最低的集合
-				candidates = filterByMinLoadRate(candidates)
-				// 3. LRU 选择最久未用的账号
-				selected := selectByLRU(candidates, preferOAuth)
-				if selected == nil {
-					break
-				}
 
-				result, err := s.tryAcquireAccountSlot(ctx, selected.account.ID, selected.account.Concurrency)
-				if err == nil && result.Acquired {
-					// 会话数量限制检查
-					if !s.checkAndRegisterSession(ctx, selected.account, sessionHash) {
-						result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
-					} else {
-						if sessionHash != "" && s.cache != nil {
-							_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
-						}
-						return &AccountSelectionResult{
-							Account:     selected.account,
-							Acquired:    true,
-							ReleaseFunc: result.ReleaseFunc,
-						}, nil
-					}
+			// 移除已尝试的账号，重新进行分层过滤
+			selectedID := selected.account.ID
+			newAvailable := make([]accountWithLoad, 0, len(available)-1)
+			for _, acc := range available {
+				if acc.account.ID != selectedID {
+					newAvailable = append(newAvailable, acc)
 				}
-
-				// 移除已尝试的账号，重新进行分层过滤
-				selectedID := selected.account.ID
-				newAvailable := make([]accountWithLoad, 0, len(available)-1)
-				for _, acc := range available {
-					if acc.account.ID != selectedID {
-						newAvailable = append(newAvailable, acc)
-					}
-				}
-				available = newAvailable
 			}
+			available = newAvailable
 		}
 	}
 
@@ -2018,87 +1934,79 @@ func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 			return a.LastUsedAt.Before(*b.LastUsedAt)
 		}
 	})
+	shuffleWithinPriorityAndLastUsed(accounts)
 }
 
-// selectByCallCount 从候选账号中选择调用次数最少的账号（Antigravity 专用）
-// 新账号（CallCount=0）使用平均调用次数作为虚拟值，避免冷启动被猛调
-// 如果有多个账号具有相同的最小调用次数，则随机选择一个
-func selectByCallCount(accounts []accountWithLoad, modelLoadMap map[int64]*ModelLoadInfo, preferOAuth bool) *accountWithLoad {
-	if len(accounts) == 0 {
-		return nil
+// shuffleWithinSortGroups 对排序后的 accountWithLoad 切片，按 (Priority, LoadRate, LastUsedAt) 分组后组内随机打乱。
+// 防止并发请求读取同一快照时，确定性排序导致所有请求命中相同账号。
+func shuffleWithinSortGroups(accounts []accountWithLoad) {
+	if len(accounts) <= 1 {
+		return
 	}
-	if len(accounts) == 1 {
-		return &accounts[0]
-	}
-
-	// 如果没有负载信息，回退到 LRU
-	if modelLoadMap == nil {
-		return selectByLRU(accounts, preferOAuth)
-	}
-
-	// 1. 计算平均调用次数（用于新账号冷启动）
-	var totalCallCount int64
-	var countWithCalls int
-	for _, acc := range accounts {
-		if info := modelLoadMap[acc.account.ID]; info != nil && info.CallCount > 0 {
-			totalCallCount += info.CallCount
-			countWithCalls++
+	i := 0
+	for i < len(accounts) {
+		j := i + 1
+		for j < len(accounts) && sameAccountWithLoadGroup(accounts[i], accounts[j]) {
+			j++
 		}
-	}
-
-	var avgCallCount int64
-	if countWithCalls > 0 {
-		avgCallCount = totalCallCount / int64(countWithCalls)
-	}
-
-	// 2. 获取每个账号的有效调用次数
-	getEffectiveCallCount := func(acc accountWithLoad) int64 {
-		if acc.account == nil {
-			return 0
+		if j-i > 1 {
+			mathrand.Shuffle(j-i, func(a, b int) {
+				accounts[i+a], accounts[i+b] = accounts[i+b], accounts[i+a]
+			})
 		}
-		info := modelLoadMap[acc.account.ID]
-		if info == nil || info.CallCount == 0 {
-			return avgCallCount // 新账号使用平均值
-		}
-		return info.CallCount
+		i = j
 	}
+}
 
-	// 3. 找到最小调用次数
-	minCount := getEffectiveCallCount(accounts[0])
-	for _, acc := range accounts[1:] {
-		if c := getEffectiveCallCount(acc); c < minCount {
-			minCount = c
-		}
+// sameAccountWithLoadGroup 判断两个 accountWithLoad 是否属于同一排序组
+func sameAccountWithLoadGroup(a, b accountWithLoad) bool {
+	if a.account.Priority != b.account.Priority {
+		return false
 	}
-
-	// 4. 收集所有具有最小调用次数的账号
-	var candidateIdxs []int
-	for i, acc := range accounts {
-		if getEffectiveCallCount(acc) == minCount {
-			candidateIdxs = append(candidateIdxs, i)
-		}
+	if a.loadInfo.LoadRate != b.loadInfo.LoadRate {
+		return false
 	}
+	return sameLastUsedAt(a.account.LastUsedAt, b.account.LastUsedAt)
+}
 
-	// 5. 如果只有一个候选，直接返回
-	if len(candidateIdxs) == 1 {
-		return &accounts[candidateIdxs[0]]
+// shuffleWithinPriorityAndLastUsed 对排序后的 []*Account 切片，按 (Priority, LastUsedAt) 分组后组内随机打乱。
+func shuffleWithinPriorityAndLastUsed(accounts []*Account) {
+	if len(accounts) <= 1 {
+		return
 	}
-
-	// 6. preferOAuth 处理
-	if preferOAuth {
-		var oauthIdxs []int
-		for _, idx := range candidateIdxs {
-			if accounts[idx].account.Type == AccountTypeOAuth {
-				oauthIdxs = append(oauthIdxs, idx)
-			}
+	i := 0
+	for i < len(accounts) {
+		j := i + 1
+		for j < len(accounts) && sameAccountGroup(accounts[i], accounts[j]) {
+			j++
 		}
-		if len(oauthIdxs) > 0 {
-			candidateIdxs = oauthIdxs
+		if j-i > 1 {
+			mathrand.Shuffle(j-i, func(a, b int) {
+				accounts[i+a], accounts[i+b] = accounts[i+b], accounts[i+a]
+			})
 		}
+		i = j
 	}
+}
 
-	// 7. 随机选择
-	return &accounts[candidateIdxs[mathrand.Intn(len(candidateIdxs))]]
+// sameAccountGroup 判断两个 Account 是否属于同一排序组（Priority + LastUsedAt）
+func sameAccountGroup(a, b *Account) bool {
+	if a.Priority != b.Priority {
+		return false
+	}
+	return sameLastUsedAt(a.LastUsedAt, b.LastUsedAt)
+}
+
+// sameLastUsedAt 判断两个 LastUsedAt 是否相同（精度到秒）
+func sameLastUsedAt(a, b *time.Time) bool {
+	switch {
+	case a == nil && b == nil:
+		return true
+	case a == nil || b == nil:
+		return false
+	default:
+		return a.Unix() == b.Unix()
+	}
 }
 
 // sortCandidatesForFallback 根据配置选择排序策略
