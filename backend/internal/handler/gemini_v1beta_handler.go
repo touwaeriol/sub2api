@@ -245,7 +245,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				UserAgent: c.GetHeader("User-Agent"),
 				APIKeyID:  apiKey.ID,
 			}
-			slog.Info("[GeminiHandler] parsed request",
+			slog.Debug("[GeminiHandler] parsed request",
 				"system_type", fmt.Sprintf("%T", parsedReq.System),
 				"system_nil", parsedReq.System == nil,
 				"messages_len", len(parsedReq.Messages),
@@ -262,7 +262,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if sessionHash != "" {
 		sessionKey = "gemini:" + sessionHash
 	}
-	slog.Info("[GeminiHandler] session key generated", "session_key", sessionKey, "hash_len", len(sessionHash))
+	slog.Debug("[GeminiHandler] session key generated", "session_key", sessionKey, "hash_len", len(sessionHash))
 
 	// 查询粘性会话绑定的账号 ID（用于检测账号切换）
 	var sessionBoundAccountID int64

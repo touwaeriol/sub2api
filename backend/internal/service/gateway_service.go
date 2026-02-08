@@ -464,14 +464,14 @@ func NewGatewayService(
 // GenerateSessionHash 从预解析请求计算粘性会话 hash
 func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	if parsed == nil {
-		slog.Info("[SessionHash] parsed is nil, returning empty")
+		slog.Debug("[SessionHash] parsed is nil, returning empty")
 		return ""
 	}
 
 	// 1. 最高优先级：从 metadata.user_id 提取 session_xxx
 	if parsed.MetadataUserID != "" {
 		if match := sessionIDRegex.FindStringSubmatch(parsed.MetadataUserID); len(match) > 1 {
-			slog.Info("[SessionHash] using metadata session_id", "id", match[1])
+			slog.Debug("[SessionHash] using metadata session_id", "id", match[1])
 			return match[1]
 		}
 	}
@@ -480,7 +480,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	cacheableContent := s.extractCacheableContent(parsed)
 	if cacheableContent != "" {
 		hash := s.hashContent(cacheableContent)
-		slog.Info("[SessionHash] using cacheable content", "hash", hash, "content_len", len(cacheableContent))
+		slog.Debug("[SessionHash] using cacheable content", "hash", hash, "content_len", len(cacheableContent))
 		return hash
 	}
 
@@ -530,7 +530,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		}
 	}
 
-	slog.Info("[SessionHash] fallback digest",
+	slog.Debug("[SessionHash] fallback digest",
 		"has_context", parsed.SessionContext != nil,
 		"system_type", fmt.Sprintf("%T", parsed.System),
 		"system_text_len", len(systemText),
@@ -542,11 +542,11 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 
 	if combined.Len() > 0 {
 		hash := s.hashContent(combined.String())
-		slog.Info("[SessionHash] final hash", "hash", hash, "hash_len", len(hash))
+		slog.Debug("[SessionHash] final hash", "hash", hash, "hash_len", len(hash))
 		return hash
 	}
 
-	slog.Info("[SessionHash] combined is empty, returning empty")
+	slog.Debug("[SessionHash] combined is empty, returning empty")
 	return ""
 }
 
