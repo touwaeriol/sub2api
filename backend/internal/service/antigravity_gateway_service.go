@@ -654,10 +654,6 @@ type TestConnectionResult struct {
 // TestConnection 测试 Antigravity 账号连接（非流式，无重试、无计费）
 // 支持 Claude 和 Gemini 两种协议，根据 modelID 前缀自动选择
 func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
-	// 上游透传账号使用专用测试方法
-	if account.Type == AccountTypeUpstream {
-		return s.testUpstreamConnection(ctx, account, modelID)
-	}
 
 	// 获取 token
 	if s.tokenProvider == nil {
@@ -990,6 +986,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	}
 
 	startTime := time.Now()
+
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
 
@@ -1610,6 +1607,7 @@ func stripSignatureSensitiveBlocksFromClaudeRequest(req *antigravity.ClaudeReque
 //	          └─ 失败 → 设置模型限流 + 清除粘性绑定 → 切换账号
 func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool) (*ForwardResult, error) {
 	startTime := time.Now()
+
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
 
