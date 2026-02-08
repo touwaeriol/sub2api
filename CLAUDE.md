@@ -666,3 +666,58 @@ antigravityRateLimitThreshold
 - [ ] 测试是否覆盖了新增逻辑？
 - [ ] 日志是否包含足够的上下文信息？
 - [ ] 是否考虑了并发安全？
+
+---
+
+## CI 检查与发布门禁
+
+### GitHub Actions 检查项
+
+本项目有 4 个 CI 任务，**任何代码推送或发布前都必须全部通过**：
+
+| Workflow | Job | 说明 | 本地验证命令 |
+|----------|-----|------|-------------|
+| CI | `test` | 单元测试 + 集成测试 | `cd backend && make test-unit && make test-integration` |
+| CI | `golangci-lint` | Go 代码静态检查（golangci-lint v2.7） | `cd backend && golangci-lint run --timeout=5m` |
+| Security Scan | `backend-security` | govulncheck + gosec 安全扫描 | `cd backend && govulncheck ./... && gosec -severity high -confidence high ./...` |
+| Security Scan | `frontend-security` | pnpm audit 前端依赖安全检查 | `cd frontend && pnpm audit --prod --audit-level=high` |
+
+### 向上游提交 PR
+
+PR 目标是上游官方仓库，**只包含通用功能改动**（bug fix、新功能、性能优化等）。
+
+**以下文件禁止出现在 PR 中**（属于我们 fork 的定制化内容）：
+- `CLAUDE.md`、`AGENTS.md` — 我们的开发文档
+- `backend/cmd/server/VERSION` — 我们的版本号文件
+- UI 定制改动（GitHub 链接移除、微信客服按钮、首页定制等）
+- 部署配置（`deploy/` 目录下的定制修改）
+
+**PR 流程**：
+1. 从 `develop` 创建功能分支，只包含要提交给上游的改动
+2. 推送分支后，**等待 4 个 CI job 全部通过**
+3. 确认通过后再创建 PR
+4. 使用 `gh run list --repo touwaeriol/sub2api --branch <branch>` 检查状态
+
+### 自有分支推送（develop / main）
+
+推送到我们自己的 `develop` 或 `main` 分支时，包含所有改动（定制化 + 通用功能）。
+
+**推送流程**：
+1. 本地运行 `cd backend && make test-unit` 确保单元测试通过
+2. 本地运行 `cd backend && gofmt -l ./...` 确保格式正确
+3. 推送后确认 CI 和 Security Scan 两个 workflow 的 4 个 job 全部绿色 ✅
+4. 任何 job 失败必须立即修复，**禁止在 CI 未通过的状态下继续后续操作**
+
+### 发布版本
+
+1. 确保 `main` 分支最新提交的 4 个 CI job 全部通过
+2. 递增 `backend/cmd/server/VERSION`，提交并推送
+3. 打 tag 推送后，确认 tag 触发的 3 个 workflow（CI、Security Scan、Release）全部通过
+4. **Release workflow 失败时禁止部署** — 必须先修复问题，删除旧 tag，重新打 tag
+5. 使用 `gh run list --repo touwaeriol/sub2api --limit 10` 确认状态
+
+### 常见 CI 失败原因及修复
+- **gofmt**：struct 字段对齐不一致 → 运行 `gofmt -w <file>` 修复
+- **golangci-lint**：未使用的变量/导入 → 删除或使用 `_` 忽略
+- **test 失败**：mock 函数签名不一致 → 同步更新 mock
+- **gosec**：安全漏洞 → 根据提示修复或添加例外
