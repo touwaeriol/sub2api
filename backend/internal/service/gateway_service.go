@@ -313,6 +313,28 @@ func derefGroupID(groupID *int64) int64 {
 	return *groupID
 }
 
+// markAccountSelected 选中账号后立即更新 Redis 中的 LastUsedAt，
+// 解决并发请求因延迟更新导致集中选择同一账号的问题。
+func (s *GatewayService) markAccountSelected(ctx context.Context, accountID int64) {
+	if s.schedulerSnapshot != nil {
+		s.schedulerSnapshot.UpdateLastUsedImmediate(ctx, accountID, time.Now())
+	}
+}
+
+func logAccountSelected(account *Account, layer string, candidates int, groupID *int64, model, sessionHash string) {
+	slog.Debug("account_scheduling_selected",
+		"account_id", account.ID,
+		"account_name", account.Name,
+		"layer", layer,
+		"candidates", candidates,
+		"priority", account.Priority,
+		"last_used", account.LastUsedAt,
+		"group_id", derefGroupID(groupID),
+		"model", model,
+		"session", shortSessionHash(sessionHash),
+	)
+}
+
 // shouldClearStickySession 检查账号是否处于不可调度状态，需要清理粘性会话绑定。
 // 当账号状态为错误、禁用、不可调度、处于临时不可调度期间，
 // 或请求的模型处于限流状态时，返回 true。
@@ -952,6 +974,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					localExcluded[account.ID] = struct{}{} // 排除此账号
 					continue                               // 重新选择
 				}
+				s.markAccountSelected(ctx, account.ID)
+				logAccountSelected(account, "non_load_aware", 1, groupID, requestedModel, sessionHash)
 				return &AccountSelectionResult{
 					Account:     account,
 					Acquired:    true,
@@ -968,6 +992,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			if stickyAccountID > 0 && stickyAccountID == account.ID && s.concurrencyService != nil {
 				waitingCount, _ := s.concurrencyService.GetAccountWaitingCount(ctx, account.ID)
 				if waitingCount < cfg.StickySessionMaxWaiting {
+					s.markAccountSelected(ctx, account.ID)
+					logAccountSelected(account, "non_load_aware_sticky_wait", 1, groupID, requestedModel, sessionHash)
 					return &AccountSelectionResult{
 						Account: account,
 						WaitPlan: &AccountWaitPlan{
@@ -979,6 +1005,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					}, nil
 				}
 			}
+			s.markAccountSelected(ctx, account.ID)
+			logAccountSelected(account, "non_load_aware_fallback_wait", 1, groupID, requestedModel, sessionHash)
 			return &AccountSelectionResult{
 				Account: account,
 				WaitPlan: &AccountWaitPlan{
@@ -1210,6 +1238,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						if s.debugModelRoutingEnabled() {
 							log.Printf("[ModelRoutingDebug] routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
 						}
+						s.markAccountSelected(ctx, item.account.ID)
+						logAccountSelected(item.account, "routed_load_aware", len(routingAvailable), groupID, requestedModel, sessionHash)
 						return &AccountSelectionResult{
 							Account:     item.account,
 							Acquired:    true,
@@ -1382,6 +1412,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					if sessionHash != "" && s.cache != nil {
 						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
 					}
+					s.markAccountSelected(ctx, selected.account.ID)
+					logAccountSelected(selected.account, "load_aware", len(available), groupID, requestedModel, sessionHash)
 					return &AccountSelectionResult{
 						Account:     selected.account,
 						Acquired:    true,
@@ -1409,6 +1441,8 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if !s.checkAndRegisterSession(ctx, acc, sessionHash) {
 			continue // 会话限制已满，尝试下一个账号
 		}
+		s.markAccountSelected(ctx, acc.ID)
+		logAccountSelected(acc, "fallback_wait", len(candidates), groupID, requestedModel, sessionHash)
 		return &AccountSelectionResult{
 			Account: acc,
 			WaitPlan: &AccountWaitPlan{
@@ -1437,6 +1471,8 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 			if sessionHash != "" && s.cache != nil {
 				_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, acc.ID, stickySessionTTL)
 			}
+			s.markAccountSelected(ctx, acc.ID)
+			logAccountSelected(acc, "legacy_order", len(ordered), groupID, "", sessionHash)
 			return &AccountSelectionResult{
 				Account:     acc,
 				Acquired:    true,
