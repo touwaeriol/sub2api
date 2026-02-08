@@ -7,10 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -235,26 +233,13 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	sessionHash := extractGeminiCLISessionHash(c, body)
 	if sessionHash == "" {
 		// Fallback: 使用通用的会话哈希生成逻辑（适用于其他客户端）
-		parsedReq, parseErr := service.ParseGatewayRequest(body, domain.PlatformGemini)
-		if parseErr != nil {
-			slog.Warn("[GeminiHandler] ParseGatewayRequest failed", "error", parseErr)
-		}
+		parsedReq, _ := service.ParseGatewayRequest(body, domain.PlatformGemini)
 		if parsedReq != nil {
 			parsedReq.SessionContext = &service.SessionContext{
 				ClientIP:  ip.GetClientIP(c),
 				UserAgent: c.GetHeader("User-Agent"),
 				APIKeyID:  apiKey.ID,
 			}
-			slog.Debug("[GeminiHandler] parsed request",
-				"system_type", fmt.Sprintf("%T", parsedReq.System),
-				"system_nil", parsedReq.System == nil,
-				"messages_len", len(parsedReq.Messages),
-				"has_system", parsedReq.HasSystem,
-				"ip", ip.GetClientIP(c),
-				"api_key_id", apiKey.ID,
-			)
-		} else {
-			slog.Warn("[GeminiHandler] parsedReq is nil after ParseGatewayRequest")
 		}
 		sessionHash = h.gatewayService.GenerateSessionHash(parsedReq)
 	}
@@ -262,7 +247,6 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	if sessionHash != "" {
 		sessionKey = "gemini:" + sessionHash
 	}
-	slog.Debug("[GeminiHandler] session key generated", "session_key", sessionKey, "hash_len", len(sessionHash))
 
 	// 查询粘性会话绑定的账号 ID（用于检测账号切换）
 	var sessionBoundAccountID int64

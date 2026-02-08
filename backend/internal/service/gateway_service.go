@@ -464,14 +464,12 @@ func NewGatewayService(
 // GenerateSessionHash 从预解析请求计算粘性会话 hash
 func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	if parsed == nil {
-		slog.Debug("[SessionHash] parsed is nil, returning empty")
 		return ""
 	}
 
 	// 1. 最高优先级：从 metadata.user_id 提取 session_xxx
 	if parsed.MetadataUserID != "" {
 		if match := sessionIDRegex.FindStringSubmatch(parsed.MetadataUserID); len(match) > 1 {
-			slog.Debug("[SessionHash] using metadata session_id", "id", match[1])
 			return match[1]
 		}
 	}
@@ -479,9 +477,7 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 	// 2. 提取带 cache_control: {type: "ephemeral"} 的内容
 	cacheableContent := s.extractCacheableContent(parsed)
 	if cacheableContent != "" {
-		hash := s.hashContent(cacheableContent)
-		slog.Debug("[SessionHash] using cacheable content", "hash", hash, "content_len", len(cacheableContent))
-		return hash
+		return s.hashContent(cacheableContent)
 	}
 
 	// 3. 最后 fallback: 使用 session上下文 + system + 所有消息的完整摘要串
@@ -495,25 +491,18 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 		_, _ = combined.WriteString(strconv.FormatInt(parsed.SessionContext.APIKeyID, 10))
 		_, _ = combined.WriteString("|")
 	}
-
-	systemText := ""
 	if parsed.System != nil {
-		systemText = s.extractTextFromSystem(parsed.System)
+		systemText := s.extractTextFromSystem(parsed.System)
 		if systemText != "" {
 			_, _ = combined.WriteString(systemText)
 		}
 	}
-
-	msgCount := 0
-	msgTextLen := 0
 	for _, msg := range parsed.Messages {
 		if m, ok := msg.(map[string]any); ok {
 			if content, exists := m["content"]; exists {
 				// Anthropic: messages[].content
 				if msgText := s.extractTextFromContent(content); msgText != "" {
 					_, _ = combined.WriteString(msgText)
-					msgTextLen += len(msgText)
-					msgCount++
 				}
 			} else if parts, ok := m["parts"].([]any); ok {
 				// Gemini: contents[].parts[].text
@@ -521,32 +510,16 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 					if partMap, ok := part.(map[string]any); ok {
 						if text, ok := partMap["text"].(string); ok {
 							_, _ = combined.WriteString(text)
-							msgTextLen += len(text)
 						}
 					}
 				}
-				msgCount++
 			}
 		}
 	}
-
-	slog.Debug("[SessionHash] fallback digest",
-		"has_context", parsed.SessionContext != nil,
-		"system_type", fmt.Sprintf("%T", parsed.System),
-		"system_text_len", len(systemText),
-		"messages_len", len(parsed.Messages),
-		"msg_extracted", msgCount,
-		"msg_text_len", msgTextLen,
-		"combined_len", combined.Len(),
-	)
-
 	if combined.Len() > 0 {
-		hash := s.hashContent(combined.String())
-		slog.Debug("[SessionHash] final hash", "hash", hash, "hash_len", len(hash))
-		return hash
+		return s.hashContent(combined.String())
 	}
 
-	slog.Debug("[SessionHash] combined is empty, returning empty")
 	return ""
 }
 
