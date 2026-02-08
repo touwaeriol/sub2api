@@ -654,10 +654,6 @@ type TestConnectionResult struct {
 // TestConnection 测试 Antigravity 账号连接（非流式，无重试、无计费）
 // 支持 Claude 和 Gemini 两种协议，根据 modelID 前缀自动选择
 func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
-	// 上游透传账号使用专用测试方法
-	if account.Type == AccountTypeUpstream {
-		return s.testUpstreamConnection(ctx, account, modelID)
-	}
 
 	// 获取 token
 	if s.tokenProvider == nil {
@@ -990,6 +986,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	}
 
 	startTime := time.Now()
+
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
 
@@ -1610,6 +1607,7 @@ func stripSignatureSensitiveBlocksFromClaudeRequest(req *antigravity.ClaudeReque
 //	          └─ 失败 → 设置模型限流 + 清除粘性绑定 → 切换账号
 func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool) (*ForwardResult, error) {
 	startTime := time.Now()
+
 	sessionID := getSessionID(c)
 	prefix := logPrefix(sessionID, account.Name)
 
@@ -3352,87 +3350,6 @@ func filterEmptyPartsFromGeminiRequest(body []byte) ([]byte, error) {
 
 	payload["contents"] = filtered
 	return json.Marshal(payload)
-}
-
-// testUpstreamConnection 使用 base_url + /v1/messages + Claude 格式测试 upstream 账号连接
-func (s *AntigravityGatewayService) testUpstreamConnection(ctx context.Context, account *Account, modelID string) (*TestConnectionResult, error) {
-	baseURL := strings.TrimSpace(account.GetCredential("base_url"))
-	apiKey := strings.TrimSpace(account.GetCredential("api_key"))
-	if baseURL == "" || apiKey == "" {
-		return nil, errors.New("upstream account missing base_url or api_key")
-	}
-	baseURL = strings.TrimSuffix(baseURL, "/")
-
-	// 使用 Claude 模型进行测试
-	if modelID == "" {
-		modelID = "claude-sonnet-4-20250514"
-	}
-
-	// 构建最小测试请求
-	testReq := map[string]any{
-		"model":      modelID,
-		"max_tokens": 1,
-		"messages": []map[string]any{
-			{"role": "user", "content": "."},
-		},
-	}
-	requestBody, err := json.Marshal(testReq)
-	if err != nil {
-		return nil, fmt.Errorf("构建请求失败: %w", err)
-	}
-
-	// 构建 HTTP 请求
-	upstreamURL := baseURL + "/v1/messages"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, upstreamURL, bytes.NewReader(requestBody))
-	if err != nil {
-		return nil, fmt.Errorf("创建请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+apiKey)
-	req.Header.Set("x-api-key", apiKey)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	// 代理 URL
-	proxyURL := ""
-	if account.ProxyID != nil && account.Proxy != nil {
-		proxyURL = account.Proxy.URL()
-	}
-
-	log.Printf("[antigravity-Test-Upstream] account=%s url=%s", account.Name, upstreamURL)
-
-	// 发送请求
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		return nil, fmt.Errorf("请求失败: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
-	}
-
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("API 返回 %d: %s", resp.StatusCode, string(respBody))
-	}
-
-	// 提取响应文本
-	var respData map[string]any
-	text := ""
-	if json.Unmarshal(respBody, &respData) == nil {
-		if content, ok := respData["content"].([]any); ok && len(content) > 0 {
-			if block, ok := content[0].(map[string]any); ok {
-				if t, ok := block["text"].(string); ok {
-					text = t
-				}
-			}
-		}
-	}
-
-	return &TestConnectionResult{
-		Text:        text,
-		MappedModel: modelID,
-	}, nil
 }
 
 // ForwardUpstream 使用 base_url + /v1/messages + 双 header 认证透传上游 Claude 请求
