@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
-	"log/slog"
 	"strconv"
 	"sync"
 	"time"
@@ -158,17 +157,6 @@ func (s *SchedulerSnapshotService) UpdateAccountInCache(ctx context.Context, acc
 		return nil
 	}
 	return s.cache.SetAccount(ctx, account)
-}
-
-// UpdateLastUsedImmediate 选中账号后立即更新 Redis 中的 LastUsedAt，
-// 解决并发请求因延迟更新导致集中选择同一账号的问题。
-func (s *SchedulerSnapshotService) UpdateLastUsedImmediate(ctx context.Context, accountID int64, t time.Time) {
-	if s == nil || s.cache == nil || accountID <= 0 {
-		return
-	}
-	if err := s.cache.UpdateLastUsed(ctx, map[int64]time.Time{accountID: t}); err != nil {
-		slog.Warn("immediate_last_used_update_failed", "account_id", accountID, "error", err)
-	}
 }
 
 func (s *SchedulerSnapshotService) runInitialRebuild() {
