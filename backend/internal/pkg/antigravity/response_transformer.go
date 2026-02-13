@@ -8,7 +8,9 @@ import (
 )
 
 // TransformGeminiToClaude 将 Gemini 响应转换为 Claude 格式（非流式）
-func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *ClaudeUsage, error) {
+// simulateCacheBilling: 开启后按 Claude Prompt Caching 语义拆分 input_tokens / cache_creation_input_tokens
+// cacheBillingInputTokens: “最后一个 cache breakpoint 之后”的 tokens 估算值（用于拆分）
+func TransformGeminiToClaude(geminiResp []byte, originalModel string, simulateCacheBilling bool, cacheBillingInputTokens int) ([]byte, *ClaudeUsage, error) {
 	// 解包 v1internal 响应
 	var v1Resp V1InternalResponse
 	if err := json.Unmarshal(geminiResp, &v1Resp); err != nil {
@@ -32,7 +34,7 @@ func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *
 	}
 
 	// 使用处理器转换
-	processor := NewNonStreamingProcessor()
+	processor := NewNonStreamingProcessor(simulateCacheBilling, cacheBillingInputTokens)
 	claudeResp := processor.Process(&v1Resp.Response, v1Resp.ResponseID, originalModel)
 
 	// 序列化
@@ -46,18 +48,22 @@ func TransformGeminiToClaude(geminiResp []byte, originalModel string) ([]byte, *
 
 // NonStreamingProcessor 非流式响应处理器
 type NonStreamingProcessor struct {
-	contentBlocks     []ClaudeContentItem
-	textBuilder       string
-	thinkingBuilder   string
-	thinkingSignature string
-	trailingSignature string
-	hasToolCall       bool
+	contentBlocks           []ClaudeContentItem
+	textBuilder             string
+	thinkingBuilder         string
+	thinkingSignature       string
+	trailingSignature       string
+	hasToolCall             bool
+	simulateCacheBilling    bool
+	cacheBillingInputTokens int // 估算的 input_tokens（最后一个 cache breakpoint 之后）
 }
 
 // NewNonStreamingProcessor 创建非流式响应处理器
-func NewNonStreamingProcessor() *NonStreamingProcessor {
+func NewNonStreamingProcessor(simulateCacheBilling bool, cacheBillingInputTokens int) *NonStreamingProcessor {
 	return &NonStreamingProcessor{
-		contentBlocks: make([]ClaudeContentItem, 0),
+		contentBlocks:           make([]ClaudeContentItem, 0),
+		simulateCacheBilling:    simulateCacheBilling,
+		cacheBillingInputTokens: cacheBillingInputTokens,
 	}
 }
 
@@ -278,9 +284,18 @@ func (p *NonStreamingProcessor) buildResponse(geminiResp *GeminiResponse, respon
 	usage := ClaudeUsage{}
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
-		usage.InputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
+		inputTokens := geminiResp.UsageMetadata.PromptTokenCount - cached
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
 		usage.OutputTokens = geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount
 		usage.CacheReadInputTokens = cached
+
+		if p.simulateCacheBilling {
+			usage.InputTokens, usage.CacheCreationInputTokens = splitUsageForCacheBilling(inputTokens, p.cacheBillingInputTokens)
+		} else {
+			usage.InputTokens = inputTokens
+		}
 	}
 
 	// 生成响应 ID

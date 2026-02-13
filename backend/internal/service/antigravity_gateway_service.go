@@ -1301,6 +1301,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	if strings.TrimSpace(claudeReq.Model) == "" {
 		return nil, s.writeClaudeError(c, http.StatusBadRequest, "invalid_request_error", "Missing model")
 	}
+	effectiveClaudeReq := claudeReq
 
 	originalModel := claudeReq.Model
 	mappedModel := s.getMappedModel(account, claudeReq.Model)
@@ -1366,10 +1367,9 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	})
 	if err != nil {
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
-		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
+		if _, ok := IsAntigravityAccountSwitchError(err); ok {
 			return nil, &UpstreamFailoverError{
-				StatusCode:        http.StatusServiceUnavailable,
-				ForceCacheBilling: switchErr.IsStickySession,
+				StatusCode: http.StatusServiceUnavailable,
 			}
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
@@ -1466,6 +1466,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 					_ = resp.Body.Close()
 					resp = retryResp
 					respBody = nil
+					effectiveClaudeReq = retryClaudeReq
 					break
 				}
 
@@ -1600,9 +1601,18 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
+	simulateCacheBilling := account.IsSimulateCacheBillingEnabled()
+	cacheBillingInputTokens := 0
+	if simulateCacheBilling {
+		if tokens, ok := antigravity.EstimateInputTokensAfterLastCacheBreakpoint(&effectiveClaudeReq); ok {
+			cacheBillingInputTokens = tokens
+		} else {
+			simulateCacheBilling = false
+		}
+	}
 	if claudeReq.Stream {
 		// 客户端要求流式，直接透传转换
-		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel)
+		streamRes, err := s.handleClaudeStreamingResponse(c, resp, startTime, originalModel, simulateCacheBilling, cacheBillingInputTokens)
 		if err != nil {
 			log.Printf("%s status=stream_error error=%v", prefix, err)
 			return nil, err
@@ -1612,7 +1622,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		clientDisconnect = streamRes.clientDisconnect
 	} else {
 		// 客户端要求非流式，收集流式响应后转换返回
-		streamRes, err := s.handleClaudeStreamToNonStreaming(c, resp, startTime, originalModel)
+		streamRes, err := s.handleClaudeStreamToNonStreaming(c, resp, startTime, originalModel, simulateCacheBilling, cacheBillingInputTokens)
 		if err != nil {
 			log.Printf("%s status=stream_collect_error error=%v", prefix, err)
 			return nil, err
@@ -2043,10 +2053,9 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	})
 	if err != nil {
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
-		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
+		if _, ok := IsAntigravityAccountSwitchError(err); ok {
 			return nil, &UpstreamFailoverError{
-				StatusCode:        http.StatusServiceUnavailable,
-				ForceCacheBilling: switchErr.IsStickySession,
+				StatusCode: http.StatusServiceUnavailable,
 			}
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
@@ -3414,7 +3423,7 @@ func (s *AntigravityGatewayService) writeGoogleError(c *gin.Context, status int,
 
 // handleClaudeStreamToNonStreaming 收集上游流式响应，转换为 Claude 非流式格式返回
 // 用于处理客户端非流式请求但上游只支持流式的情况
-func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
+func (s *AntigravityGatewayService) handleClaudeStreamToNonStreaming(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string, simulateCacheBilling bool, cacheBillingInputTokens int) (*antigravityStreamResult, error) {
 	scanner := bufio.NewScanner(resp.Body)
 	maxLineSize := defaultMaxLineSize
 	if s.settingService.cfg != nil && s.settingService.cfg.Gateway.MaxLineSize > 0 {
@@ -3564,7 +3573,7 @@ returnResponse:
 	}
 
 	// 转换 Gemini 响应为 Claude 格式
-	claudeResp, agUsage, err := antigravity.TransformGeminiToClaude(geminiBody, originalModel)
+	claudeResp, agUsage, err := antigravity.TransformGeminiToClaude(geminiBody, originalModel, simulateCacheBilling, cacheBillingInputTokens)
 	if err != nil {
 		log.Printf("[antigravity-Forward] transform_error error=%v body=%s", err, string(geminiBody))
 		return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Failed to parse upstream response")
@@ -3584,7 +3593,7 @@ returnResponse:
 }
 
 // handleClaudeStreamingResponse 处理 Claude 流式响应（Gemini SSE → Claude SSE 转换）
-func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string) (*antigravityStreamResult, error) {
+func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context, resp *http.Response, startTime time.Time, originalModel string, simulateCacheBilling bool, cacheBillingInputTokens int) (*antigravityStreamResult, error) {
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
@@ -3596,7 +3605,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 		return nil, errors.New("streaming not supported")
 	}
 
-	processor := antigravity.NewStreamingProcessor(originalModel)
+	processor := antigravity.NewStreamingProcessor(originalModel, simulateCacheBilling, cacheBillingInputTokens)
 	var firstTokenMs *int
 	// 使用 Scanner 并限制单行大小，避免 ReadString 无上限导致 OOM
 	scanner := bufio.NewScanner(resp.Body)

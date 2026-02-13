@@ -472,7 +472,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		}
 
 		// 6) record usage async (Gemini 使用长上下文双倍计费)
-		go func(result *service.ForwardResult, usedAccount *service.Account, ua, ip string, fcb bool) {
+		go func(result *service.ForwardResult, usedAccount *service.Account, ua, ip string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
@@ -486,12 +486,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				IPAddress:             ip,
 				LongContextThreshold:  200000, // Gemini 200K 阈值
 				LongContextMultiplier: 2.0,    // 超出部分双倍计费
-				ForceCacheBilling:     fcb,
 				APIKeyService:         h.apiKeyService,
 			}); err != nil {
 				log.Printf("Record usage failed: %v", err)
 			}
-		}(result, account, userAgent, clientIP, fs.ForceCacheBilling)
+		}(result, account, userAgent, clientIP)
 		return
 	}
 }

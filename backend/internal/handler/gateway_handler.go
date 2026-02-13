@@ -373,23 +373,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			clientIP := ip.GetClientIP(c)
 
 			// 异步记录使用量（subscription已在函数开头获取）
-			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string, fcb bool) {
+			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:            result,
-					APIKey:            apiKey,
-					User:              apiKey.User,
-					Account:           usedAccount,
-					Subscription:      subscription,
-					UserAgent:         ua,
-					IPAddress:         clientIP,
-					ForceCacheBilling: fcb,
-					APIKeyService:     h.apiKeyService,
+					Result:        result,
+					APIKey:        apiKey,
+					User:          apiKey.User,
+					Account:       usedAccount,
+					Subscription:  subscription,
+					UserAgent:     ua,
+					IPAddress:     clientIP,
+					APIKeyService: h.apiKeyService,
 				}); err != nil {
 					log.Printf("Record usage failed: %v", err)
 				}
-			}(result, account, userAgent, clientIP, fs.ForceCacheBilling)
+			}(result, account, userAgent, clientIP)
 			return
 		}
 	}
@@ -579,23 +578,22 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			clientIP := ip.GetClientIP(c)
 
 			// 异步记录使用量（subscription已在函数开头获取）
-			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string, fcb bool) {
+			go func(result *service.ForwardResult, usedAccount *service.Account, ua, clientIP string) {
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 				defer cancel()
 				if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
-					Result:            result,
-					APIKey:            currentAPIKey,
-					User:              currentAPIKey.User,
-					Account:           usedAccount,
-					Subscription:      currentSubscription,
-					UserAgent:         ua,
-					IPAddress:         clientIP,
-					ForceCacheBilling: fcb,
-					APIKeyService:     h.apiKeyService,
+					Result:        result,
+					APIKey:        currentAPIKey,
+					User:          currentAPIKey.User,
+					Account:       usedAccount,
+					Subscription:  currentSubscription,
+					UserAgent:     ua,
+					IPAddress:     clientIP,
+					APIKeyService: h.apiKeyService,
 				}); err != nil {
 					log.Printf("Record usage failed: %v", err)
 				}
-			}(result, account, userAgent, clientIP, fs.ForceCacheBilling)
+			}(result, account, userAgent, clientIP)
 			return
 		}
 		if !retryWithFallback {

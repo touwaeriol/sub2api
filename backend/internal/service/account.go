@@ -579,6 +579,42 @@ func (a *Account) IsInterceptWarmupEnabled() bool {
 	return false
 }
 
+func (a *Account) IsSimulateCacheBillingEnabled() bool {
+	if a == nil || a.Credentials == nil {
+		return false
+	}
+	return parseBoolLike(a.Credentials["simulate_cache_billing"])
+}
+
+func parseBoolLike(raw any) bool {
+	if raw == nil {
+		return false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return v
+	case string:
+		s := strings.ToLower(strings.TrimSpace(v))
+		return s == "1" || s == "true" || s == "yes" || s == "on"
+	case float64:
+		return v != 0
+	case int:
+		return v != 0
+	case int64:
+		return v != 0
+	case json.Number:
+		if i, err := v.Int64(); err == nil {
+			return i != 0
+		}
+		if f, err := v.Float64(); err == nil {
+			return f != 0
+		}
+		return false
+	default:
+		return false
+	}
+}
+
 func (a *Account) IsOpenAI() bool {
 	return a.Platform == PlatformOpenAI
 }

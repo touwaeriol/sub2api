@@ -32,16 +32,21 @@ type StreamingProcessor struct {
 	groundingChunks   []GeminiGroundingChunk
 
 	// 累计 usage
-	inputTokens     int
-	outputTokens    int
-	cacheReadTokens int
+	inputTokens             int
+	outputTokens            int
+	cacheReadTokens         int
+	cacheCreationTokens     int
+	simulateCacheBilling    bool
+	cacheBillingInputTokens int // 估算的 input_tokens（最后一个 cache breakpoint 之后），保证同一请求一致
 }
 
 // NewStreamingProcessor 创建流式响应处理器
-func NewStreamingProcessor(originalModel string) *StreamingProcessor {
+func NewStreamingProcessor(originalModel string, simulateCacheBilling bool, cacheBillingInputTokens int) *StreamingProcessor {
 	return &StreamingProcessor{
-		blockType:     BlockTypeNone,
-		originalModel: originalModel,
+		blockType:               BlockTypeNone,
+		originalModel:           originalModel,
+		simulateCacheBilling:    simulateCacheBilling,
+		cacheBillingInputTokens: cacheBillingInputTokens,
 	}
 }
 
@@ -84,9 +89,18 @@ func (p *StreamingProcessor) ProcessLine(line string) []byte {
 	// 但 Claude 的 input_tokens 不包含 cache_read_input_tokens，需要减去
 	if geminiResp.UsageMetadata != nil {
 		cached := geminiResp.UsageMetadata.CachedContentTokenCount
-		p.inputTokens = geminiResp.UsageMetadata.PromptTokenCount - cached
+		inputTokens := geminiResp.UsageMetadata.PromptTokenCount - cached
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
 		p.outputTokens = geminiResp.UsageMetadata.CandidatesTokenCount + geminiResp.UsageMetadata.ThoughtsTokenCount
 		p.cacheReadTokens = cached
+
+		if p.simulateCacheBilling {
+			p.inputTokens, p.cacheCreationTokens = splitUsageForCacheBilling(inputTokens, p.cacheBillingInputTokens)
+		} else {
+			p.inputTokens = inputTokens
+		}
 	}
 
 	// 处理 parts
@@ -128,9 +142,10 @@ func (p *StreamingProcessor) Finish() ([]byte, *ClaudeUsage) {
 	}
 
 	usage := &ClaudeUsage{
-		InputTokens:          p.inputTokens,
-		OutputTokens:         p.outputTokens,
-		CacheReadInputTokens: p.cacheReadTokens,
+		InputTokens:              p.inputTokens,
+		OutputTokens:             p.outputTokens,
+		CacheReadInputTokens:     p.cacheReadTokens,
+		CacheCreationInputTokens: p.cacheCreationTokens,
 	}
 
 	return result.Bytes(), usage
@@ -145,9 +160,18 @@ func (p *StreamingProcessor) emitMessageStart(v1Resp *V1InternalResponse) []byte
 	usage := ClaudeUsage{}
 	if v1Resp.Response.UsageMetadata != nil {
 		cached := v1Resp.Response.UsageMetadata.CachedContentTokenCount
-		usage.InputTokens = v1Resp.Response.UsageMetadata.PromptTokenCount - cached
+		inputTokens := v1Resp.Response.UsageMetadata.PromptTokenCount - cached
+		if inputTokens < 0 {
+			inputTokens = 0
+		}
 		usage.OutputTokens = v1Resp.Response.UsageMetadata.CandidatesTokenCount + v1Resp.Response.UsageMetadata.ThoughtsTokenCount
 		usage.CacheReadInputTokens = cached
+
+		if p.simulateCacheBilling {
+			usage.InputTokens, usage.CacheCreationInputTokens = splitUsageForCacheBilling(inputTokens, p.cacheBillingInputTokens)
+		} else {
+			usage.InputTokens = inputTokens
+		}
 	}
 
 	responseID := v1Resp.ResponseID
@@ -472,9 +496,10 @@ func (p *StreamingProcessor) emitFinish(finishReason string) []byte {
 	}
 
 	usage := ClaudeUsage{
-		InputTokens:          p.inputTokens,
-		OutputTokens:         p.outputTokens,
-		CacheReadInputTokens: p.cacheReadTokens,
+		InputTokens:              p.inputTokens,
+		OutputTokens:             p.outputTokens,
+		CacheReadInputTokens:     p.cacheReadTokens,
+		CacheCreationInputTokens: p.cacheCreationTokens,
 	}
 
 	deltaEvent := map[string]any{

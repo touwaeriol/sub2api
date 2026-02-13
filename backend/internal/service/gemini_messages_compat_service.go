@@ -22,6 +22,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tokenutil"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 
@@ -2333,36 +2334,12 @@ func estimateGeminiCountTokens(reqBody []byte) int {
 
 	total := 0
 	for _, t := range texts {
-		total += estimateTokensForText(t)
+		total += tokenutil.EstimateTokensForText(t)
 	}
 	if total < 0 {
 		return 0
 	}
 	return total
-}
-
-func estimateTokensForText(s string) int {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return 0
-	}
-	runes := []rune(s)
-	if len(runes) == 0 {
-		return 0
-	}
-	ascii := 0
-	for _, r := range runes {
-		if r <= 0x7f {
-			ascii++
-		}
-	}
-	asciiRatio := float64(ascii) / float64(len(runes))
-	if asciiRatio >= 0.8 {
-		// Roughly 4 chars per token for English-like text.
-		return (len(runes) + 3) / 4
-	}
-	// For CJK-heavy text, approximate 1 rune per token.
-	return len(runes)
 }
 
 type UpstreamHTTPResult struct {

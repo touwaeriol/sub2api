@@ -45,7 +45,6 @@ type FailoverState struct {
 	FailedAccountIDs      map[int64]struct{}
 	SameAccountRetryCount map[int64]int
 	LastFailoverErr       *service.UpstreamFailoverError
-	ForceCacheBilling     bool
 	hasBoundSession       bool
 }
 
@@ -60,7 +59,7 @@ func NewFailoverState(maxSwitches int, hasBoundSession bool) *FailoverState {
 }
 
 // HandleFailoverError 处理 UpstreamFailoverError，返回下一步动作。
-// 包含：缓存计费判断、同账号重试、临时封禁、切换计数、Antigravity 延时。
+// 包含：同账号重试、临时封禁、切换计数、Antigravity 延时。
 func (s *FailoverState) HandleFailoverError(
 	ctx context.Context,
 	gatewayService TempUnscheduler,
@@ -69,11 +68,6 @@ func (s *FailoverState) HandleFailoverError(
 	failoverErr *service.UpstreamFailoverError,
 ) FailoverAction {
 	s.LastFailoverErr = failoverErr
-
-	// 缓存计费判断
-	if needForceCacheBilling(s.hasBoundSession, failoverErr) {
-		s.ForceCacheBilling = true
-	}
 
 	// 同账号重试：对 RetryableOnSameAccount 的临时性错误，先在同一账号上重试
 	if failoverErr.RetryableOnSameAccount && s.SameAccountRetryCount[accountID] < maxSameAccountRetries {
@@ -138,12 +132,6 @@ func (s *FailoverState) HandleSelectionExhausted(ctx context.Context) FailoverAc
 		return FailoverContinue
 	}
 	return FailoverExhausted
-}
-
-// needForceCacheBilling 判断 failover 时是否需要强制缓存计费。
-// 粘性会话切换账号、或上游明确标记时，将 input_tokens 转为 cache_read 计费。
-func needForceCacheBilling(hasBoundSession bool, failoverErr *service.UpstreamFailoverError) bool {
-	return hasBoundSession || (failoverErr != nil && failoverErr.ForceCacheBilling)
 }
 
 // sleepWithContext 等待指定时长，返回 false 表示 context 已取消。

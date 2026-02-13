@@ -66,6 +66,9 @@ type SystemBlock struct {
 // ContentBlock Claude 消息内容块（解析后）
 type ContentBlock struct {
 	Type string `json:"type"`
+	// cache_control 用于 Claude Prompt Caching（创建 cache breakpoint）。
+	// 这里使用 RawMessage 以兼容未来扩展字段或非标准输入，避免因字段结构变化导致解析失败。
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
 	// text
 	Text string `json:"text,omitempty"`
 	// thinking
