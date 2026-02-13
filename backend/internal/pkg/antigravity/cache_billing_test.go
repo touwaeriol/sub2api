@@ -6,8 +6,16 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/tokenutil"
 	"github.com/stretchr/testify/require"
 )
+
+func mustCountTokens(t *testing.T, s string) int {
+	t.Helper()
+	n, ok := tokenutil.CountTokensForText(s)
+	require.True(t, ok, "tiktoken 初始化失败，无法使用分词库计算 tokens")
+	return n
+}
 
 func TestEstimateInputTokensAfterLastCacheBreakpoint_NoBreakpoint(t *testing.T) {
 	t.Parallel()
@@ -36,7 +44,7 @@ func TestEstimateInputTokensAfterLastCacheBreakpoint_SumsSuffix(t *testing.T) {
 
 	tokens, ok := EstimateInputTokensAfterLastCacheBreakpoint(req)
 	require.True(t, ok)
-	require.Equal(t, 3, tokens) // "abcd"=1 + "你好"=2
+	require.Equal(t, mustCountTokens(t, "abcd")+mustCountTokens(t, "你好"), tokens)
 }
 
 func TestEstimateInputTokensAfterLastCacheBreakpoint_LastBreakpointWins(t *testing.T) {
@@ -51,7 +59,7 @@ func TestEstimateInputTokensAfterLastCacheBreakpoint_LastBreakpointWins(t *testi
 
 	tokens, ok := EstimateInputTokensAfterLastCacheBreakpoint(req)
 	require.True(t, ok)
-	require.Equal(t, 2, tokens) // "abcdefg" => (7+3)/4 = 2
+	require.Equal(t, mustCountTokens(t, "abcdefg"), tokens)
 }
 
 func TestSplitUsageForCacheBilling_Clamp(t *testing.T) {

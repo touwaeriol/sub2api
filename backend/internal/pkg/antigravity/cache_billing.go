@@ -105,7 +105,7 @@ func estimateTokensForMessageContent(content json.RawMessage, startBlockIndex in
 		if startBlockIndex > 0 {
 			return 0
 		}
-		return tokenutil.EstimateTokensForText(text)
+		return countTokensForText(text)
 	}
 
 	blocks, ok := parseContentBlocks(content)
@@ -136,21 +136,28 @@ func estimateTokensForBlocks(blocks []ContentBlock, start int) int {
 func estimateTokensForBlock(block ContentBlock) int {
 	switch block.Type {
 	case "text":
-		return tokenutil.EstimateTokensForText(block.Text)
+		return countTokensForText(block.Text)
 	case "thinking":
-		return tokenutil.EstimateTokensForText(block.Thinking)
+		return countTokensForText(block.Thinking)
 	case "tool_use":
-		total := tokenutil.EstimateTokensForText(block.Name)
+		total := countTokensForText(block.Name)
 		if block.Input == nil {
 			return total
 		}
 		if b, err := json.Marshal(block.Input); err == nil {
-			total += tokenutil.EstimateTokensForText(string(b))
+			total += countTokensForText(string(b))
 		}
 		return total
 	case "tool_result":
-		return tokenutil.EstimateTokensForText(parseToolResultContent(block.Content, block.IsError))
+		return countTokensForText(parseToolResultContent(block.Content, block.IsError))
 	default:
 		return 0
 	}
+}
+
+func countTokensForText(text string) int {
+	if tokens, ok := tokenutil.CountTokensForText(text); ok {
+		return tokens
+	}
+	return tokenutil.EstimateTokensForText(text)
 }
