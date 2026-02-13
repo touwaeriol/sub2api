@@ -20,27 +20,32 @@ type cacheBreakpoint struct {
 //
 // 这里我们只做 best-effort 估算，用于“模拟缓存计费”的拆分；不追求与上游 tokenizer 完全一致。
 // 如果请求中没有 cache_control（即没有 breakpoint），返回 (0, false)。
-func EstimateInputTokensAfterLastCacheBreakpoint(req *ClaudeRequest) (int, bool) {
+func EstimateInputTokensAfterLastCacheBreakpoint(req *ClaudeRequest) (int, bool, error) {
 	if req == nil {
-		return 0, false
+		return 0, false, nil
 	}
 
 	bp, ok := findLastCacheBreakpoint(req.Messages)
 	if !ok {
-		return 0, false
+		return 0, false, nil
 	}
 
 	total := 0
 	if bp.messageIndex >= 0 && bp.messageIndex < len(req.Messages) {
-		total += estimateTokensForMessageContent(req.Messages[bp.messageIndex].Content, bp.blockIndex+1)
+		n, err := estimateTokensForMessageContent(req.Messages[bp.messageIndex].Content, bp.blockIndex+1)
+		if err != nil {
+			return 0, true, err
+		}
+		total += n
 	}
 	for i := bp.messageIndex + 1; i < len(req.Messages); i++ {
-		total += estimateTokensForMessageContent(req.Messages[i].Content, 0)
+		n, err := estimateTokensForMessageContent(req.Messages[i].Content, 0)
+		if err != nil {
+			return 0, true, err
+		}
+		total += n
 	}
-	if total < 0 {
-		return 0, true
-	}
-	return total, true
+	return total, true, nil
 }
 
 // splitUsageForCacheBilling 将“未命中缓存的 prompt tokens”（即 promptTokenCount - cachedContentTokenCount）
@@ -95,69 +100,76 @@ func hasCacheControl(raw json.RawMessage) bool {
 	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
-func estimateTokensForMessageContent(content json.RawMessage, startBlockIndex int) int {
+func estimateTokensForMessageContent(content json.RawMessage, startBlockIndex int) (int, error) {
 	if len(content) == 0 {
-		return 0
+		return 0, nil
 	}
 
 	var text string
 	if err := json.Unmarshal(content, &text); err == nil {
 		if startBlockIndex > 0 {
-			return 0
+			return 0, nil
 		}
 		return countTokensForText(text)
 	}
 
 	blocks, ok := parseContentBlocks(content)
 	if !ok {
-		return 0
+		return 0, nil
 	}
 	return estimateTokensForBlocks(blocks, startBlockIndex)
 }
 
-func estimateTokensForBlocks(blocks []ContentBlock, start int) int {
+func estimateTokensForBlocks(blocks []ContentBlock, start int) (int, error) {
 	if start < 0 {
 		start = 0
 	}
 	if start >= len(blocks) {
-		return 0
+		return 0, nil
 	}
 
 	total := 0
 	for i := start; i < len(blocks); i++ {
-		total += estimateTokensForBlock(blocks[i])
+		n, err := estimateTokensForBlock(blocks[i])
+		if err != nil {
+			return 0, err
+		}
+		total += n
 	}
-	if total < 0 {
-		return 0
-	}
-	return total
+	return total, nil
 }
 
-func estimateTokensForBlock(block ContentBlock) int {
+func estimateTokensForBlock(block ContentBlock) (int, error) {
 	switch block.Type {
 	case "text":
 		return countTokensForText(block.Text)
 	case "thinking":
 		return countTokensForText(block.Thinking)
 	case "tool_use":
-		total := countTokensForText(block.Name)
+		total, err := countTokensForText(block.Name)
+		if err != nil {
+			return 0, err
+		}
 		if block.Input == nil {
-			return total
+			return total, nil
 		}
 		if b, err := json.Marshal(block.Input); err == nil {
-			total += countTokensForText(string(b))
+			n, err := countTokensForText(string(b))
+			if err != nil {
+				return 0, err
+			}
+			total += n
+		} else {
+			return 0, err
 		}
-		return total
+		return total, nil
 	case "tool_result":
 		return countTokensForText(parseToolResultContent(block.Content, block.IsError))
 	default:
-		return 0
+		return 0, nil
 	}
 }
 
-func countTokensForText(text string) int {
-	if tokens, ok := tokenutil.CountTokensForText(text); ok {
-		return tokens
-	}
-	return tokenutil.EstimateTokensForText(text)
+func countTokensForText(text string) (int, error) {
+	return tokenutil.CountTokensForText(text)
 }

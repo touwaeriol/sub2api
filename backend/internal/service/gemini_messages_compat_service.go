@@ -2334,10 +2334,11 @@ func estimateGeminiCountTokens(reqBody []byte) int {
 
 	total := 0
 	for _, t := range texts {
-		total += tokenutil.EstimateTokensForText(t)
-	}
-	if total < 0 {
-		return 0
+		n, err := tokenutil.CountTokensForText(t)
+		if err != nil {
+			return 0
+		}
+		total += n
 	}
 	return total
 }

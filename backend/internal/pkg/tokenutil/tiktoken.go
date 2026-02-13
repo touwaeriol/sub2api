@@ -79,18 +79,20 @@ func getCl100kEncoding() (*tiktoken.Tiktoken, error) {
 
 // CountTokensForText 使用分词库计算 token 数量（当前使用 cl100k_base）。
 //
-// 返回 (tokens, true) 表示分词成功；
-// 返回 (0, false) 表示分词库初始化失败（调用方可自行 fallback）。
-func CountTokensForText(s string) (int, bool) {
+// 注意：该函数不提供任何“估算/降级”逻辑；初始化失败将返回 error，由调用方决定如何处理。
+func CountTokensForText(s string) (int, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return 0, true
+		return 0, nil
 	}
 
 	enc, err := getCl100kEncoding()
 	if err != nil || enc == nil {
-		return 0, false
+		if err == nil {
+			err = fmt.Errorf("tiktoken cl100k_base encoding init failed")
+		}
+		return 0, err
 	}
 
-	return len(enc.Encode(s, nil, nil)), true
+	return len(enc.Encode(s, nil, nil)), nil
 }

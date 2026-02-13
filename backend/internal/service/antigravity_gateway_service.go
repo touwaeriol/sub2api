@@ -1604,7 +1604,11 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 	simulateCacheBilling := account.IsSimulateCacheBillingEnabled()
 	cacheBillingInputTokens := 0
 	if simulateCacheBilling {
-		if tokens, ok := antigravity.EstimateInputTokensAfterLastCacheBreakpoint(&effectiveClaudeReq); ok {
+		tokens, ok, err := antigravity.EstimateInputTokensAfterLastCacheBreakpoint(&effectiveClaudeReq)
+		if err != nil {
+			log.Printf("%s simulate_cache_billing_disabled reason=tokenizer_error error=%v", prefix, err)
+			simulateCacheBilling = false
+		} else if ok {
 			cacheBillingInputTokens = tokens
 		} else {
 			simulateCacheBilling = false
