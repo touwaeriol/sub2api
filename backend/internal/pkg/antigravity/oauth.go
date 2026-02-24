@@ -40,7 +40,6 @@ const (
 		"https://www.googleapis.com/auth/cclog " +
 		"https://www.googleapis.com/auth/experimentsandconfigs"
 
-
 	// Session 过期时间
 	SessionTTL = 30 * time.Minute
 
