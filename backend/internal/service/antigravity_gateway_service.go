@@ -2652,7 +2652,7 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 
 		// 尝试解析模型 key 并设置模型级限流
 		//
-		// 注意：requestedModel 可能是“映射前”的请求模型名（例如 claude-opus-4-6），
+		// 注意：requestedModel 可能是"映射前"的请求模型名（例如 claude-opus-4-6），
 		// 调度与限流判定使用的是 Antigravity 最终模型名（包含映射与 thinking 后缀）。
 		// 因此这里必须写入最终模型 key，确保后续调度能正确避开已限流模型。
 		modelKey := resolveFinalAntigravityModelKey(ctx, account, requestedModel)

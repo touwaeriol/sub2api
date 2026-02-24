@@ -1805,9 +1805,9 @@ const handleClose = () => {
 const submitUpdateAccount = async (accountID: number, updatePayload: Record<string, unknown>) => {
   submitting.value = true
   try {
-    await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
+    const updatedAccount = await adminAPI.accounts.update(accountID, withAntigravityConfirmFlag(updatePayload))
     appStore.showSuccess(t('admin.accounts.accountUpdated'))
-    emit('updated')
+    emit('updated', updatedAccount)
     handleClose()
   } catch (error: any) {
     if (error.response?.status === 409 && error.response?.data?.error === 'mixed_channel_warning' && needsMixedChannelCheck()) {
@@ -2067,7 +2067,6 @@ const handleMixedChannelConfirm = async () => {
     await action()
   } finally {
     submitting.value = false
-  }
   }
 }
 
