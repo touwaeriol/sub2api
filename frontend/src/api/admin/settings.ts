@@ -4,6 +4,7 @@
  */
 
 import { apiClient } from '../client'
+import type { CustomMenuItem } from '@/types'
 
 /**
  * System settings interface
@@ -31,6 +32,7 @@ export interface SystemSettings {
   hide_ccs_import_button: boolean
   purchase_subscription_enabled: boolean
   purchase_subscription_url: string
+  custom_menu_items: CustomMenuItem[]
   // SMTP settings
   smtp_host: string
   smtp_port: number
@@ -87,6 +89,7 @@ export interface UpdateSettingsRequest {
   hide_ccs_import_button?: boolean
   purchase_subscription_enabled?: boolean
   purchase_subscription_url?: string
+  custom_menu_items?: CustomMenuItem[]
   smtp_host?: string
   smtp_port?: number
   smtp_username?: string

@@ -1,6 +1,9 @@
 package admin
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"log"
 	"strings"
 	"time"
@@ -13,6 +16,27 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// generateMenuItemID generates a short random hex ID for a custom menu item.
+func generateMenuItemID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// parseCustomMenuItems parses a JSON string into a slice of CustomMenuItem.
+// Returns empty slice on empty/invalid input.
+func parseCustomMenuItems(raw string) []dto.CustomMenuItem {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return []dto.CustomMenuItem{}
+	}
+	var items []dto.CustomMenuItem
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return []dto.CustomMenuItem{}
+	}
+	return items
+}
 
 // SettingHandler 系统设置处理器
 type SettingHandler struct {
@@ -76,6 +100,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		HideCcsImportButton:                  settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:          settings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:              settings.PurchaseSubscriptionURL,
+		CustomMenuItems:                      parseCustomMenuItems(settings.CustomMenuItems),
 		DefaultConcurrency:                   settings.DefaultConcurrency,
 		DefaultBalance:                       settings.DefaultBalance,
 		EnableModelFallback:                  settings.EnableModelFallback,
@@ -133,6 +158,7 @@ type UpdateSettingsRequest struct {
 	HideCcsImportButton         bool    `json:"hide_ccs_import_button"`
 	PurchaseSubscriptionEnabled *bool   `json:"purchase_subscription_enabled"`
 	PurchaseSubscriptionURL     *string `json:"purchase_subscription_url"`
+	CustomMenuItems             *[]dto.CustomMenuItem `json:"custom_menu_items"`
 
 	// 默认配置
 	DefaultConcurrency int     `json:"default_concurrency"`
@@ -276,6 +302,40 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		}
 	}
 
+	// 自定义菜单项验证
+	customMenuJSON := previousSettings.CustomMenuItems
+	if req.CustomMenuItems != nil {
+		items := *req.CustomMenuItems
+		for i, item := range items {
+			if strings.TrimSpace(item.Label) == "" {
+				response.BadRequest(c, "Custom menu item label is required")
+				return
+			}
+			if strings.TrimSpace(item.URL) == "" {
+				response.BadRequest(c, "Custom menu item URL is required")
+				return
+			}
+			if err := config.ValidateAbsoluteHTTPURL(strings.TrimSpace(item.URL)); err != nil {
+				response.BadRequest(c, "Custom menu item URL must be an absolute http(s) URL")
+				return
+			}
+			if item.Visibility != "user" && item.Visibility != "admin" {
+				response.BadRequest(c, "Custom menu item visibility must be 'user' or 'admin'")
+				return
+			}
+			// Auto-generate ID if missing
+			if strings.TrimSpace(item.ID) == "" {
+				items[i].ID = generateMenuItemID()
+			}
+		}
+		menuBytes, err := json.Marshal(items)
+		if err != nil {
+			response.BadRequest(c, "Failed to serialize custom menu items")
+			return
+		}
+		customMenuJSON = string(menuBytes)
+	}
+
 	// Ops metrics collector interval validation (seconds).
 	if req.OpsMetricsIntervalSeconds != nil {
 		v := *req.OpsMetricsIntervalSeconds
@@ -319,6 +379,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:         req.HideCcsImportButton,
 		PurchaseSubscriptionEnabled: purchaseEnabled,
 		PurchaseSubscriptionURL:     purchaseURL,
+		CustomMenuItems:             customMenuJSON,
 		DefaultConcurrency:          req.DefaultConcurrency,
 		DefaultBalance:              req.DefaultBalance,
 		EnableModelFallback:         req.EnableModelFallback,
@@ -400,6 +461,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		HideCcsImportButton:                  updatedSettings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled:          updatedSettings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:              updatedSettings.PurchaseSubscriptionURL,
+		CustomMenuItems:                      parseCustomMenuItems(updatedSettings.CustomMenuItems),
 		DefaultConcurrency:                   updatedSettings.DefaultConcurrency,
 		DefaultBalance:                       updatedSettings.DefaultBalance,
 		EnableModelFallback:                  updatedSettings.EnableModelFallback,
