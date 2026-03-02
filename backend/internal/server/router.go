@@ -11,7 +11,6 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
-	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/server/routes"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -84,7 +83,9 @@ func SetupRouter(
 
 		// custom menu items
 		if raw := strings.TrimSpace(settings.CustomMenuItems); raw != "" && raw != "[]" {
-			var items []dto.CustomMenuItem
+			var items []struct {
+				URL string `json:"url"`
+			}
 			if err := json.Unmarshal([]byte(raw), &items); err == nil {
 				for _, item := range items {
 					if origin := extractOrigin(item.URL); origin != "" {
