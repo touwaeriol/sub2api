@@ -1,6 +1,6 @@
 //go:build unit
 
-package server
+package service
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestExtractOrigin(t *testing.T) {
+func TestExtractOriginFromURL(t *testing.T) {
 	tests := []struct {
 		name  string
 		input string
@@ -29,7 +29,7 @@ func TestExtractOrigin(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := extractOrigin(tt.input)
+			got := extractOriginFromURL(tt.input)
 			assert.Equal(t, tt.want, got)
 		})
 	}

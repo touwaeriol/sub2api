@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -141,22 +142,22 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 
 	// Return a struct that matches the frontend's expected format
 	return &struct {
-		RegistrationEnabled         bool   `json:"registration_enabled"`
-		EmailVerifyEnabled          bool   `json:"email_verify_enabled"`
-		PromoCodeEnabled            bool   `json:"promo_code_enabled"`
-		PasswordResetEnabled        bool   `json:"password_reset_enabled"`
-		InvitationCodeEnabled       bool   `json:"invitation_code_enabled"`
-		TotpEnabled                 bool   `json:"totp_enabled"`
-		TurnstileEnabled            bool   `json:"turnstile_enabled"`
-		TurnstileSiteKey            string `json:"turnstile_site_key,omitempty"`
-		SiteName                    string `json:"site_name"`
-		SiteLogo                    string `json:"site_logo,omitempty"`
-		SiteSubtitle                string `json:"site_subtitle,omitempty"`
-		APIBaseURL                  string `json:"api_base_url,omitempty"`
-		ContactInfo                 string `json:"contact_info,omitempty"`
-		DocURL                      string `json:"doc_url,omitempty"`
-		HomeContent                 string `json:"home_content,omitempty"`
-		HideCcsImportButton         bool   `json:"hide_ccs_import_button"`
+		RegistrationEnabled         bool            `json:"registration_enabled"`
+		EmailVerifyEnabled          bool            `json:"email_verify_enabled"`
+		PromoCodeEnabled            bool            `json:"promo_code_enabled"`
+		PasswordResetEnabled        bool            `json:"password_reset_enabled"`
+		InvitationCodeEnabled       bool            `json:"invitation_code_enabled"`
+		TotpEnabled                 bool            `json:"totp_enabled"`
+		TurnstileEnabled            bool            `json:"turnstile_enabled"`
+		TurnstileSiteKey            string          `json:"turnstile_site_key,omitempty"`
+		SiteName                    string          `json:"site_name"`
+		SiteLogo                    string          `json:"site_logo,omitempty"`
+		SiteSubtitle                string          `json:"site_subtitle,omitempty"`
+		APIBaseURL                  string          `json:"api_base_url,omitempty"`
+		ContactInfo                 string          `json:"contact_info,omitempty"`
+		DocURL                      string          `json:"doc_url,omitempty"`
+		HomeContent                 string          `json:"home_content,omitempty"`
+		HideCcsImportButton         bool            `json:"hide_ccs_import_button"`
 		PurchaseSubscriptionEnabled bool            `json:"purchase_subscription_enabled"`
 		PurchaseSubscriptionURL     string          `json:"purchase_subscription_url,omitempty"`
 		CustomMenuItems             json.RawMessage `json:"custom_menu_items"`
@@ -181,23 +182,111 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		HideCcsImportButton:         settings.HideCcsImportButton,
 		PurchaseSubscriptionEnabled: settings.PurchaseSubscriptionEnabled,
 		PurchaseSubscriptionURL:     settings.PurchaseSubscriptionURL,
-		CustomMenuItems:             sanitizeCustomMenuItemsJSON(settings.CustomMenuItems),
+		CustomMenuItems:             filterUserVisibleMenuItems(settings.CustomMenuItems),
 		LinuxDoOAuthEnabled:         settings.LinuxDoOAuthEnabled,
 		Version:                     s.version,
 	}, nil
 }
 
-// sanitizeCustomMenuItemsJSON validates a raw JSON string and returns it as json.RawMessage.
-// Returns "[]" if the input is empty or invalid JSON.
-func sanitizeCustomMenuItemsJSON(raw string) json.RawMessage {
+// filterUserVisibleMenuItems filters out admin-only menu items from a raw JSON
+// array string, returning only items with visibility != "admin".
+func filterUserVisibleMenuItems(raw string) json.RawMessage {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
 		return json.RawMessage("[]")
 	}
-	if json.Valid([]byte(raw)) {
-		return json.RawMessage(raw)
+	var items []struct {
+		Visibility string `json:"visibility"`
 	}
-	return json.RawMessage("[]")
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return json.RawMessage("[]")
+	}
+
+	var fullItems []json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fullItems); err != nil {
+		return json.RawMessage("[]")
+	}
+
+	var filtered []json.RawMessage
+	for i, item := range items {
+		if item.Visibility != "admin" {
+			filtered = append(filtered, fullItems[i])
+		}
+	}
+	if len(filtered) == 0 {
+		return json.RawMessage("[]")
+	}
+	result, err := json.Marshal(filtered)
+	if err != nil {
+		return json.RawMessage("[]")
+	}
+	return result
+}
+
+// GetFrameSrcOrigins returns deduplicated http(s) origins from purchase_subscription_url
+// and all custom_menu_items URLs. Used by the router layer for CSP frame-src injection.
+func (s *SettingService) GetFrameSrcOrigins(ctx context.Context) ([]string, error) {
+	settings, err := s.GetPublicSettings(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := make(map[string]struct{})
+	var origins []string
+
+	addOrigin := func(rawURL string) {
+		if origin := extractOriginFromURL(rawURL); origin != "" {
+			if _, ok := seen[origin]; !ok {
+				seen[origin] = struct{}{}
+				origins = append(origins, origin)
+			}
+		}
+	}
+
+	if settings.PurchaseSubscriptionEnabled {
+		addOrigin(settings.PurchaseSubscriptionURL)
+	}
+
+	for _, u := range parseCustomMenuItemURLs(settings.CustomMenuItems) {
+		addOrigin(u)
+	}
+
+	return origins, nil
+}
+
+func extractOriginFromURL(rawURL string) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+func parseCustomMenuItemURLs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "[]" {
+		return nil
+	}
+	var items []struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+		return nil
+	}
+	urls := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.URL != "" {
+			urls = append(urls, item.URL)
+		}
+	}
+	return urls
 }
 
 // UpdateSettings 更新系统设置
