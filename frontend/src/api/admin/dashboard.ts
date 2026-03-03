@@ -10,7 +10,8 @@ import type {
   ModelStat,
   GroupStat,
   ApiKeyUsageTrendPoint,
-  UserUsageTrendPoint
+  UserUsageTrendPoint,
+  UsageRequestType
 } from '@/types'
 
 /**
@@ -50,6 +51,7 @@ export interface TrendParams {
   model?: string
   account_id?: number
   group_id?: number
+  request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
 }
@@ -79,6 +81,7 @@ export interface ModelStatsParams {
   model?: string
   account_id?: number
   group_id?: number
+  request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
 }
@@ -106,6 +109,7 @@ export interface GroupStatsParams {
   api_key_id?: number
   account_id?: number
   group_id?: number
+  request_type?: UsageRequestType
   stream?: boolean
   billing_type?: number | null
 }

@@ -73,6 +73,16 @@ func (s *accountRepoStubForBulkUpdate) GetByID(_ context.Context, id int64) (*Ac
 	return nil, errors.New("account not found")
 }
 
+func (s *accountRepoStubForBulkUpdate) ListByGroup(_ context.Context, groupID int64) ([]Account, error) {
+	if err, ok := s.listByGroupErr[groupID]; ok {
+		return nil, err
+	}
+	if rows, ok := s.listByGroupData[groupID]; ok {
+		return rows, nil
+	}
+	return nil, nil
+}
+
 // TestAdminService_BulkUpdateAccounts_AllSuccessIDs 验证批量更新成功时返回 success_ids/failed_ids。
 func TestAdminService_BulkUpdateAccounts_AllSuccessIDs(t *testing.T) {
 	repo := &accountRepoStubForBulkUpdate{}
@@ -100,7 +110,10 @@ func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 			2: errors.New("bind failed"),
 		},
 	}
-	svc := &adminServiceImpl{accountRepo: repo}
+	svc := &adminServiceImpl{
+		accountRepo: repo,
+		groupRepo:   &groupRepoStubForAdmin{getByID: &Group{ID: 10, Name: "g10"}},
+	}
 
 	groupIDs := []int64{10}
 	schedulable := false
@@ -119,6 +132,23 @@ func TestAdminService_BulkUpdateAccounts_PartialFailureIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{2}, result.FailedIDs)
 	require.Len(t, result.Results, 3)
 }
+
+func TestAdminService_BulkUpdateAccounts_NilGroupRepoReturnsError(t *testing.T) {
+	repo := &accountRepoStubForBulkUpdate{}
+	svc := &adminServiceImpl{accountRepo: repo}
+
+	groupIDs := []int64{10}
+	input := &BulkUpdateAccountsInput{
+		AccountIDs: []int64{1},
+		GroupIDs:   &groupIDs,
+	}
+
+	result, err := svc.BulkUpdateAccounts(context.Background(), input)
+	require.Nil(t, result)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "group repository not configured")
+}
+
 
 // TestAdminService_BulkUpdateAccounts_MixedChannelPreCheckBlocksOnExistingConflict verifies
 // that the global pre-check detects a conflict with existing group members and returns an

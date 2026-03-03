@@ -414,6 +414,7 @@ export default {
     noDataAvailable: '暂无数据',
     model: '模型',
     group: '分组',
+    noGroup: '无分组',
     requests: '请求',
     tokens: 'Token',
     actual: '实际',
@@ -565,6 +566,19 @@ export default {
     resetQuotaConfirmMessage: '确定要将密钥 "{name}" 的已用额度（${used}）重置为 0 吗？此操作不可撤销。',
     quotaResetSuccess: '额度重置成功',
     failedToResetQuota: '重置额度失败',
+    rateLimitColumn: '速率限制',
+    rateLimitSection: '速率限制',
+    resetUsage: '重置',
+    rateLimit5h: '5小时限额 (USD)',
+    rateLimit1d: '日限额 (USD)',
+    rateLimit7d: '7天限额 (USD)',
+    rateLimitHint: '设置此密钥在指定时间窗口内的最大消费额。0 = 无限制。',
+    rateLimitUsage: '速率限制用量',
+    resetRateLimitUsage: '重置速率限制用量',
+    resetRateLimitTitle: '确认重置速率限制',
+    resetRateLimitConfirmMessage: '确定要重置密钥 "{name}" 的速率限制用量吗？所有时间窗口的已用额度将归零。此操作不可撤销。',
+    rateLimitResetSuccess: '速率限制已重置',
+    failedToResetRateLimit: '重置速率限制失败',
     expiration: '密钥有效期',
     expiresInDays: '{days} 天',
     extendDays: '+{days} 天',
@@ -853,6 +867,7 @@ export default {
       noDataAvailable: '暂无数据',
       model: '模型',
       group: '分组',
+      noGroup: '无分组',
       requests: '请求',
       tokens: 'Token',
       cache: '缓存',
@@ -2005,7 +2020,12 @@ export default {
           strategyHint: '三区模型: 超限后逐步限制; 粘性豁免: 已有会话不受限',
           stickyBuffer: '粘性缓冲区',
           stickyBufferPlaceholder: '默认: base RPM 的 20%',
-          stickyBufferHint: '超过 base RPM 后，粘性会话额外允许的请求数。为空则使用默认值（base RPM 的 20%，最小为 1）'
+          stickyBufferHint: '超过 base RPM 后，粘性会话额外允许的请求数。为空则使用默认值（base RPM 的 20%，最小为 1）',
+          userMsgQueue: '用户消息限速',
+          userMsgQueueHint: '对用户消息施加发送限制，避免触发上游 RPM 限制',
+          umqModeOff: '关闭',
+          umqModeThrottle: '软性限速',
+          umqModeSerialize: '串行队列',
         },
         tlsFingerprint: {
           label: 'TLS 指纹模拟',
@@ -2457,6 +2477,7 @@ export default {
         name: '名称',
         protocol: '协议',
         address: '地址',
+        auth: '认证',
         location: '地理位置',
         status: '状态',
         accounts: '账号数',
@@ -2484,6 +2505,8 @@ export default {
         allStatuses: '全部状态'
       },
       // Additional keys used in ProxiesView
+      copyProxyUrl: '复制代理 URL',
+      urlCopied: '代理 URL 已复制',
       allProtocols: '全部协议',
       allStatus: '全部状态',
       searchProxies: '搜索代理...',
@@ -3720,7 +3743,27 @@ export default {
         defaultBalance: '默认余额',
         defaultBalanceHint: '新用户的初始余额',
         defaultConcurrency: '默认并发数',
-        defaultConcurrencyHint: '新用户的最大并发请求数'
+        defaultConcurrencyHint: '新用户的最大并发请求数',
+        defaultSubscriptions: '默认订阅列表',
+        defaultSubscriptionsHint: '新用户创建或注册时自动分配这些订阅',
+        addDefaultSubscription: '添加默认订阅',
+        defaultSubscriptionsEmpty: '未配置默认订阅。新用户不会自动获得订阅套餐。',
+        defaultSubscriptionsDuplicate: '默认订阅存在重复分组：{groupId}。每个分组只能出现一次。',
+        subscriptionGroup: '订阅分组',
+        subscriptionValidityDays: '有效期（天）'
+      },
+      claudeCode: {
+        title: 'Claude Code 设置',
+        description: '控制 Claude Code 客户端访问要求',
+        minVersion: '最低版本号',
+        minVersionPlaceholder: '例如 2.1.63',
+        minVersionHint: '拒绝低于此版本的 Claude Code 客户端请求（semver 格式）。留空则不检查版本。'
+      },
+      scheduling: {
+        title: '网关调度设置',
+        description: '控制 API Key 的调度行为',
+        allowUngroupedKey: '允许未分组 Key 调度',
+        allowUngroupedKeyHint: '关闭后，未分配到任何分组的 API Key 将无法发起请求（返回 403）。建议保持关闭以确保所有 Key 都归属明确的分组。'
       },
       site: {
         title: '站点设置',
@@ -3775,6 +3818,27 @@ export default {
         description: '控制是否在侧边栏展示 Sora 客户端入口',
         enabled: '启用 Sora 客户端',
         enabledHint: '开启后，侧边栏将显示 Sora 入口，用户可访问 Sora 功能'
+      },
+      customMenu: {
+        title: '自定义菜单页面',
+        description: '添加自定义 iframe 页面到侧边栏导航。每个页面可以设置为普通用户或管理员可见。',
+        itemLabel: '菜单项 #{n}',
+        name: '菜单名称',
+        namePlaceholder: '如：帮助中心',
+        url: '页面 URL',
+        urlPlaceholder: 'https://example.com/page',
+        iconSvg: 'SVG 图标',
+        iconSvgPlaceholder: '<svg>...</svg>',
+        iconPreview: '图标预览',
+        uploadSvg: '上传 SVG',
+        removeSvg: '清除',
+        visibility: '可见角色',
+        visibilityUser: '普通用户',
+        visibilityAdmin: '管理员',
+        add: '添加菜单项',
+        remove: '删除',
+        moveUp: '上移',
+        moveDown: '下移',
       },
       smtp: {
         title: 'SMTP 设置',
@@ -4060,6 +4124,16 @@ export default {
     notEnabledDesc: '管理员暂未开启充值/订阅入口，请联系管理员。',
     notConfiguredTitle: '充值/订阅链接未配置',
     notConfiguredDesc: '管理员已开启入口，但尚未配置充值/订阅链接，请联系管理员。'
+  },
+
+  // Custom Page (iframe embed)
+  customPage: {
+    title: '自定义页面',
+    openInNewTab: '新窗口打开',
+    notFoundTitle: '页面不存在',
+    notFoundDesc: '该自定义页面不存在或已被删除。',
+    notConfiguredTitle: '页面链接未配置',
+    notConfiguredDesc: '该自定义页面的 URL 未正确配置。',
   },
 
   // Announcements Page
