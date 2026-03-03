@@ -336,10 +336,6 @@ type ProxyExitInfoProber interface {
 	ProbeProxy(ctx context.Context, proxyURL string) (*ProxyExitInfo, int64, error)
 }
 
-type groupExistenceBatchReader interface {
-	ExistsByIDs(ctx context.Context, ids []int64) (map[int64]bool, error)
-}
-
 type proxyQualityTarget struct {
 	Target          string
 	URL             string
@@ -2120,35 +2116,6 @@ func (s *adminServiceImpl) checkMixedChannelRisk(ctx context.Context, currentAcc
 		}
 	}
 
-	return nil
-}
-
-func (s *adminServiceImpl) validateGroupIDsExist(ctx context.Context, groupIDs []int64) error {
-	if len(groupIDs) == 0 {
-		return nil
-	}
-	if s.groupRepo == nil {
-		return errors.New("group repository not configured")
-	}
-
-	if batchReader, ok := s.groupRepo.(groupExistenceBatchReader); ok {
-		existsByID, err := batchReader.ExistsByIDs(ctx, groupIDs)
-		if err != nil {
-			return fmt.Errorf("check groups exists: %w", err)
-		}
-		for _, groupID := range groupIDs {
-			if groupID <= 0 || !existsByID[groupID] {
-				return fmt.Errorf("get group: %w", ErrGroupNotFound)
-			}
-		}
-		return nil
-	}
-
-	for _, groupID := range groupIDs {
-		if _, err := s.groupRepo.GetByID(ctx, groupID); err != nil {
-			return fmt.Errorf("get group: %w", err)
-		}
-	}
 	return nil
 }
 
