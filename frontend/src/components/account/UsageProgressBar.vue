@@ -42,9 +42,9 @@
         ></div>
       </div>
 
-      <!-- Percentage -->
-      <span :class="['w-[32px] shrink-0 text-right text-[10px] font-medium', textClass]">
-        {{ displayPercent }}
+      <!-- Percentage or custom display value -->
+      <span :class="['shrink-0 text-right text-[10px] font-medium', displayValue ? '' : 'w-[32px]', textClass]">
+        {{ displayValue || displayPercent }}
       </span>
 
       <!-- Reset time -->
@@ -67,6 +67,7 @@ const props = defineProps<{
   color: 'indigo' | 'emerald' | 'purple' | 'amber'
   windowStats?: WindowStats | null
   statsTitle?: string
+  displayValue?: string // Custom display text (e.g., "$60.00/$120.00"), overrides percentage
 }>()
 
 const { t } = useI18n()

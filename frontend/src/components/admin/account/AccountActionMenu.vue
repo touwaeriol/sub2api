@@ -76,10 +76,12 @@ const isRateLimited = computed(() => {
 })
 const isOverloaded = computed(() => props.account?.overload_until && new Date(props.account.overload_until) > new Date())
 const hasQuotaLimit = computed(() => {
-  return props.account?.type === 'apikey' &&
-    props.account?.quota_limit !== undefined &&
-    props.account?.quota_limit !== null &&
-    props.account?.quota_limit > 0
+  if (props.account?.type !== 'apikey') return false
+  return (
+    (props.account?.quota_limit ?? 0) > 0 ||
+    (props.account?.quota_daily_limit ?? 0) > 0 ||
+    (props.account?.quota_weekly_limit ?? 0) > 0
+  )
 })
 
 const handleKeydown = (event: KeyboardEvent) => {
