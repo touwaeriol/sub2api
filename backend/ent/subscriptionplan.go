@@ -24,7 +24,7 @@ type SubscriptionPlan struct {
 	// Description holds the value of the "description" field.
 	Description string `json:"description,omitempty"`
 	// Price holds the value of the "price" field.
-	Price float64 `json:"price,omitempty"`
+	Price float64 `json:"price"`
 	// OriginalPrice holds the value of the "original_price" field.
 	OriginalPrice *float64 `json:"original_price,omitempty"`
 	// ValidityDays holds the value of the "validity_days" field.
@@ -36,9 +36,9 @@ type SubscriptionPlan struct {
 	// ProductName holds the value of the "product_name" field.
 	ProductName string `json:"product_name,omitempty"`
 	// ForSale holds the value of the "for_sale" field.
-	ForSale bool `json:"for_sale,omitempty"`
+	ForSale bool `json:"for_sale"`
 	// SortOrder holds the value of the "sort_order" field.
-	SortOrder int `json:"sort_order,omitempty"`
+	SortOrder int `json:"sort_order"`
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.

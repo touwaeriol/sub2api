@@ -38,7 +38,8 @@ func (SubscriptionPlan) Fields() []ent.Field {
 			SchemaType(map[string]string{dialect.Postgres: "text"}).
 			Default(""),
 		field.Float("price").
-			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}),
+			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}).
+			StructTag(`json:"price"`),
 		field.Float("original_price").
 			SchemaType(map[string]string{dialect.Postgres: "decimal(20,2)"}).
 			Optional().
@@ -55,9 +56,11 @@ func (SubscriptionPlan) Fields() []ent.Field {
 			MaxLen(100).
 			Default(""),
 		field.Bool("for_sale").
-			Default(true),
+			Default(true).
+			StructTag(`json:"for_sale"`),
 		field.Int("sort_order").
-			Default(0),
+			Default(0).
+			StructTag(`json:"sort_order"`),
 		field.Time("created_at").
 			Immutable().
 			Default(time.Now).
