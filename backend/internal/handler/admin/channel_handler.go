@@ -253,6 +253,9 @@ func pricingRequestToService(reqs []channelModelPricingRequest) []service.Channe
 			billingMode = service.BillingModeToken
 		}
 		platform := r.Platform
+		if platform == "" {
+			platform = "anthropic"
+		}
 		intervals := make([]service.PricingInterval, 0, len(r.Intervals))
 		for _, iv := range r.Intervals {
 			intervals = append(intervals, service.PricingInterval{
