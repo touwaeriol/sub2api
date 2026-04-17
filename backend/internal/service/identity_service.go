@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -24,15 +23,54 @@ var (
 	userAgentVersionRegex = regexp.MustCompile(`/(\d+)\.(\d+)\.(\d+)`)
 )
 
+// sessionHashCtxKeyType keys the per-request sticky-session hash that
+// RewriteUserIDWithMasking uses to keep metadata.session_id stable across
+// concurrent requests belonging to the same client conversation.
+type sessionHashCtxKeyType struct{}
+
+var sessionHashCtxKey sessionHashCtxKeyType
+
+// WithSessionHash returns a context carrying the given session hash. Gateway
+// entry points (Forward, ForwardCountTokens) stash the hash they compute for
+// sticky account routing so that RewriteUserIDWithMasking can reuse it when
+// generating a sticky session UUID.
+func WithSessionHash(ctx context.Context, sessionHash string) context.Context {
+	if sessionHash == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionHashCtxKey, sessionHash)
+}
+
+// SessionHashFromContext extracts the session hash previously stashed by
+// WithSessionHash. Returns "" when absent.
+func SessionHashFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	v, _ := ctx.Value(sessionHashCtxKey).(string)
+	return v
+}
+
 // 默认指纹值（当客户端未提供时使用）
+//
+// Re-verified 2026-04-17 against a live capture of Claude Code 2.1.111 on
+// Node.js 24.14.1 / macOS arm64 (capture tool: backend/tools/capture_fingerprint).
+// UA bumped to 2.1.112 (latest on npm as of 2026-04-17) — patch-level Claude
+// Code releases keep the same Stainless fields. Bundled @anthropic-ai/sdk is
+// still 0.81.0. These values match the real CLI's request headers exactly —
+// particularly:
+//   - UserAgent:               "claude-cli/2.1.112 (external, sdk-cli)"  (note: "sdk-cli", NOT "cli")
+//   - StainlessPackageVersion: "0.81.0"
+//   - StainlessOS:             "MacOS"     (case: mixed, not "Linux")
+//   - StainlessRuntimeVersion: "v24.14.1"
 var defaultFingerprint = Fingerprint{
-	UserAgent:               "claude-cli/2.1.22 (external, cli)",
+	UserAgent:               "claude-cli/2.1.112 (external, sdk-cli)",
 	StainlessLang:           "js",
-	StainlessPackageVersion: "0.70.0",
-	StainlessOS:             "Linux",
+	StainlessPackageVersion: "0.81.0",
+	StainlessOS:             "MacOS",
 	StainlessArch:           "arm64",
 	StainlessRuntime:        "node",
-	StainlessRuntimeVersion: "v24.13.0",
+	StainlessRuntimeVersion: "v24.14.1",
 }
 
 // Fingerprint represents account fingerprint data
@@ -59,6 +97,13 @@ type IdentityCache interface {
 	// SetMaskedSessionID 设置固定的会话ID，TTL 为 15 分钟
 	// 每次调用都会刷新 TTL
 	SetMaskedSessionID(ctx context.Context, accountID int64, sessionID string) error
+	// GetStickySessionUUID 返回与 (accountID, sessionHash) 绑定的随机 session UUID。
+	// 用于让一次 CLI 会话生命周期内多次请求共用同一个 metadata.session_id，
+	// 贴近真实 Claude Code 行为（一次 CLI 调用整个会话共用一个 UUID，退出/新会话换）。
+	// 未命中返回 "" + nil。
+	GetStickySessionUUID(ctx context.Context, accountID int64, sessionHash string) (string, error)
+	// SetStickySessionUUID 以 30 分钟 TTL 存储会话级 session UUID。
+	SetStickySessionUUID(ctx context.Context, accountID int64, sessionHash string, sessionUUID string) error
 }
 
 // IdentityService 管理OAuth账号的请求身份指纹
@@ -240,11 +285,22 @@ func (s *IdentityService) RewriteUserID(body []byte, accountID int64, accountUUI
 		return body, nil
 	}
 
-	sessionTail := parsed.SessionID // 原始session UUID
+	_ = parsed.SessionID // original session UUID — ignored, we regenerate.
 
-	// 生成新的session hash: SHA256(accountID::sessionTail) -> UUID格式
-	seed := fmt.Sprintf("%d::%s", accountID, sessionTail)
-	newSessionHash := generateUUIDFromSeed(seed)
+	// Anti-fingerprinting fix (2026-04-15):
+	//
+	// Previous behavior hashed (accountID :: originalSessionID) → deterministic
+	// UUID. That meant the same user session always produced the same upstream
+	// session_id, and concurrent callers on the same account collapsed onto a
+	// tiny cluster of session values. Anthropic can trivially fingerprint
+	// deterministic session ids ("this account's session_ids are the same 8
+	// UUIDs in rotation"), which looks nothing like a real Claude Code CLI
+	// where each invocation produces a fresh random UUID.
+	//
+	// New behavior: mint a fresh cryptographically-random UUID per request.
+	// Device id (cachedClientID) remains stable for the account, but session
+	// churn looks natural.
+	newSessionHash := generateRandomUUID()
 
 	// 根据客户端版本选择输出格式
 	version := ExtractCLIVersion(fingerprintUA)
@@ -260,84 +316,79 @@ func (s *IdentityService) RewriteUserID(body []byte, accountID int64, accountUUI
 	return newBody, nil
 }
 
-// RewriteUserIDWithMasking 重写body中的metadata.user_id，支持会话ID伪装
-// 如果账号启用了会话ID伪装（session_id_masking_enabled），
-// 则在完成常规重写后，将 session 部分替换为固定的伪装ID（15分钟内保持不变）
+// RewriteUserIDWithMasking 重写body中的metadata.user_id
 //
-// 重要：此函数使用 json.RawMessage 保留其他字段的原始字节，
-// 避免重新序列化导致 thinking 块等内容被修改。
+// Sticky session fix (2026-04-17): the previous implementation minted a fresh
+// random UUID on *every* request, which also looks unnatural — a real Claude
+// Code CLI session reuses the same session_id for the full lifetime of the
+// invocation (dozens of turns, many tool calls). With per-request random UUIDs
+// a gateway account exhibits thousands of distinct session_ids per day, each
+// appearing exactly once, which is as easy to fingerprint as the old
+// deterministic hash.
+//
+// New behavior:
+//   - If the caller stashed a session hash via WithSessionHash, we look up a
+//     sticky UUID in Redis keyed by (accountID, sessionHash). Cache hit →
+//     reuse; miss → generate a fresh random UUID and store it (30-min TTL).
+//   - Without a session hash, we fall back to RewriteUserID's random-per-call
+//     behavior (preserves old semantics for callers that can't identify the
+//     conversation).
 func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []byte, account *Account, accountUUID, cachedClientID, fingerprintUA string) ([]byte, error) {
-	// 先执行常规的 RewriteUserID 逻辑
-	newBody, err := s.RewriteUserID(body, account.ID, accountUUID, cachedClientID, fingerprintUA)
-	if err != nil {
-		return newBody, err
+	if account == nil {
+		return body, nil
 	}
 
-	// 检查是否启用会话ID伪装
-	if !account.IsSessionIDMaskingEnabled() {
-		return newBody, nil
+	sessionHash := SessionHashFromContext(ctx)
+	if sessionHash == "" || s.cache == nil {
+		return s.RewriteUserID(body, account.ID, accountUUID, cachedClientID, fingerprintUA)
 	}
 
-	metadata := gjson.GetBytes(newBody, "metadata")
+	// Basic guards identical to RewriteUserID — bail out early if there's nothing to rewrite.
+	if len(body) == 0 || accountUUID == "" || cachedClientID == "" {
+		return body, nil
+	}
+	metadata := gjson.GetBytes(body, "metadata")
 	if !metadata.Exists() || metadata.Type == gjson.Null {
-		return newBody, nil
+		return body, nil
 	}
 	if !strings.HasPrefix(strings.TrimSpace(metadata.Raw), "{") {
-		return newBody, nil
+		return body, nil
 	}
-
 	userIDResult := metadata.Get("user_id")
 	if !userIDResult.Exists() || userIDResult.Type != gjson.String {
-		return newBody, nil
+		return body, nil
 	}
 	userID := userIDResult.String()
 	if userID == "" {
-		return newBody, nil
+		return body, nil
+	}
+	parsedUID := ParseMetadataUserID(userID)
+	if parsedUID == nil {
+		return body, nil
 	}
 
-	// 解析已重写的 user_id
-	uidParsed := ParseMetadataUserID(userID)
-	if uidParsed == nil {
-		return newBody, nil
-	}
-
-	// 获取或生成固定的伪装 session ID
-	maskedSessionID, err := s.cache.GetMaskedSessionID(ctx, account.ID)
+	sessionUUID, err := s.cache.GetStickySessionUUID(ctx, account.ID, sessionHash)
 	if err != nil {
-		logger.LegacyPrintf("service.identity", "Warning: failed to get masked session ID for account %d: %v", account.ID, err)
-		return newBody, nil
+		logger.LegacyPrintf("service.identity", "sticky session uuid lookup failed for account %d: %v (falling back to random)", account.ID, err)
+		sessionUUID = ""
+	}
+	if sessionUUID == "" {
+		sessionUUID = generateRandomUUID()
+		if setErr := s.cache.SetStickySessionUUID(ctx, account.ID, sessionHash, sessionUUID); setErr != nil {
+			logger.LegacyPrintf("service.identity", "sticky session uuid persist failed for account %d: %v", account.ID, setErr)
+		}
 	}
 
-	if maskedSessionID == "" {
-		// 首次或已过期，生成新的伪装 session ID
-		maskedSessionID = generateRandomUUID()
-		logger.LegacyPrintf("service.identity", "Generated new masked session ID for account %d: %s", account.ID, maskedSessionID)
-	}
-
-	// 刷新 TTL（每次请求都刷新，保持 15 分钟有效期）
-	if err := s.cache.SetMaskedSessionID(ctx, account.ID, maskedSessionID); err != nil {
-		logger.LegacyPrintf("service.identity", "Warning: failed to set masked session ID for account %d: %v", account.ID, err)
-	}
-
-	// 用 FormatMetadataUserID 重建（保持与 RewriteUserID 相同的格式）
 	version := ExtractCLIVersion(fingerprintUA)
-	newUserID := FormatMetadataUserID(uidParsed.DeviceID, uidParsed.AccountUUID, maskedSessionID, version)
-
-	slog.Debug("session_id_masking_applied",
-		"account_id", account.ID,
-		"before", userID,
-		"after", newUserID,
-	)
-
+	newUserID := FormatMetadataUserID(cachedClientID, accountUUID, sessionUUID, version)
 	if newUserID == userID {
-		return newBody, nil
+		return body, nil
 	}
-
-	maskedBody, setErr := sjson.SetBytes(newBody, "metadata.user_id", newUserID)
-	if setErr != nil {
-		return newBody, nil
+	newBody, err := sjson.SetBytes(body, "metadata.user_id", newUserID)
+	if err != nil {
+		return body, nil
 	}
-	return maskedBody, nil
+	return newBody, nil
 }
 
 // generateRandomUUID 生成随机 UUID v4 格式字符串
@@ -368,19 +419,6 @@ func generateClientID() string {
 		return hex.EncodeToString(h[:])
 	}
 	return hex.EncodeToString(b)
-}
-
-// generateUUIDFromSeed 从种子生成确定性UUID v4格式字符串
-func generateUUIDFromSeed(seed string) string {
-	hash := sha256.Sum256([]byte(seed))
-	bytes := hash[:16]
-
-	// 设置UUID v4版本和变体位
-	bytes[6] = (bytes[6] & 0x0f) | 0x40
-	bytes[8] = (bytes[8] & 0x3f) | 0x80
-
-	return fmt.Sprintf("%x-%x-%x-%x-%x",
-		bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
 }
 
 // parseUserAgentVersion 解析user-agent版本号
