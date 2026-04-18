@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -45,10 +46,17 @@ func NewIdentityCache(rdb *redis.Client) service.IdentityCache {
 	return &identityCache{rdb: rdb}
 }
 
+// GetFingerprint returns the cached fingerprint for accountID.
+// Returns (nil, nil) when the key doesn't exist; (nil, err) only on
+// transient Redis failures so callers can preserve identity on outage
+// instead of minting a fresh ClientID.
 func (c *identityCache) GetFingerprint(ctx context.Context, accountID int64) (*service.Fingerprint, error) {
 	key := fingerprintKey(accountID)
 	val, err := c.rdb.Get(ctx, key).Result()
 	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	var fp service.Fingerprint
