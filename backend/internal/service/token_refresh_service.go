@@ -360,7 +360,18 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 		if attempt < s.cfg.MaxRetries {
 			// 指数退避：2^(attempt-1) * baseSeconds
 			backoff := time.Duration(s.cfg.RetryBackoffSeconds) * time.Second * time.Duration(1<<(attempt-1))
-			time.Sleep(backoff)
+			// 使用 timer + select，使 backoff 可被 Stop() 或 ctx 取消打断，
+			// 否则 graceful shutdown 会被单次最长数十秒的 Sleep 阻塞。
+			timer := time.NewTimer(backoff)
+			select {
+			case <-timer.C:
+			case <-s.stopCh:
+				timer.Stop()
+				return fmt.Errorf("token refresh aborted during backoff: %w", context.Canceled)
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			}
 		}
 	}
 
