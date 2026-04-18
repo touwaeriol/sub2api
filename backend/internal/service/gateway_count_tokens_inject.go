@@ -3,9 +3,10 @@ package service
 import (
 	"context"
 	"io"
+	"log/slog"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/safe"
 )
 
 // maybeInjectCountTokensSidecar fires a fire-and-forget count_tokens request
@@ -69,7 +70,8 @@ func (s *GatewayService) maybeInjectCountTokensSidecar(
 	// goroutine may read it long after Forward() has returned.
 	bodyCopy := append([]byte(nil), body...)
 
-	go func() {
+	accountID := account.ID
+	safe.Go("sidecar_probe.count_tokens", []slog.Attr{slog.Int64("account_id", accountID)}, func() {
 		// Detached context: the goroutine must outlive the caller's ctx,
 		// which gets cancelled when the downstream client disconnects.
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -77,21 +79,19 @@ func (s *GatewayService) maybeInjectCountTokensSidecar(
 
 		req, err := s.buildCountTokensRequest(ctx, nil, account, bodyCopy, token, tokenType, reqModel, mimicClaudeCode)
 		if err != nil {
-			logger.LegacyPrintf("service.sidecar_probe",
-				"build count_tokens sidecar failed account=%d: %v", account.ID, err)
+			slog.Warn("sidecar_probe.count_tokens.build_failed", "account_id", accountID, "error", err)
 			return
 		}
 
 		tlsProfile := s.tlsFPProfileService.ResolveTLSProfile(account)
 		resp, err := s.httpUpstream.DoWithTLS(req, proxyURL, account.ID, account.Concurrency, tlsProfile)
 		if err != nil {
-			logger.LegacyPrintf("service.sidecar_probe",
-				"count_tokens sidecar request failed account=%d: %v", account.ID, err)
+			slog.Warn("sidecar_probe.count_tokens.request_failed", "account_id", accountID, "error", err)
 			return
 		}
 		if resp != nil && resp.Body != nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
-	}()
+	})
 }

@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/safe"
 )
 
 // ClaudeStartupProber is the narrow interface TokenRefreshService uses to
@@ -118,12 +119,12 @@ func runStartupProbeAsync(prober ClaudeStartupProber, account *Account) {
 	if prober == nil || account == nil {
 		return
 	}
-	go func() {
+	accountID := account.ID
+	safe.Go("sidecar_probe.startup", []slog.Attr{slog.Int64("account_id", accountID)}, func() {
 		ctx, cancel := context.WithTimeout(context.Background(), startupProbeDefaultTimeout)
 		defer cancel()
 		if err := prober.ProbeClaudeStartup(ctx, account); err != nil {
-			logger.LegacyPrintf("service.sidecar_probe",
-				"claude startup probe failed account=%d: %v", account.ID, err)
+			slog.Warn("sidecar_probe.startup.failed", "account_id", accountID, "error", err)
 		}
-	}()
+	})
 }

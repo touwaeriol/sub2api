@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
+	"log/slog"
 	"math/rand/v2"
 	"sync"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/safe"
 )
 
 // ClaudeSidecarProbeService periodically calls /api/oauth/usage for a randomly
@@ -70,7 +71,10 @@ func (s *ClaudeSidecarProbeService) Start() {
 		return
 	}
 	s.wg.Add(1)
-	go s.loop()
+	go func() {
+		defer s.wg.Done()
+		safe.Run("sidecar_probe.loop", nil, s.loop)
+	}()
 }
 
 // Stop signals the loop to exit and waits for it.
@@ -85,8 +89,6 @@ func (s *ClaudeSidecarProbeService) Stop() {
 }
 
 func (s *ClaudeSidecarProbeService) loop() {
-	defer s.wg.Done()
-
 	// Initial delay so that a process restart doesn't fire a probe at t=0
 	// (which would cluster with every other restart-time operation and be
 	// visible to the upstream as a correlated spike).
@@ -120,7 +122,7 @@ func (s *ClaudeSidecarProbeService) runOnce(parent context.Context) {
 
 	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformAnthropic)
 	if err != nil {
-		logger.LegacyPrintf("service.sidecar_probe", "list anthropic accounts failed: %v", err)
+		slog.Warn("sidecar_probe.list_accounts_failed", "error", err)
 		return
 	}
 
@@ -132,14 +134,12 @@ func (s *ClaudeSidecarProbeService) runOnce(parent context.Context) {
 	target := eligible[rand.IntN(len(eligible))]
 
 	if s.dryRun {
-		logger.LegacyPrintf("service.sidecar_probe",
-			"dry-run: would probe account id=%d name=%q", target.ID, target.Name)
+		slog.Info("sidecar_probe.dry_run", "account_id", target.ID, "account_name", target.Name)
 		return
 	}
 
 	if _, err := s.usageService.GetUsage(ctx, target.ID); err != nil {
-		logger.LegacyPrintf("service.sidecar_probe",
-			"probe failed account id=%d: %v", target.ID, err)
+		slog.Warn("sidecar_probe.probe_failed", "account_id", target.ID, "error", err)
 		return
 	}
 }
