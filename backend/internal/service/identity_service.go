@@ -251,69 +251,73 @@ func (s *IdentityService) ApplyFingerprint(req *http.Request, fp *Fingerprint) {
 	}
 }
 
+// rewriteGuardResult holds the parsed pieces both rewrite paths need
+// before deciding what UUID to splice in.
+type rewriteGuardResult struct {
+	userID string
+	parsed *ParsedUserID
+}
+
+// extractRewriteTarget runs the shared preflight: empty-arg checks,
+// metadata-object existence, user_id presence, parse. Returns nil when
+// there's nothing to rewrite (caller should return body unchanged).
+func extractRewriteTarget(body []byte, accountUUID, cachedClientID string) *rewriteGuardResult {
+	if len(body) == 0 || accountUUID == "" || cachedClientID == "" {
+		return nil
+	}
+	metadata := gjson.GetBytes(body, "metadata")
+	if !metadata.Exists() || metadata.Type == gjson.Null {
+		return nil
+	}
+	if !strings.HasPrefix(strings.TrimSpace(metadata.Raw), "{") {
+		return nil
+	}
+	r := metadata.Get("user_id")
+	if !r.Exists() || r.Type != gjson.String {
+		return nil
+	}
+	uid := r.String()
+	if uid == "" {
+		return nil
+	}
+	parsed := ParseMetadataUserID(uid)
+	if parsed == nil {
+		return nil
+	}
+	return &rewriteGuardResult{userID: uid, parsed: parsed}
+}
+
+// spliceUserID writes the new metadata.user_id back via sjson, short-
+// circuiting when the new value equals the old.
+func spliceUserID(body []byte, oldUserID, cachedClientID, accountUUID, sessionUUID, fingerprintUA string) []byte {
+	version := ExtractCLIVersion(fingerprintUA)
+	newUserID := FormatMetadataUserID(cachedClientID, accountUUID, sessionUUID, version)
+	if newUserID == oldUserID {
+		return body
+	}
+	newBody, err := sjson.SetBytes(body, "metadata.user_id", newUserID)
+	if err != nil {
+		return body
+	}
+	return newBody
+}
+
 // RewriteUserID 重写body中的metadata.user_id
 // 支持旧拼接格式和新 JSON 格式的 user_id 解析，
 // 根据 fingerprintUA 版本选择输出格式。
 //
-// 重要：此函数使用 json.RawMessage 保留其他字段的原始字节，
-// 避免重新序列化导致 thinking 块等内容被修改。
+// Anti-fingerprinting fix (2026-04-15): mint a fresh cryptographically-random
+// UUID per request. Device id (cachedClientID) remains stable for the account,
+// but session churn looks natural — see RewriteUserIDWithMasking for the
+// sticky-session variant that reuses one UUID across a CLI conversation.
 func (s *IdentityService) RewriteUserID(body []byte, accountID int64, accountUUID, cachedClientID, fingerprintUA string) ([]byte, error) {
-	if len(body) == 0 || accountUUID == "" || cachedClientID == "" {
+	target := extractRewriteTarget(body, accountUUID, cachedClientID)
+	if target == nil {
 		return body, nil
 	}
-
-	metadata := gjson.GetBytes(body, "metadata")
-	if !metadata.Exists() || metadata.Type == gjson.Null {
-		return body, nil
-	}
-	if !strings.HasPrefix(strings.TrimSpace(metadata.Raw), "{") {
-		return body, nil
-	}
-
-	userIDResult := metadata.Get("user_id")
-	if !userIDResult.Exists() || userIDResult.Type != gjson.String {
-		return body, nil
-	}
-	userID := userIDResult.String()
-	if userID == "" {
-		return body, nil
-	}
-
-	// 解析 user_id（兼容旧拼接格式和新 JSON 格式）
-	parsed := ParseMetadataUserID(userID)
-	if parsed == nil {
-		return body, nil
-	}
-
-	_ = parsed.SessionID // original session UUID — ignored, we regenerate.
-
-	// Anti-fingerprinting fix (2026-04-15):
-	//
-	// Previous behavior hashed (accountID :: originalSessionID) → deterministic
-	// UUID. That meant the same user session always produced the same upstream
-	// session_id, and concurrent callers on the same account collapsed onto a
-	// tiny cluster of session values. Anthropic can trivially fingerprint
-	// deterministic session ids ("this account's session_ids are the same 8
-	// UUIDs in rotation"), which looks nothing like a real Claude Code CLI
-	// where each invocation produces a fresh random UUID.
-	//
-	// New behavior: mint a fresh cryptographically-random UUID per request.
-	// Device id (cachedClientID) remains stable for the account, but session
-	// churn looks natural.
+	_ = target.parsed // original session UUID parsed but ignored — we regenerate.
 	newSessionHash := generateRandomUUID()
-
-	// 根据客户端版本选择输出格式
-	version := ExtractCLIVersion(fingerprintUA)
-	newUserID := FormatMetadataUserID(cachedClientID, accountUUID, newSessionHash, version)
-	if newUserID == userID {
-		return body, nil
-	}
-
-	newBody, err := sjson.SetBytes(body, "metadata.user_id", newUserID)
-	if err != nil {
-		return body, nil
-	}
-	return newBody, nil
+	return spliceUserID(body, target.userID, cachedClientID, accountUUID, newSessionHash, fingerprintUA), nil
 }
 
 // RewriteUserIDWithMasking 重写body中的metadata.user_id
@@ -337,36 +341,14 @@ func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []b
 	if account == nil {
 		return body, nil
 	}
-
 	sessionHash := SessionHashFromContext(ctx)
 	if sessionHash == "" || s.cache == nil {
 		return s.RewriteUserID(body, account.ID, accountUUID, cachedClientID, fingerprintUA)
 	}
-
-	// Basic guards identical to RewriteUserID — bail out early if there's nothing to rewrite.
-	if len(body) == 0 || accountUUID == "" || cachedClientID == "" {
+	target := extractRewriteTarget(body, accountUUID, cachedClientID)
+	if target == nil {
 		return body, nil
 	}
-	metadata := gjson.GetBytes(body, "metadata")
-	if !metadata.Exists() || metadata.Type == gjson.Null {
-		return body, nil
-	}
-	if !strings.HasPrefix(strings.TrimSpace(metadata.Raw), "{") {
-		return body, nil
-	}
-	userIDResult := metadata.Get("user_id")
-	if !userIDResult.Exists() || userIDResult.Type != gjson.String {
-		return body, nil
-	}
-	userID := userIDResult.String()
-	if userID == "" {
-		return body, nil
-	}
-	parsedUID := ParseMetadataUserID(userID)
-	if parsedUID == nil {
-		return body, nil
-	}
-
 	sessionUUID, err := s.cache.GetStickySessionUUID(ctx, account.ID, sessionHash)
 	if err != nil {
 		logger.LegacyPrintf("service.identity", "sticky session uuid lookup failed for account %d: %v (falling back to random)", account.ID, err)
@@ -378,17 +360,7 @@ func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []b
 			logger.LegacyPrintf("service.identity", "sticky session uuid persist failed for account %d: %v", account.ID, setErr)
 		}
 	}
-
-	version := ExtractCLIVersion(fingerprintUA)
-	newUserID := FormatMetadataUserID(cachedClientID, accountUUID, sessionUUID, version)
-	if newUserID == userID {
-		return body, nil
-	}
-	newBody, err := sjson.SetBytes(body, "metadata.user_id", newUserID)
-	if err != nil {
-		return body, nil
-	}
-	return newBody, nil
+	return spliceUserID(body, target.userID, cachedClientID, accountUUID, sessionUUID, fingerprintUA), nil
 }
 
 // generateRandomUUID 生成随机 UUID v4 格式字符串
