@@ -362,14 +362,23 @@ func (s *TokenRefreshService) refreshWithRetry(ctx context.Context, account *Acc
 			backoff := time.Duration(s.cfg.RetryBackoffSeconds) * time.Second * time.Duration(1<<(attempt-1))
 			// 使用 timer + select，使 backoff 可被 Stop() 或 ctx 取消打断，
 			// 否则 graceful shutdown 会被单次最长数十秒的 Sleep 阻塞。
+			//
+			// Three-way select on backoff completion:
+			//   - timer.C:    normal path, retry after backoff elapses
+			//   - s.stopCh:   service.Stop() was called → wrap context.Canceled
+			//                 with an "aborted during backoff" prefix; callers can
+			//                 detect via errors.Is(err, context.Canceled)
+			//   - ctx.Done(): the per-call ctx was cancelled (could be Canceled or
+			//                 DeadlineExceeded depending on how caller scoped ctx);
+			//                 return ctx.Err() unchanged so callers can distinguish
+			//                 the cause via errors.Is
 			timer := time.NewTimer(backoff)
+			defer timer.Stop() // 已 fire 时为 no-op，统一所有路径
 			select {
 			case <-timer.C:
 			case <-s.stopCh:
-				timer.Stop()
 				return fmt.Errorf("token refresh aborted during backoff: %w", context.Canceled)
 			case <-ctx.Done():
-				timer.Stop()
 				return ctx.Err()
 			}
 		}
