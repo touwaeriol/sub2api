@@ -39,8 +39,9 @@ type h2Session struct {
 // session (not just /v1/messages).
 //
 // Exit conditions: client GOAWAY, read deadline (idle), or explicit error.
-// The overall session is bounded by a 60s deadline ceiling on the raw conn
-// applied by the caller; per-read we use a 15s idle timeout.
+// The overall session is bounded by the raw-conn deadline set in
+// handleConn (currently 30s); per-frame iteration we reset to
+// h2IdleTimeout so a hung stream doesn't block past that ceiling.
 func serveH2(tlsConn *ctls.Conn, c *Capture) error {
 	c.HTTP2 = &H2Capture{ClientSettings: map[string]uint32{}}
 	reader := bufio.NewReader(tlsConn)
