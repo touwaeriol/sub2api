@@ -278,9 +278,17 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 		return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 	}
 
-	// Step 2: Establish SOCKS5 tunnel to target
+	// Step 2: Establish SOCKS5 tunnel to target.
+	// Use ContextDialer so the caller's ctx (timeout/cancel) covers the SOCKS5
+	// handshake; otherwise an unresponsive proxy hangs goroutines for minutes
+	// and exhausts connections. x/net's *socks.Dialer satisfies ContextDialer
+	// (verified for golang.org/x/net v0.49.0).
 	slog.Debug("tls_fingerprint_socks5_establishing_tunnel", "target", addr)
-	conn, err := socksDialer.Dial("tcp", addr)
+	ctxDialer, ok := socksDialer.(proxy.ContextDialer)
+	if !ok {
+		return nil, fmt.Errorf("SOCKS5 dialer does not implement ContextDialer (x/net contract changed)")
+	}
+	conn, err := ctxDialer.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		slog.Debug("tls_fingerprint_socks5_connect_failed", "error", err)
 		return nil, fmt.Errorf("SOCKS5 connect: %w", err)
