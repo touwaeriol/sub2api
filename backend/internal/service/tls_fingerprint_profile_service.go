@@ -277,9 +277,9 @@ func (s *TLSFingerprintProfileService) RandomizeForAccount(ctx context.Context, 
 
 	// 3. 更新账号 extra：启用 TLS 指纹 + 绑定新 profile + 标记 randomized
 	extraUpdates := map[string]any{
-		"enable_tls_fingerprint":      true,
-		"tls_fingerprint_profile_id":  created.ID,
-		"tls_fingerprint_randomized":  true,
+		"enable_tls_fingerprint":        true,
+		"tls_fingerprint_profile_id":    created.ID,
+		"tls_fingerprint_randomized":    true,
 		"tls_fingerprint_randomized_at": time.Now().UTC().Format(time.RFC3339),
 	}
 	if err := s.accountRepo.UpdateExtra(ctx, accountID, extraUpdates); err != nil {

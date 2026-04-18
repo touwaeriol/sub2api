@@ -1527,8 +1527,8 @@ func setDefaults() {
 	// 让 Claude OAuth 账号的 endpoint 比例看起来像真实 Claude Code CLI。
 	// 详见 SidecarProbeConfig 的注释。
 	viper.SetDefault("sidecar_probe.usage_poll.enabled", true)
-	viper.SetDefault("sidecar_probe.usage_poll.min_interval_seconds", 300)  // 5 分钟
-	viper.SetDefault("sidecar_probe.usage_poll.max_interval_seconds", 900)  // 15 分钟
+	viper.SetDefault("sidecar_probe.usage_poll.min_interval_seconds", 300) // 5 分钟
+	viper.SetDefault("sidecar_probe.usage_poll.max_interval_seconds", 900) // 15 分钟
 	viper.SetDefault("sidecar_probe.usage_poll.dry_run", false)
 	viper.SetDefault("sidecar_probe.count_tokens_inject.enabled", false) // Phase 2，默认关闭
 	viper.SetDefault("sidecar_probe.count_tokens_inject.timeout_ms", 3000)

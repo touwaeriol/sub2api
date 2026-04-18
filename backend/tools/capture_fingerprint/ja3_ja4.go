@@ -8,7 +8,7 @@ import (
 
 // isGrease returns true if the value is one of the GREASE reserved values.
 func isGrease(v uint16) bool {
-	return (v & 0x0f0f) == 0x0a0a && (v>>8) == (v&0xff)
+	return (v&0x0f0f) == 0x0a0a && (v>>8) == (v&0xff)
 }
 
 func joinDecUint16(vals []uint16) string {

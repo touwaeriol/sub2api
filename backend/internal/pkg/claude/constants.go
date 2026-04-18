@@ -15,7 +15,7 @@ const (
 	BetaContext1M                = "context-1m-2025-08-07"
 	BetaFastMode                 = "fast-mode-2026-02-01"
 	// Additions captured from Claude Code 2.1.109 (see capture_fingerprint tool).
-	BetaContextManagement20250627 = "context-management-2025-06-27"
+	BetaContextManagement20250627  = "context-management-2025-06-27"
 	BetaPromptCachingScope20260105 = "prompt-caching-scope-2026-01-05"
 	BetaAdvisorTool20260301        = "advisor-tool-2026-03-01"
 )
@@ -59,11 +59,12 @@ const HaikuBetaHeader = BetaOAuth + "," + BetaInterleavedThinking
 //
 // Exactly matches the real Claude Code 2.1.111 capture against x-api-key auth
 // (2.1.112 is a patch bump with no observed beta-token change):
-//   claude-code-20250219,
-//   interleaved-thinking-2025-05-14,
-//   context-management-2025-06-27,
-//   prompt-caching-scope-2026-01-05,
-//   advisor-tool-2026-03-01
+//
+//	claude-code-20250219,
+//	interleaved-thinking-2025-05-14,
+//	context-management-2025-06-27,
+//	prompt-caching-scope-2026-01-05,
+//	advisor-tool-2026-03-01
 //
 // Differs from DefaultBetaHeader only by the absence of oauth-2025-04-20
 // (beta is auth-type conditional; non-OAuth requests never carry it).
@@ -82,17 +83,17 @@ const APIKeyHaikuBetaHeader = BetaInterleavedThinking
 // Keep these in sync with recent Claude CLI traffic to reduce the chance that
 // Claude Code-scoped OAuth credentials are rejected as "non-CLI" usage.
 var DefaultHeaders = map[string]string{
-	"User-Agent":                                "claude-cli/2.1.112 (external, sdk-cli)",
-	"X-Stainless-Lang":                          "js",
-	"X-Stainless-Package-Version":               "0.81.0",
-	"X-Stainless-OS":                            "MacOS",
-	"X-Stainless-Arch":                          "arm64",
-	"X-Stainless-Runtime":                       "node",
-	"X-Stainless-Runtime-Version":               "v24.14.1",
+	"User-Agent":                  "claude-cli/2.1.112 (external, sdk-cli)",
+	"X-Stainless-Lang":            "js",
+	"X-Stainless-Package-Version": "0.81.0",
+	"X-Stainless-OS":              "MacOS",
+	"X-Stainless-Arch":            "arm64",
+	"X-Stainless-Runtime":         "node",
+	"X-Stainless-Runtime-Version": "v24.14.1",
 	// 2.1.111 capture shows timeout=300; 2.1.109 was 600. Matches the
 	// ~5-minute default @anthropic-ai/sdk recently moved to.
-	"X-Stainless-Timeout":                       "300",
-	"X-App":                                     "cli",
+	"X-Stainless-Timeout": "300",
+	"X-App":               "cli",
 	"Anthropic-Dangerous-Direct-Browser-Access": "true",
 }
 
