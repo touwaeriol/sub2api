@@ -61,7 +61,7 @@ func (s *GatewayService) maybeInjectCountTokensSidecar(
 
 	timeoutMs := s.cfg.SidecarProbe.CountTokensInject.TimeoutMilliseconds
 	if timeoutMs <= 0 {
-		timeoutMs = 3000
+		timeoutMs = countTokensSidecarDefaultTimeoutMs
 	}
 	timeout := time.Duration(timeoutMs) * time.Millisecond
 

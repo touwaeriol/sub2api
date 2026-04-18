@@ -115,7 +115,7 @@ func (s *ClaudeSidecarProbeService) jitterInterval() time.Duration {
 }
 
 func (s *ClaudeSidecarProbeService) runOnce(parent context.Context) {
-	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	ctx, cancel := context.WithTimeout(parent, sidecarProbeRequestTimeout)
 	defer cancel()
 
 	accounts, err := s.accountRepo.ListByPlatform(ctx, PlatformAnthropic)

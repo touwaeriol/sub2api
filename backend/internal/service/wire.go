@@ -87,8 +87,8 @@ func ProvideClaudeSidecarProbeService(
 	maxInterval := time.Duration(probe.MaxIntervalSeconds) * time.Second
 	// Guard against bad config: enforce a 60s floor so a misconfigured
 	// min_interval_seconds=0 does not turn into a hot spin on startup.
-	if minInterval < 60*time.Second {
-		minInterval = 60 * time.Second
+	if minInterval < sidecarProbeMinIntervalFloor {
+		minInterval = sidecarProbeMinIntervalFloor
 	}
 	if maxInterval < minInterval {
 		maxInterval = minInterval

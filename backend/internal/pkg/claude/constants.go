@@ -208,3 +208,6 @@ func DenormalizeModelID(id string) string {
 	}
 	return id
 }
+
+// HaikuModelShort is the short alias Claude Code's startup probe sends.
+const HaikuModelShort = "claude-haiku-4-5"

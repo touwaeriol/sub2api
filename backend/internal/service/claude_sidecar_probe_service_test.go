@@ -141,3 +141,9 @@ func TestClaudeSidecarProbeLifecycle(t *testing.T) {
 		require.NotPanics(t, func() { s.Stop() })
 	})
 }
+
+
+func TestSidecarProbeConstantsCoherent(t *testing.T) {
+	require.Less(t, sidecarProbeRequestTimeout, sidecarProbeMinIntervalFloor,
+		"request timeout must be smaller than min interval")
+}

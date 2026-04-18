@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -34,12 +33,12 @@ type ClaudeStartupProber interface {
 // that recognizes this exact pattern.
 func claudeStartupProbeBody() []byte {
 	body := map[string]any{
-		"model":      "claude-haiku-4-5",
-		"max_tokens": 1,
+		"model":      startupProbeModel,
+		"max_tokens": startupProbeMaxTokens,
 		"messages": []map[string]any{
 			{
-				"role":    "user",
-				"content": "hi",
+				"role":    startupProbeUserRole,
+				"content": startupProbeUserContent,
 			},
 		},
 	}
@@ -111,11 +110,6 @@ func (s *GatewayService) ProbeClaudeStartup(ctx context.Context, account *Accoun
 	}
 	return nil
 }
-
-// startupProbeDefaultTimeout caps how long a startup probe may block its
-// goroutine. Kept short because the probe is just a warm-up and failures
-// here must not starve token-refresh capacity.
-const startupProbeDefaultTimeout = 10 * time.Second
 
 // runStartupProbeAsync is a convenience wrapper that TokenRefreshService
 // uses to fire a probe in a detached goroutine with a bounded timeout.
