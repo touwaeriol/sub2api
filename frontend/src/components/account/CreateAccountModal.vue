@@ -2949,6 +2949,7 @@ import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -3936,15 +3937,17 @@ const doCreateAccount = async (payload: CreateAccountRequest) => {
 // non-Anthropic accounts (backend rejects them) and noop if the flag is off.
 // Failures surface as toasts but don't roll back the account — the user can
 // always re-randomize manually from the edit modal.
-const maybeRandomizeTLSForCreatedAccount = async (accountID: number | undefined, platform: string) => {
+const maybeRandomizeTLSForCreatedAccount = async (accountID: number | undefined, platform: AccountPlatform) => {
   if (!accountID) return
   if (!tlsFingerprintRandomizeOnCreate.value) return
   if (platform !== 'anthropic') return
   try {
     await adminAPI.tlsFingerprintProfiles.randomizeForAccount(accountID)
-  } catch (err) {
+  } catch (err: unknown) {
     console.error('randomize TLS fingerprint after create failed', err)
-    appStore.showError(t('admin.accounts.quotaControl.tlsFingerprint.randomizeFailed'))
+    appStore.showError(
+      extractApiErrorMessage(err, t('admin.accounts.quotaControl.tlsFingerprint.randomizeFailed'))
+    )
   }
 }
 

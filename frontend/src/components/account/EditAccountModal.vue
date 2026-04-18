@@ -1867,6 +1867,16 @@
     @confirm="handleMixedChannelConfirm"
     @cancel="handleMixedChannelCancel"
   />
+  <ConfirmDialog
+    :show="showRandomizeTLSConfirm"
+    :title="t('admin.accounts.quotaControl.tlsFingerprint.reshuffleButton')"
+    :message="t('admin.accounts.quotaControl.tlsFingerprint.randomizeConfirm')"
+    :confirm-text="t('common.confirm')"
+    :cancel-text="t('common.cancel')"
+    :danger="true"
+    @confirm="handleRandomizeTLSConfirm"
+    @cancel="handleRandomizeTLSCancel"
+  />
 </template>
 
 <script setup lang="ts">
@@ -1887,6 +1897,7 @@ import ModelWhitelistSelector from '@/components/account/ModelWhitelistSelector.
 import QuotaLimitCard from '@/components/account/QuotaLimitCard.vue'
 import { applyInterceptWarmup } from '@/components/account/credentialsBuilder'
 import { formatDateTimeLocalInput, parseDateTimeLocalInput } from '@/utils/format'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import { createStableObjectKeyResolver } from '@/utils/stableObjectKey'
 import {
   OPENAI_WS_MODE_CTX_POOL,
@@ -1990,6 +2001,9 @@ const mixedChannelWarningDetails = ref<{ groupName: string; currentPlatform: str
 const mixedChannelWarningRawMessage = ref('')
 const mixedChannelWarningAction = ref<(() => Promise<void>) | null>(null)
 const antigravityMixedChannelConfirmed = ref(false)
+
+const showRandomizeTLSConfirm = ref(false)
+const randomizeTLSConfirmAction = ref<(() => Promise<void>) | null>(null)
 
 // Quota control state (Anthropic OAuth/SetupToken only)
 const windowCostEnabled = ref(false)
@@ -2479,13 +2493,8 @@ const loadTLSProfiles = async () => {
   }
 }
 
-const handleRandomizeTLSFingerprint = async () => {
+const performRandomizeTLSFingerprint = async () => {
   if (!props.account?.id) return
-  if (tlsFingerprintRandomized.value) {
-    if (!window.confirm(t('admin.accounts.quotaControl.tlsFingerprint.randomizeConfirm'))) {
-      return
-    }
-  }
   tlsFingerprintRandomizing.value = true
   try {
     const profile = await adminAPI.tlsFingerprintProfiles.randomizeForAccount(props.account.id)
@@ -2498,12 +2507,24 @@ const handleRandomizeTLSFingerprint = async () => {
     // Refresh the manual dropdown list; we don't need to see the new auto
     // profile there, but the call also primes cache if needed.
     await loadTLSProfiles()
-  } catch (err) {
-    window.alert(t('admin.accounts.quotaControl.tlsFingerprint.randomizeFailed'))
+    appStore.showSuccess(t('admin.accounts.quotaControl.tlsFingerprint.randomizeSuccess'))
+  } catch (err: unknown) {
     console.error('randomize TLS fingerprint failed', err)
+    appStore.showError(
+      extractApiErrorMessage(err, t('admin.accounts.quotaControl.tlsFingerprint.randomizeFailed'))
+    )
   } finally {
     tlsFingerprintRandomizing.value = false
   }
+}
+
+const handleRandomizeTLSFingerprint = () => {
+  if (!props.account?.id) return
+  if (tlsFingerprintRandomized.value) {
+    openRandomizeTLSConfirm(performRandomizeTLSFingerprint)
+    return
+  }
+  void performRandomizeTLSFingerprint()
 }
 
 // Model mapping helpers
@@ -2833,6 +2854,15 @@ const openMixedChannelDialog = (opts: {
   showMixedChannelWarning.value = true
 }
 
+const clearRandomizeTLSConfirm = () => {
+  showRandomizeTLSConfirm.value = false
+  randomizeTLSConfirmAction.value = null
+}
+const openRandomizeTLSConfirm = (onConfirm: () => Promise<void>) => {
+  randomizeTLSConfirmAction.value = onConfirm
+  showRandomizeTLSConfirm.value = true
+}
+
 const withAntigravityConfirmFlag = (payload: Record<string, unknown>) => {
   if (needsMixedChannelCheck() && antigravityMixedChannelConfirmed.value) {
     return {
@@ -2886,6 +2916,7 @@ const parseDateTimeLocal = parseDateTimeLocalInput
 const handleClose = () => {
   antigravityMixedChannelConfirmed.value = false
   clearMixedChannelDialog()
+  clearRandomizeTLSConfirm()
   emit('close')
 }
 
@@ -3380,4 +3411,11 @@ const handleMixedChannelConfirm = async () => {
 const handleMixedChannelCancel = () => {
   clearMixedChannelDialog()
 }
+
+const handleRandomizeTLSConfirm = async () => {
+  const action = randomizeTLSConfirmAction.value
+  clearRandomizeTLSConfirm()
+  if (action) await action()
+}
+const handleRandomizeTLSCancel = () => clearRandomizeTLSConfirm()
 </script>
