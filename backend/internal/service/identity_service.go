@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -251,40 +252,32 @@ func (s *IdentityService) ApplyFingerprint(req *http.Request, fp *Fingerprint) {
 	}
 }
 
-// rewriteGuardResult holds the parsed pieces both rewrite paths need
-// before deciding what UUID to splice in.
-type rewriteGuardResult struct {
-	userID string
-	parsed *ParsedUserID
-}
-
 // extractRewriteTarget runs the shared preflight: empty-arg checks,
-// metadata-object existence, user_id presence, parse. Returns nil when
+// metadata-object existence, user_id presence, parse. Returns "" when
 // there's nothing to rewrite (caller should return body unchanged).
-func extractRewriteTarget(body []byte, accountUUID, cachedClientID string) *rewriteGuardResult {
+func extractRewriteTarget(body []byte, accountUUID, cachedClientID string) string {
 	if len(body) == 0 || accountUUID == "" || cachedClientID == "" {
-		return nil
+		return ""
 	}
 	metadata := gjson.GetBytes(body, "metadata")
 	if !metadata.Exists() || metadata.Type == gjson.Null {
-		return nil
+		return ""
 	}
 	if !strings.HasPrefix(strings.TrimSpace(metadata.Raw), "{") {
-		return nil
+		return ""
 	}
 	r := metadata.Get("user_id")
 	if !r.Exists() || r.Type != gjson.String {
-		return nil
+		return ""
 	}
 	uid := r.String()
 	if uid == "" {
-		return nil
+		return ""
 	}
-	parsed := ParseMetadataUserID(uid)
-	if parsed == nil {
-		return nil
+	if ParseMetadataUserID(uid) == nil {
+		return ""
 	}
-	return &rewriteGuardResult{userID: uid, parsed: parsed}
+	return uid
 }
 
 // spliceUserID writes the new metadata.user_id back via sjson, short-
@@ -311,13 +304,12 @@ func spliceUserID(body []byte, oldUserID, cachedClientID, accountUUID, sessionUU
 // but session churn looks natural — see RewriteUserIDWithMasking for the
 // sticky-session variant that reuses one UUID across a CLI conversation.
 func (s *IdentityService) RewriteUserID(body []byte, accountID int64, accountUUID, cachedClientID, fingerprintUA string) ([]byte, error) {
-	target := extractRewriteTarget(body, accountUUID, cachedClientID)
-	if target == nil {
+	userID := extractRewriteTarget(body, accountUUID, cachedClientID)
+	if userID == "" {
 		return body, nil
 	}
-	_ = target.parsed // original session UUID parsed but ignored — we regenerate.
 	newSessionHash := generateRandomUUID()
-	return spliceUserID(body, target.userID, cachedClientID, accountUUID, newSessionHash, fingerprintUA), nil
+	return spliceUserID(body, userID, cachedClientID, accountUUID, newSessionHash, fingerprintUA), nil
 }
 
 // RewriteUserIDWithMasking 重写body中的metadata.user_id
@@ -345,22 +337,24 @@ func (s *IdentityService) RewriteUserIDWithMasking(ctx context.Context, body []b
 	if sessionHash == "" || s.cache == nil {
 		return s.RewriteUserID(body, account.ID, accountUUID, cachedClientID, fingerprintUA)
 	}
-	target := extractRewriteTarget(body, accountUUID, cachedClientID)
-	if target == nil {
+	userID := extractRewriteTarget(body, accountUUID, cachedClientID)
+	if userID == "" {
 		return body, nil
 	}
 	sessionUUID, err := s.cache.GetStickySessionUUID(ctx, account.ID, sessionHash)
 	if err != nil {
-		logger.LegacyPrintf("service.identity", "sticky session uuid lookup failed for account %d: %v (falling back to random)", account.ID, err)
+		slog.Warn("identity.sticky_session_lookup_failed",
+			"account_id", account.ID, "error", err)
 		sessionUUID = ""
 	}
 	if sessionUUID == "" {
 		sessionUUID = generateRandomUUID()
 		if setErr := s.cache.SetStickySessionUUID(ctx, account.ID, sessionHash, sessionUUID); setErr != nil {
-			logger.LegacyPrintf("service.identity", "sticky session uuid persist failed for account %d: %v", account.ID, setErr)
+			slog.Warn("identity.sticky_session_persist_failed",
+				"account_id", account.ID, "error", setErr)
 		}
 	}
-	return spliceUserID(body, target.userID, cachedClientID, accountUUID, sessionUUID, fingerprintUA), nil
+	return spliceUserID(body, userID, cachedClientID, accountUUID, sessionUUID, fingerprintUA), nil
 }
 
 // generateRandomUUID 生成随机 UUID v4 格式字符串
