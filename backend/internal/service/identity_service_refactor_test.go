@@ -92,3 +92,68 @@ func TestRewriteUserID_EquivalenceAfterRefactor(t *testing.T) {
 		})
 	}
 }
+
+// TestRewriteUserIDWithMasking_StickyPath_EarlyReturns covers the sticky
+// session path (sessionHash != ""), asserting that the same early-return
+// guards apply: empty body, non-object metadata, missing user_id, and
+// unparseable user_id all return the body unchanged byte-for-byte.
+//
+// This complements TestRewriteUserID_EquivalenceAfterRefactor, which only
+// exercises the sessionHash="" fallback (delegates to RewriteUserID).
+func TestRewriteUserIDWithMasking_StickyPath_EarlyReturns(t *testing.T) {
+	cases := []struct {
+		name string
+		body []byte
+	}{
+		{"empty body", nil},
+		{"metadata=null", []byte(`{"metadata":null}`)},
+		{"metadata=array", []byte(`{"metadata":[1,2,3]}`)},
+		{"missing user_id", []byte(`{"metadata":{}}`)},
+		{"unparseable user_id", []byte(`{"metadata":{"user_id":"not-a-valid-uid"}}`)},
+	}
+
+	cache := &identityCacheStub{}
+	svc := NewIdentityService(cache)
+	account := &Account{ID: 42, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	ctx := WithSessionHash(context.Background(), "test-session-hash-123")
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := svc.RewriteUserIDWithMasking(ctx, tc.body, account, "acc-uuid", "client-id", "claude-cli/2.1.112 (external, sdk-cli)")
+			require.NoError(t, err)
+			require.Equal(t, string(tc.body), string(result))
+		})
+	}
+}
+
+// TestRewriteUserIDWithMasking_StickyPath_CacheHitReusesUUID asserts that
+// when sessionHash is non-empty, two consecutive rewrites with the same
+// hash produce byte-identical output (the second call hits the cached
+// sticky session UUID populated by the first call).
+//
+// This is the positive equivalence counterpart to the early-return cases
+// above and to the StickyPerSessionHash test in identity_service_order_test.go.
+func TestRewriteUserIDWithMasking_StickyPath_CacheHitReusesUUID(t *testing.T) {
+	cache := &identityCacheStub{}
+	svc := NewIdentityService(cache)
+	account := &Account{ID: 42, Platform: PlatformAnthropic, Type: AccountTypeOAuth}
+	ctx := WithSessionHash(context.Background(), "stable-session-h")
+
+	// Use a real legacy-format user_id that ParseMetadataUserID accepts.
+	const legacyValidUID = "user_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789_account_99999999-8888-7777-6666-555555555555_session_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+	body := []byte(`{"metadata":{"user_id":"` + legacyValidUID + `"}}`)
+
+	r1, err := svc.RewriteUserIDWithMasking(ctx, body, account, "acc-uuid", "client-id", "claude-cli/2.1.112 (external, sdk-cli)")
+	require.NoError(t, err)
+
+	r2, err := svc.RewriteUserIDWithMasking(ctx, body, account, "acc-uuid", "client-id", "claude-cli/2.1.112 (external, sdk-cli)")
+	require.NoError(t, err)
+
+	require.Equal(t, string(r1), string(r2), "sticky cache hit must yield byte-identical rewrite")
+
+	// Sanity: a different sessionHash must produce different output.
+	ctxOther := WithSessionHash(context.Background(), "different-session-h")
+	rOther, err := svc.RewriteUserIDWithMasking(ctxOther, body, account, "acc-uuid", "client-id", "claude-cli/2.1.112 (external, sdk-cli)")
+	require.NoError(t, err)
+	require.NotEqual(t, string(r1), string(rOther), "different sessionHash must yield different sticky session id")
+}
