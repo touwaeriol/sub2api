@@ -51,8 +51,18 @@ import (
 
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8443", "listen address")
-	outFile := flag.String("out", "", "optional: write captured fingerprint JSON to this file")
+	outFile := flag.String("out", "", "optional: write each capture JSON to this file (overwrites on every connection)")
+	outDir := flag.String("out-dir", "", "optional: write each capture as capture_<rfc3339>_<n>.json into this dir (does not overwrite)")
 	flag.Parse()
+
+	var captureCounter int64
+	var counterMu sync.Mutex
+	nextCaptureIdx := func() int64 {
+		counterMu.Lock()
+		defer counterMu.Unlock()
+		captureCounter++
+		return captureCounter
+	}
 
 	cert, err := generateSelfSignedCert()
 	if err != nil {
@@ -97,8 +107,9 @@ func main() {
 				CapturedAt: time.Now().UTC().Format(time.RFC3339),
 				RemoteAddr: raw.RemoteAddr().String(),
 			}
+			idx := nextCaptureIdx()
 			// Always dump whatever we captured, even if handshake / h2 fails later.
-			defer func() { printCapture(capture, *outFile) }()
+			defer func() { printCapture(capture, *outFile, *outDir, idx) }()
 
 			// Step 1: sniff the first ClientHello record so we can parse
 			// extensions / cipher order before the TLS library eats them.
@@ -195,6 +206,8 @@ type H2Request struct {
 type H1Capture struct {
 	RequestLine string   `json:"request_line"`
 	Headers     []string `json:"headers_in_order"`
+	BodyPreview string   `json:"body_preview,omitempty"`
+	BodyBytes   int      `json:"body_bytes,omitempty"`
 }
 
 // ================== peekConn (replay ClientHello) ==================
@@ -629,6 +642,8 @@ func serveH1(tlsConn *ctls.Conn, c *Capture) error {
 		return err
 	}
 	c.HTTP1.RequestLine = trimCRLF(line)
+
+	contentLength := 0
 	for {
 		h, err := r.ReadString('\n')
 		if err != nil {
@@ -639,17 +654,55 @@ func serveH1(tlsConn *ctls.Conn, c *Capture) error {
 			break
 		}
 		c.HTTP1.Headers = append(c.HTTP1.Headers, h)
+		if strings.HasPrefix(strings.ToLower(h), "content-length:") {
+			v := strings.TrimSpace(h[len("content-length:"):])
+			_, _ = fmt.Sscanf(v, "%d", &contentLength)
+		}
 	}
 
-	resp := "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" +
-		"event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+	// Capture request body (up to 256KB preview). Drain the rest so the write
+	// below doesn't race the client's send.
+	const bodyPreviewMax = 256 * 1024
+	if contentLength > 0 {
+		c.HTTP1.BodyBytes = contentLength
+		previewLen := contentLength
+		if previewLen > bodyPreviewMax {
+			previewLen = bodyPreviewMax
+		}
+		preview := make([]byte, previewLen)
+		if _, err := io.ReadFull(r, preview); err == nil {
+			c.HTTP1.BodyPreview = string(preview)
+			// Drain the remaining body (don't care about the data)
+			remaining := contentLength - previewLen
+			if remaining > 0 {
+				_, _ = io.CopyN(io.Discard, r, int64(remaining))
+			}
+		}
+	}
+
+	// Minimal valid Anthropic SSE — provide both input_tokens and output_tokens
+	// in message_delta usage so CC's SDK doesn't choke on undefined.input_tokens.
+	body := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_capture","type":"message","role":"assistant","model":"claude-sonnet-4-5-20250929","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_delta\n" +
+		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"input_tokens":1,"output_tokens":1}}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+
+	resp := "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n" + body
 	_, _ = tlsConn.Write([]byte(resp))
 	return nil
 }
 
 // ================== helpers ==================
 
-func printCapture(c *Capture, outFile string) {
+func printCapture(c *Capture, outFile, outDir string, idx int64) {
 	data, _ := json.MarshalIndent(c, "", "  ")
 	fmt.Println(string(data))
 	if outFile != "" {
@@ -657,6 +710,20 @@ func printCapture(c *Capture, outFile string) {
 			log.Printf("write %s: %v", outFile, err)
 		} else {
 			log.Printf("wrote fingerprint to %s", outFile)
+		}
+	}
+	if outDir != "" {
+		if err := os.MkdirAll(outDir, 0o755); err != nil {
+			log.Printf("mkdir %s: %v", outDir, err)
+			return
+		}
+		// Filename: capture_<unix-epoch-ms>_<idx>.json — sortable and unique.
+		fname := fmt.Sprintf("capture_%d_%03d.json", time.Now().UnixMilli(), idx)
+		full := outDir + "/" + fname
+		if err := os.WriteFile(full, data, 0o644); err != nil {
+			log.Printf("write %s: %v", full, err)
+		} else {
+			log.Printf("wrote capture #%d to %s", idx, full)
 		}
 	}
 }
