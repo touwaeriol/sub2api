@@ -6,27 +6,42 @@ import (
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
+	"github.com/gin-gonic/gin"
 )
 
-// ApplyParamOverrides mutates the outgoing request body and headers according
-// to the channel-level override rules associated with the caller's group.
+// paramOverrideContextKey is the unexported context key under which compiled
+// override headers are stored for downstream upstream-request builders.
+type paramOverrideContextKey struct{}
+
+// ParamOverrideHeadersGinKey is the gin.Context key used to mirror the
+// override headers map. Defined as a string constant so handlers/tests can
+// reference it without importing private types.
+const ParamOverrideHeadersGinKey = "paramOverrideHeaders"
+
+// ApplyParamOverrides mutates the outgoing request body according to the
+// channel-level override rules associated with the caller's group, and
+// publishes any header-targeted overrides through the request context so that
+// the upstream-request builders (which rebuild the wire request) can apply
+// them past their own header whitelists.
 //
-// groupID nil -> the caller is not associated with any channel (or does not
-// belong to a group at all). The function returns the body unchanged and does
-// not touch the headers.
+// groupID nil -> the caller is not associated with any channel. The function
+// returns the body unchanged and does not touch the context.
 //
 // The returned slice is either the original body (no mutation) or a fresh
 // buffer produced by sjson; callers should replace their reference.
 //
-// Headers are mutated in place. Passing a nil headers argument is safe and
-// treated as "header overrides not applicable" (no-op).
+// When c is non-nil, header overrides are stored on c.Request.Context() AND
+// the gin.Context store, and c.Request is rewritten with the new context so
+// that downstream service code calling c.Request.Context() observes them.
+// Passing c=nil disables header propagation entirely (body-only mutations
+// still apply).
 func (s *ChannelService) ApplyParamOverrides(
 	ctx context.Context,
+	c *gin.Context,
 	groupID *int64,
 	platform string,
 	model string,
 	body []byte,
-	headers http.Header,
 ) []byte {
 	if groupID == nil {
 		return body
@@ -39,10 +54,57 @@ func (s *ChannelService) ApplyParamOverrides(
 	if len(rules) == 0 {
 		return body
 	}
-	if headers != nil {
-		paramoverride.ApplyToHeaders(headers, rules)
-	}
+	publishHeaderOverrides(c, rules)
 	return paramoverride.ApplyToBodyBytes(body, rules)
+}
+
+// publishHeaderOverrides applies header rules into a fresh http.Header and
+// stores it on both the request context and the gin store so that upstream
+// builders (Anthropic / OpenAI / Antigravity) can re-apply them past their
+// own header whitelists.
+func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) {
+	if c == nil || c.Request == nil {
+		return
+	}
+	headers := http.Header{}
+	paramoverride.ApplyToHeaders(headers, rules)
+	if len(headers) == 0 {
+		return
+	}
+	c.Set(ParamOverrideHeadersGinKey, headers)
+	newCtx := context.WithValue(c.Request.Context(), paramOverrideContextKey{}, headers)
+	c.Request = c.Request.WithContext(newCtx)
+}
+
+// ParamOverrideHeadersFromContext returns the override headers stored on the
+// given context, or nil when none were published. Callers must not mutate
+// the returned map (it is shared across the request lifecycle).
+func ParamOverrideHeadersFromContext(ctx context.Context) http.Header {
+	if ctx == nil {
+		return nil
+	}
+	h, _ := ctx.Value(paramOverrideContextKey{}).(http.Header)
+	return h
+}
+
+// ApplyParamOverrideHeadersToRequest copies the override headers stored on
+// ctx onto req.Header, replacing any existing values. This is the canonical
+// hook used by all upstream-request builders to ensure user-configured
+// header overrides are not silently dropped by per-platform allow-lists.
+func ApplyParamOverrideHeadersToRequest(ctx context.Context, req *http.Request) {
+	if req == nil {
+		return
+	}
+	overrides := ParamOverrideHeadersFromContext(ctx)
+	if len(overrides) == 0 {
+		return
+	}
+	for name, values := range overrides {
+		req.Header.Del(name)
+		for _, v := range values {
+			req.Header.Add(name, v)
+		}
+	}
 }
 
 // getCompiledParamOverrides returns the compiled override snapshot for the
