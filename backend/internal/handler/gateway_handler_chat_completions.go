@@ -210,6 +210,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
+		// 应用渠道级参数覆盖（body + header）
+		forwardBody = h.gatewayService.ApplyParamOverrides(
+			c.Request.Context(), c, apiKey.GroupID,
+			account.Platform, channelMapping.MappedModel, forwardBody,
+		)
 		result, err := h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, parsedReq)
 
 		if accountReleaseFunc != nil {

@@ -672,6 +672,13 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				body = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 			}
 
+			// 应用渠道级参数覆盖（body + header；header 通过 context 传递到上游构建器）
+			body = h.gatewayService.ApplyParamOverrides(
+				c.Request.Context(), c, apiKey.GroupID,
+				account.Platform, channelMapping.MappedModel, body,
+			)
+			parsedReq.Body = body
+
 			// 转发请求 - 根据账号平台分流
 			c.Set("parsed_request", parsedReq)
 			var result *service.ForwardResult

@@ -299,6 +299,11 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
+		// 应用渠道级参数覆盖（body + header）
+		forwardBody = h.gatewayService.ApplyParamOverrides(
+			c.Request.Context(), c, apiKey.GroupID,
+			account.Platform, channelMapping.MappedModel, forwardBody,
+		)
 		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
 		if accountReleaseFunc != nil {
@@ -677,6 +682,11 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		if channelMappingMsg.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMappingMsg.MappedModel)
 		}
+		// 应用渠道级参数覆盖（body + header）
+		forwardBody = h.gatewayService.ApplyParamOverrides(
+			c.Request.Context(), c, apiKey.GroupID,
+			account.Platform, channelMappingMsg.MappedModel, forwardBody,
+		)
 		result, err := h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
 
 		forwardDurationMs := time.Since(forwardStart).Milliseconds()
@@ -1284,6 +1294,11 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	if channelMappingWS.Mapped {
 		wsFirstMessage = h.gatewayService.ReplaceModelInBody(firstMessage, channelMappingWS.MappedModel)
 	}
+	// 应用渠道级参数覆盖到 WS 首条消息（body + header；header 通过 context 传递到上游 WS dial）
+	wsFirstMessage = h.gatewayService.ApplyParamOverrides(
+		c.Request.Context(), c, apiKey.GroupID,
+		account.Platform, channelMappingWS.MappedModel, wsFirstMessage,
+	)
 
 	if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)
