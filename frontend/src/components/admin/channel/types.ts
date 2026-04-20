@@ -1,4 +1,11 @@
-import type { BillingMode, Channel, ChannelModelPricing, PricingInterval } from '@/api/admin/channels'
+import type {
+  BillingMode,
+  Channel,
+  ChannelModelPricing,
+  ChannelParamOverrideRule,
+  ChannelParamOverrides,
+  PricingInterval,
+} from '@/api/admin/channels'
 import type { AdminGroup, GroupPlatform } from '@/types'
 
 /** 平台排序顺序（界面显示 + 转换时遍历） */
@@ -11,6 +18,7 @@ export interface PlatformSection {
   group_ids: number[]
   model_mapping: Record<string, string>
   model_pricing: PricingFormEntry[]
+  param_overrides: ChannelParamOverrideRule[]
 }
 
 export interface IntervalFormEntry {
@@ -207,6 +215,7 @@ export interface PlatformSectionsAPIPayload {
   group_ids: number[]
   model_pricing: ChannelModelPricing[]
   model_mapping: Record<string, Record<string, string>>
+  param_overrides: ChannelParamOverrides
 }
 
 /** 将启用的 PlatformSection 聚合为后端请求体 */
@@ -214,6 +223,7 @@ export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSect
   const group_ids: number[] = []
   const model_pricing: ChannelModelPricing[] = []
   const model_mapping: Record<string, Record<string, string>> = {}
+  const param_overrides: ChannelParamOverrides = {}
 
   for (const section of sections) {
     if (!section.enabled) continue
@@ -221,6 +231,10 @@ export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSect
 
     if (Object.keys(section.model_mapping).length > 0) {
       model_mapping[section.platform] = { ...section.model_mapping }
+    }
+
+    if (section.param_overrides.length > 0) {
+      param_overrides[section.platform] = section.param_overrides.map(r => ({ ...r }))
     }
 
     for (const entry of section.model_pricing) {
@@ -240,7 +254,7 @@ export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSect
     }
   }
 
-  return { group_ids, model_pricing, model_mapping }
+  return { group_ids, model_pricing, model_mapping, param_overrides }
 }
 
 /** 将后端返回的 Channel 转换为 PlatformSection 列表（用于编辑表单） */
@@ -261,6 +275,9 @@ export function channelToPlatformSections(channel: Channel, allGroups: AdminGrou
   for (const p of Object.keys(channel.model_mapping || {})) {
     if (PLATFORM_ORDER.includes(p as GroupPlatform)) activePlatforms.add(p as GroupPlatform)
   }
+  for (const p of Object.keys(channel.param_overrides || {})) {
+    if (PLATFORM_ORDER.includes(p as GroupPlatform)) activePlatforms.add(p as GroupPlatform)
+  }
 
   const sections: PlatformSection[] = []
   for (const platform of PLATFORM_ORDER) {
@@ -268,6 +285,7 @@ export function channelToPlatformSections(channel: Channel, allGroups: AdminGrou
 
     const groupIds = (channel.group_ids || []).filter(gid => groupPlatformMap.get(gid) === platform)
     const mapping = (channel.model_mapping || {})[platform] || {}
+    const overrides = (channel.param_overrides || {})[platform] || []
     const pricing = (channel.model_pricing || [])
       .filter(p => (p.platform || 'anthropic') === platform)
       .map(p => ({
@@ -288,7 +306,8 @@ export function channelToPlatformSections(channel: Channel, allGroups: AdminGrou
       collapsed: false,
       group_ids: groupIds,
       model_mapping: { ...mapping },
-      model_pricing: pricing
+      model_pricing: pricing,
+      param_overrides: overrides.map(r => ({ ...r }))
     })
   }
 

@@ -119,17 +119,25 @@
         />
       </div>
     </div>
+
+    <!-- Param Overrides (custom body/header rewrite rules, applied after model mapping) -->
+    <ParamOverrideList
+      :rules="section.param_overrides"
+      :platform="section.platform"
+      @update="updateParamOverrides"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
 import type { AdminGroup } from '@/types'
-import type { Channel } from '@/api/admin/channels'
+import type { Channel, ChannelParamOverrideRule } from '@/api/admin/channels'
 import type { PlatformSection, PricingFormEntry } from './types'
 import { platformTextClass, platformBadgeLightClass } from '@/utils/platformColors'
 import Icon from '@/components/icons/Icon.vue'
 import PricingEntryCard from './PricingEntryCard.vue'
+import ParamOverrideList from './ParamOverrideList.vue'
 
 const { t } = useI18n()
 
@@ -215,5 +223,10 @@ function updatePricingEntry(idx: number, updated: PricingFormEntry) {
 
 function removePricingEntry(idx: number) {
   section.value.model_pricing.splice(idx, 1)
+}
+
+// ── Param override helpers ──
+function updateParamOverrides(rules: ChannelParamOverrideRule[]) {
+  section.value.param_overrides = rules
 }
 </script>

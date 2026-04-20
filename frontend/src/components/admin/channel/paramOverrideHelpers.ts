@@ -7,6 +7,7 @@
  */
 
 import type { ChannelParamOverrideRule } from '@/api/admin/channels'
+import { ACTION_SET, TARGET_BODY } from './paramOverrideConstants'
 
 export interface ParsedJsonValue {
   value: unknown
@@ -53,8 +54,8 @@ export function createEmptyRule(): ChannelParamOverrideRule {
   return {
     enabled: true,
     model_glob: '*',
-    target: 'body',
-    action: 'set',
+    target: TARGET_BODY,
+    action: ACTION_SET,
     path: '',
     value: null,
     description: '',

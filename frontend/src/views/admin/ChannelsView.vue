@@ -416,7 +416,8 @@ function addPlatformSection(platform: GroupPlatform) {
     collapsed: false,
     group_ids: [],
     model_mapping: {},
-    model_pricing: []
+    model_pricing: [],
+    param_overrides: []
   })
 }
 
@@ -658,7 +659,7 @@ async function handleSubmit() {
     }
   }
 
-  const { group_ids, model_pricing, model_mapping } = platformSectionsToAPI(form.platforms)
+  const { group_ids, model_pricing, model_mapping, param_overrides } = platformSectionsToAPI(form.platforms)
 
   submitting.value = true
   try {
@@ -670,6 +671,7 @@ async function handleSubmit() {
         group_ids,
         model_pricing,
         model_mapping: Object.keys(model_mapping).length > 0 ? model_mapping : {},
+        param_overrides,
         billing_model_source: form.billing_model_source,
         restrict_models: form.restrict_models
       }
@@ -682,6 +684,7 @@ async function handleSubmit() {
         group_ids,
         model_pricing,
         model_mapping: Object.keys(model_mapping).length > 0 ? model_mapping : {},
+        param_overrides,
         billing_model_source: form.billing_model_source,
         restrict_models: form.restrict_models
       }
