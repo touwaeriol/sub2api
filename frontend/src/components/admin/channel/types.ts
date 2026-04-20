@@ -1,4 +1,17 @@
-import type { BillingMode, PricingInterval } from '@/api/admin/channels'
+import type { BillingMode, Channel, ChannelModelPricing, PricingInterval } from '@/api/admin/channels'
+import type { AdminGroup, GroupPlatform } from '@/types'
+
+/** 平台排序顺序（界面显示 + 转换时遍历） */
+export const PLATFORM_ORDER: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity']
+
+export interface PlatformSection {
+  platform: GroupPlatform
+  enabled: boolean
+  collapsed: boolean
+  group_ids: number[]
+  model_mapping: Record<string, string>
+  model_pricing: PricingFormEntry[]
+}
 
 export interface IntervalFormEntry {
   min_tokens: number
@@ -186,4 +199,120 @@ export function getPlatformTagClass(platform: string): string {
     case 'antigravity': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
     default: return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
   }
+}
+
+/** 平台对应的文字颜色 */
+export function getPlatformTextColor(platform: string): string {
+  switch (platform) {
+    case 'anthropic': return 'text-orange-600 dark:text-orange-400'
+    case 'openai': return 'text-emerald-600 dark:text-emerald-400'
+    case 'gemini': return 'text-blue-600 dark:text-blue-400'
+    case 'antigravity': return 'text-purple-600 dark:text-purple-400'
+    default: return 'text-gray-600 dark:text-gray-400'
+  }
+}
+
+/** 平台对应的速率徽章样式（背景+文字） */
+export function getRateBadgeClass(platform: string): string {
+  switch (platform) {
+    case 'anthropic': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
+    case 'openai': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+    case 'gemini': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+    case 'antigravity': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+    default: return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
+  }
+}
+
+// ── 表单 ↔ API 转换 ──────────────────────────────────────
+
+export interface PlatformSectionsAPIPayload {
+  group_ids: number[]
+  model_pricing: ChannelModelPricing[]
+  model_mapping: Record<string, Record<string, string>>
+}
+
+/** 将启用的 PlatformSection 聚合为后端请求体 */
+export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSectionsAPIPayload {
+  const group_ids: number[] = []
+  const model_pricing: ChannelModelPricing[] = []
+  const model_mapping: Record<string, Record<string, string>> = {}
+
+  for (const section of sections) {
+    if (!section.enabled) continue
+    group_ids.push(...section.group_ids)
+
+    if (Object.keys(section.model_mapping).length > 0) {
+      model_mapping[section.platform] = { ...section.model_mapping }
+    }
+
+    for (const entry of section.model_pricing) {
+      if (entry.models.length === 0) continue
+      model_pricing.push({
+        platform: section.platform,
+        models: entry.models,
+        billing_mode: entry.billing_mode,
+        input_price: mTokToPerToken(entry.input_price),
+        output_price: mTokToPerToken(entry.output_price),
+        cache_write_price: mTokToPerToken(entry.cache_write_price),
+        cache_read_price: mTokToPerToken(entry.cache_read_price),
+        image_output_price: mTokToPerToken(entry.image_output_price),
+        per_request_price: entry.per_request_price != null && entry.per_request_price !== '' ? Number(entry.per_request_price) : null,
+        intervals: formIntervalsToAPI(entry.intervals || [])
+      })
+    }
+  }
+
+  return { group_ids, model_pricing, model_mapping }
+}
+
+/** 将后端返回的 Channel 转换为 PlatformSection 列表（用于编辑表单） */
+export function channelToPlatformSections(channel: Channel, allGroups: AdminGroup[]): PlatformSection[] {
+  const groupPlatformMap = new Map<number, GroupPlatform>()
+  for (const g of allGroups) {
+    groupPlatformMap.set(g.id, g.platform)
+  }
+
+  const activePlatforms = new Set<GroupPlatform>()
+  for (const gid of channel.group_ids || []) {
+    const p = groupPlatformMap.get(gid)
+    if (p) activePlatforms.add(p)
+  }
+  for (const p of channel.model_pricing || []) {
+    if (p.platform) activePlatforms.add(p.platform as GroupPlatform)
+  }
+  for (const p of Object.keys(channel.model_mapping || {})) {
+    if (PLATFORM_ORDER.includes(p as GroupPlatform)) activePlatforms.add(p as GroupPlatform)
+  }
+
+  const sections: PlatformSection[] = []
+  for (const platform of PLATFORM_ORDER) {
+    if (!activePlatforms.has(platform)) continue
+
+    const groupIds = (channel.group_ids || []).filter(gid => groupPlatformMap.get(gid) === platform)
+    const mapping = (channel.model_mapping || {})[platform] || {}
+    const pricing = (channel.model_pricing || [])
+      .filter(p => (p.platform || 'anthropic') === platform)
+      .map(p => ({
+        models: p.models || [],
+        billing_mode: p.billing_mode,
+        input_price: perTokenToMTok(p.input_price),
+        output_price: perTokenToMTok(p.output_price),
+        cache_write_price: perTokenToMTok(p.cache_write_price),
+        cache_read_price: perTokenToMTok(p.cache_read_price),
+        image_output_price: perTokenToMTok(p.image_output_price),
+        per_request_price: p.per_request_price,
+        intervals: apiIntervalsToForm(p.intervals || [])
+      } as PricingFormEntry))
+
+    sections.push({
+      platform,
+      enabled: true,
+      collapsed: false,
+      group_ids: groupIds,
+      model_mapping: { ...mapping },
+      model_pricing: pricing
+    })
+  }
+
+  return sections
 }

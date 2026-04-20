@@ -233,7 +233,7 @@
               <label class="input-label mb-0">{{ t('admin.channels.form.platformConfig', '平台配置') }}</label>
               <div class="flex flex-wrap gap-2">
                 <label
-                  v-for="p in platformOrder"
+                  v-for="p in PLATFORM_ORDER"
                   :key="p"
                   class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm transition-colors"
                   :class="activePlatforms.includes(p)
@@ -254,132 +254,15 @@
           </div>
 
           <!-- Platform Tab Content -->
-          <div
+          <ChannelPlatformTab
             v-for="(section, sIdx) in form.platforms"
             :key="'tab-' + section.platform"
             v-show="section.enabled && activeTab === section.platform"
-            class="space-y-4"
-          >
-            <!-- Groups -->
-            <div>
-              <label class="input-label text-xs">
-                {{ t('admin.channels.form.groups', 'Associated Groups') }} <span class="text-red-500">*</span>
-                <span v-if="section.group_ids.length > 0" class="ml-1 font-normal text-gray-400">
-                  ({{ t('admin.channels.form.selectedCount', { count: section.group_ids.length }, `已选 ${section.group_ids.length} 个`) }})
-                </span>
-              </label>
-              <div class="max-h-40 overflow-auto rounded-lg border border-gray-200 bg-gray-50 p-2 dark:border-dark-600 dark:bg-dark-900">
-                <div v-if="groupsLoading" class="py-2 text-center text-xs text-gray-500">
-                  {{ t('common.loading', 'Loading...') }}
-                </div>
-                <div v-else-if="getGroupsForPlatform(section.platform).length === 0" class="py-2 text-center text-xs text-gray-500">
-                  {{ t('admin.channels.form.noGroupsAvailable', 'No groups available') }}
-                </div>
-                <div v-else class="flex flex-wrap gap-1">
-                  <label
-                    v-for="group in getGroupsForPlatform(section.platform)"
-                    :key="group.id"
-                    class="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-gray-200 px-2 py-1 text-xs transition-colors hover:bg-gray-50 dark:border-dark-600 dark:hover:bg-dark-700"
-                    :class="[
-                      section.group_ids.includes(group.id) ? 'bg-primary-50 border-primary-300 dark:bg-primary-900/20 dark:border-primary-700' : '',
-                      isGroupInOtherChannel(group.id, section.platform) ? 'opacity-40' : ''
-                    ]"
-                  >
-                    <input
-                      type="checkbox"
-                      :checked="section.group_ids.includes(group.id)"
-                      :disabled="isGroupInOtherChannel(group.id, section.platform)"
-                      class="h-3 w-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
-                      @change="toggleGroupInSection(sIdx, group.id)"
-                    />
-                    <span :class="['font-medium', getPlatformTextColor(group.platform)]">{{ group.name }}</span>
-                    <span
-                      :class="['rounded-full px-1 py-0 text-[10px]', getRateBadgeClass(group.platform)]"
-                    >{{ group.rate_multiplier }}x</span>
-                    <span class="text-[10px] text-gray-400">{{ group.account_count || 0 }}</span>
-                    <span
-                      v-if="isGroupInOtherChannel(group.id, section.platform)"
-                      class="text-[10px] text-gray-400"
-                    >{{ getGroupInOtherChannelLabel(group.id) }}</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <!-- Model Mapping -->
-            <div>
-              <div class="mb-1 flex items-center justify-between">
-                <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelMapping', 'Model Mapping') }}</label>
-                <button type="button" @click="addMappingEntry(sIdx)" class="text-xs text-primary-600 hover:text-primary-700">
-                  + {{ t('common.add', 'Add') }}
-                </button>
-              </div>
-              <div
-                v-if="Object.keys(section.model_mapping).length === 0"
-                class="rounded border border-dashed border-gray-300 p-2 text-center text-xs text-gray-400 dark:border-dark-500"
-              >
-                {{ t('admin.channels.form.noMappingRules', 'No mapping rules. Click "Add" to create one.') }}
-              </div>
-              <div v-else class="space-y-1">
-                <div
-                  v-for="(_, srcModel) in section.model_mapping"
-                  :key="srcModel"
-                  class="flex items-center gap-2"
-                >
-                  <input
-                    :value="srcModel"
-                    type="text"
-                    class="input flex-1 text-xs"
-                    :class="getPlatformTextColor(section.platform)"
-                    :placeholder="t('admin.channels.form.mappingSource', 'Source model')"
-                    @change="renameMappingKey(sIdx, srcModel, ($event.target as HTMLInputElement).value)"
-                  />
-                  <span class="text-gray-400 text-xs">→</span>
-                  <input
-                    :value="section.model_mapping[srcModel]"
-                    type="text"
-                    class="input flex-1 text-xs"
-                    :class="getPlatformTextColor(section.platform)"
-                    :placeholder="t('admin.channels.form.mappingTarget', 'Target model')"
-                    @input="section.model_mapping[srcModel] = ($event.target as HTMLInputElement).value"
-                  />
-                  <button
-                    type="button"
-                    @click="removeMappingEntry(sIdx, srcModel)"
-                    class="rounded p-0.5 text-gray-400 hover:text-red-500"
-                  >
-                    <Icon name="trash" size="sm" />
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <!-- Model Pricing -->
-            <div>
-              <div class="mb-1 flex items-center justify-between">
-                <label class="input-label text-xs mb-0">{{ t('admin.channels.form.modelPricing', 'Model Pricing') }}</label>
-                <button type="button" @click="addPricingEntry(sIdx)" class="text-xs text-primary-600 hover:text-primary-700">
-                  + {{ t('common.add', 'Add') }}
-                </button>
-              </div>
-              <div
-                v-if="section.model_pricing.length === 0"
-                class="rounded border border-dashed border-gray-300 p-2 text-center text-xs text-gray-400 dark:border-dark-500"
-              >
-                {{ t('admin.channels.form.noPricingRules', 'No pricing rules yet. Click "Add" to create one.') }}
-              </div>
-              <div v-else class="space-y-2">
-                <PricingEntryCard
-                  v-for="(entry, idx) in section.model_pricing"
-                  :key="idx"
-                  :entry="entry"
-                  :platform="section.platform"
-                  @update="updatePricingEntry(sIdx, idx, $event)"
-                  @remove="removePricingEntry(sIdx, idx)"
-                />
-              </div>
-            </div>
-          </div>
+            v-model:section="form.platforms[sIdx]"
+            :platform-groups="getGroupsForPlatform(section.platform)"
+            :groups-loading="groupsLoading"
+            :group-to-channel-map="groupToChannelMap"
+          />
         </form>
       </div>
 
@@ -424,9 +307,9 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
-import type { Channel, ChannelModelPricing, CreateChannelRequest, UpdateChannelRequest } from '@/api/admin/channels'
-import type { PricingFormEntry } from '@/components/admin/channel/types'
-import { mTokToPerToken, perTokenToMTok, apiIntervalsToForm, formIntervalsToAPI, findModelConflict, validateIntervals } from '@/components/admin/channel/types'
+import type { Channel, CreateChannelRequest, UpdateChannelRequest } from '@/api/admin/channels'
+import type { PlatformSection } from '@/components/admin/channel/types'
+import { findModelConflict, validateIntervals, getPlatformTextColor, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections } from '@/components/admin/channel/types'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -440,21 +323,11 @@ import Select from '@/components/common/Select.vue'
 import Icon from '@/components/icons/Icon.vue'
 import PlatformIcon from '@/components/common/PlatformIcon.vue'
 import Toggle from '@/components/common/Toggle.vue'
-import PricingEntryCard from '@/components/admin/channel/PricingEntryCard.vue'
+import ChannelPlatformTab from '@/components/admin/channel/ChannelPlatformTab.vue'
 import { getPersistedPageSize } from '@/composables/usePersistedPageSize'
 
 const { t } = useI18n()
 const appStore = useAppStore()
-
-// ── Platform Section type ──
-interface PlatformSection {
-  platform: GroupPlatform
-  enabled: boolean
-  collapsed: boolean
-  group_ids: number[]
-  model_mapping: Record<string, string>
-  model_pricing: PricingFormEntry[]
-}
 
 // ── Table columns ──
 const columns = computed<Column[]>(() => [
@@ -526,29 +399,6 @@ const form = reactive({
 
 let abortController: AbortController | null = null
 
-// ── Platform config ──
-const platformOrder: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity']
-
-function getPlatformTextColor(platform: string): string {
-  switch (platform) {
-    case 'anthropic': return 'text-orange-600 dark:text-orange-400'
-    case 'openai': return 'text-emerald-600 dark:text-emerald-400'
-    case 'gemini': return 'text-blue-600 dark:text-blue-400'
-    case 'antigravity': return 'text-purple-600 dark:text-purple-400'
-    default: return 'text-gray-600 dark:text-gray-400'
-  }
-}
-
-function getRateBadgeClass(platform: string): string {
-  switch (platform) {
-    case 'anthropic': return 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
-    case 'openai': return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-    case 'gemini': return 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-    case 'antigravity': return 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-    default: return 'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400'
-  }
-}
-
 // ── Helpers ──
 function formatDate(value: string): string {
   if (!value) return '-'
@@ -597,19 +447,6 @@ const groupToChannelMap = computed(() => {
   return map
 })
 
-function isGroupInOtherChannel(groupId: number, _platform: string): boolean {
-  return groupToChannelMap.value.has(groupId)
-}
-
-function getGroupChannelName(groupId: number): string {
-  return groupToChannelMap.value.get(groupId)?.name || ''
-}
-
-function getGroupInOtherChannelLabel(groupId: number): string {
-  const name = getGroupChannelName(groupId)
-  return t('admin.channels.form.inOtherChannel', { name }, `In "${name}"`)
-}
-
 const deleteConfirmMessage = computed(() => {
   const name = deletingChannel.value?.name || ''
   return t(
@@ -618,155 +455,6 @@ const deleteConfirmMessage = computed(() => {
     `Are you sure you want to delete channel "${name}"? This action cannot be undone.`
   )
 })
-
-function toggleGroupInSection(sectionIdx: number, groupId: number) {
-  const section = form.platforms[sectionIdx]
-  const idx = section.group_ids.indexOf(groupId)
-  if (idx >= 0) {
-    section.group_ids.splice(idx, 1)
-  } else {
-    section.group_ids.push(groupId)
-  }
-}
-
-// ── Pricing helpers ──
-function addPricingEntry(sectionIdx: number) {
-  form.platforms[sectionIdx].model_pricing.push({
-    models: [],
-    billing_mode: 'token',
-    input_price: null,
-    output_price: null,
-    cache_write_price: null,
-    cache_read_price: null,
-    image_output_price: null,
-    per_request_price: null,
-    intervals: []
-  })
-}
-
-function updatePricingEntry(sectionIdx: number, idx: number, updated: PricingFormEntry) {
-  form.platforms[sectionIdx].model_pricing.splice(idx, 1, updated)
-}
-
-function removePricingEntry(sectionIdx: number, idx: number) {
-  form.platforms[sectionIdx].model_pricing.splice(idx, 1)
-}
-
-// ── Model Mapping helpers ──
-function addMappingEntry(sectionIdx: number) {
-  const mapping = form.platforms[sectionIdx].model_mapping
-  let key = ''
-  let i = 1
-  while (key === '' || key in mapping) {
-    key = `model-${i}`
-    i++
-  }
-  mapping[key] = ''
-}
-
-function removeMappingEntry(sectionIdx: number, key: string) {
-  delete form.platforms[sectionIdx].model_mapping[key]
-}
-
-function renameMappingKey(sectionIdx: number, oldKey: string, newKey: string) {
-  newKey = newKey.trim()
-  if (!newKey || newKey === oldKey) return
-  const mapping = form.platforms[sectionIdx].model_mapping
-  if (newKey in mapping) return
-  const value = mapping[oldKey]
-  delete mapping[oldKey]
-  mapping[newKey] = value
-}
-
-// ── Form ↔ API conversion ──
-function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[], model_mapping: Record<string, Record<string, string>> } {
-  const group_ids: number[] = []
-  const model_pricing: ChannelModelPricing[] = []
-  const model_mapping: Record<string, Record<string, string>> = {}
-
-  for (const section of form.platforms) {
-    if (!section.enabled) continue
-    group_ids.push(...section.group_ids)
-
-    // Model mapping per platform
-    if (Object.keys(section.model_mapping).length > 0) {
-      model_mapping[section.platform] = { ...section.model_mapping }
-    }
-
-    // Model pricing with platform tag
-    for (const entry of section.model_pricing) {
-      if (entry.models.length === 0) continue
-      model_pricing.push({
-        platform: section.platform,
-        models: entry.models,
-        billing_mode: entry.billing_mode,
-        input_price: mTokToPerToken(entry.input_price),
-        output_price: mTokToPerToken(entry.output_price),
-        cache_write_price: mTokToPerToken(entry.cache_write_price),
-        cache_read_price: mTokToPerToken(entry.cache_read_price),
-        image_output_price: mTokToPerToken(entry.image_output_price),
-        per_request_price: entry.per_request_price != null && entry.per_request_price !== '' ? Number(entry.per_request_price) : null,
-        intervals: formIntervalsToAPI(entry.intervals || [])
-      })
-    }
-  }
-
-  return { group_ids, model_pricing, model_mapping }
-}
-
-function apiToForm(channel: Channel): PlatformSection[] {
-  // Build a map: groupID → platform
-  const groupPlatformMap = new Map<number, GroupPlatform>()
-  for (const g of allGroups.value) {
-    groupPlatformMap.set(g.id, g.platform)
-  }
-
-  // Determine which platforms are active (from groups + pricing + mapping)
-  const activePlatforms = new Set<GroupPlatform>()
-  for (const gid of channel.group_ids || []) {
-    const p = groupPlatformMap.get(gid)
-    if (p) activePlatforms.add(p)
-  }
-  for (const p of channel.model_pricing || []) {
-    if (p.platform) activePlatforms.add(p.platform as GroupPlatform)
-  }
-  for (const p of Object.keys(channel.model_mapping || {})) {
-    if (platformOrder.includes(p as GroupPlatform)) activePlatforms.add(p as GroupPlatform)
-  }
-
-  // Build sections in platform order
-  const sections: PlatformSection[] = []
-  for (const platform of platformOrder) {
-    if (!activePlatforms.has(platform)) continue
-
-    const groupIds = (channel.group_ids || []).filter(gid => groupPlatformMap.get(gid) === platform)
-    const mapping = (channel.model_mapping || {})[platform] || {}
-    const pricing = (channel.model_pricing || [])
-      .filter(p => (p.platform || 'anthropic') === platform)
-      .map(p => ({
-        models: p.models || [],
-        billing_mode: p.billing_mode,
-        input_price: perTokenToMTok(p.input_price),
-        output_price: perTokenToMTok(p.output_price),
-        cache_write_price: perTokenToMTok(p.cache_write_price),
-        cache_read_price: perTokenToMTok(p.cache_read_price),
-        image_output_price: perTokenToMTok(p.image_output_price),
-        per_request_price: p.per_request_price,
-        intervals: apiIntervalsToForm(p.intervals || [])
-      } as PricingFormEntry))
-
-    sections.push({
-      platform,
-      enabled: true,
-      collapsed: false,
-      group_ids: groupIds,
-      model_mapping: { ...mapping },
-      model_pricing: pricing
-    })
-  }
-
-  return sections
-}
 
 // ── Load data ──
 async function loadChannels() {
@@ -871,9 +559,9 @@ async function openEditDialog(channel: Channel) {
   form.status = channel.status
   form.restrict_models = channel.restrict_models || false
   form.billing_model_source = channel.billing_model_source || 'channel_mapped'
-  // Must load groups first so apiToForm can map groupID → platform
+  // Must load groups first so channelToPlatformSections can map groupID → platform
   await Promise.all([loadGroups(), loadAllChannelsForConflict()])
-  form.platforms = apiToForm(channel)
+  form.platforms = channelToPlatformSections(channel, allGroups.value)
   showDialog.value = true
 }
 
@@ -969,7 +657,7 @@ async function handleSubmit() {
     }
   }
 
-  const { group_ids, model_pricing, model_mapping } = formToAPI()
+  const { group_ids, model_pricing, model_mapping } = platformSectionsToAPI(form.platforms)
 
   submitting.value = true
   try {
