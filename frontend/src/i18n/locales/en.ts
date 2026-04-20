@@ -826,8 +826,6 @@ export default {
       imageOutputPrice: 'Image Output',
       perRequestPrice: 'Per Request',
       intervals: 'Tiered Pricing',
-      tierLabel: 'Tier',
-      tokenRange: 'Token Range',
       unitPerMillion: '/ 1M tokens',
       unitPerRequest: '/ request'
     }
@@ -1851,8 +1849,6 @@ export default {
         imageOutputPrice: 'Image Output',
         perRequestPrice: 'Per Request',
         intervals: 'Tiered Pricing',
-        tierLabel: 'Tier',
-        tokenRange: 'Token Range',
         unitPerMillion: '/ 1M tokens',
         unitPerRequest: '/ request'
       }
