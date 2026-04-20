@@ -1820,7 +1820,45 @@ export default {
         noPlatforms: 'Click "Add Platform" to start configuring the channel',
         mappingCount: 'mappings',
         pricingEntry: 'Pricing Entry',
-        noModels: 'No models added'
+        noModels: 'No models added',
+        // ── Parameter overrides (param_overrides) ──
+        paramOverrides: 'Custom Parameters',
+        paramOverridesHint: 'Rewrite request body/headers in order, after model mapping',
+        paramOverridesCount: '{count} rules',
+        noParamOverrides: 'No param override rules yet. Click "Add" to create.',
+        paramOverride: {
+          addRule: 'Add Rule',
+          enabled: 'Enabled',
+          modelGlob: 'Model glob',
+          modelGlobPlaceholder: '* or claude-*',
+          target: 'Target',
+          action: 'Action',
+          path: 'Field path',
+          pathPlaceholderBody: 'e.g. thinking.budget_tokens',
+          pathPlaceholderHeader: 'e.g. anthropic-beta',
+          value: 'Value (JSON)',
+          valuePlaceholder: 'JSON-encoded value, e.g. 2048 or "high"',
+          valueDisabledHint: 'Remove action has no value',
+          description: 'Note',
+          descriptionPlaceholder: 'Optional',
+          moveUp: 'Move up',
+          moveDown: 'Move down',
+          remove: 'Remove',
+          invalidJson: 'Value is not valid JSON',
+          reservedPath: "Reserved path '{path}' cannot be overridden",
+          mergeHeaderNotSupported: 'Merge action is not supported for headers',
+          appendBodyNotSupported: 'Append action is not supported for body',
+          targets: {
+            body: 'Body',
+            header: 'Header'
+          },
+          actions: {
+            set: 'Set',
+            merge: 'Merge',
+            remove: 'Remove',
+            append: 'Append'
+          }
+        }
       }
     },
 

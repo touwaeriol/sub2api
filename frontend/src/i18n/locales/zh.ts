@@ -1907,7 +1907,45 @@ export default {
         noPlatforms: '点击"添加平台"开始配置渠道',
         mappingCount: '条映射',
         pricingEntry: '定价配置',
-        noModels: '未添加模型'
+        noModels: '未添加模型',
+        // ── 参数覆盖（param_overrides） ──
+        paramOverrides: '自定义参数',
+        paramOverridesHint: '请求经过模型映射后，按顺序改写请求体/请求头',
+        paramOverridesCount: '{count} 条规则',
+        noParamOverrides: '暂无参数覆盖规则，点击"添加"创建',
+        paramOverride: {
+          addRule: '添加规则',
+          enabled: '启用',
+          modelGlob: '模型匹配',
+          modelGlobPlaceholder: '* 或 claude-*',
+          target: '作用对象',
+          action: '动作',
+          path: '字段路径',
+          pathPlaceholderBody: '如 thinking.budget_tokens',
+          pathPlaceholderHeader: '如 anthropic-beta',
+          value: '值（JSON）',
+          valuePlaceholder: 'JSON 格式的值，如 2048 或 "high"',
+          valueDisabledHint: '移除动作无需填写值',
+          description: '备注',
+          descriptionPlaceholder: '可选',
+          moveUp: '上移',
+          moveDown: '下移',
+          remove: '删除',
+          invalidJson: '值不是合法 JSON',
+          reservedPath: "禁止覆盖保留字段 '{path}'",
+          mergeHeaderNotSupported: '请求头不支持合并动作',
+          appendBodyNotSupported: '请求体不支持追加动作',
+          targets: {
+            body: '请求体',
+            header: '请求头'
+          },
+          actions: {
+            set: '设置',
+            merge: '合并',
+            remove: '移除',
+            append: '追加'
+          }
+        }
       }
     },
 
