@@ -166,8 +166,8 @@
             class="channel-tab group"
             :class="activeTab === section.platform ? 'channel-tab-active' : 'channel-tab-inactive'"
           >
-            <PlatformIcon :platform="section.platform" size="xs" :class="getPlatformTextColor(section.platform)" />
-            <span :class="getPlatformTextColor(section.platform)">{{ t('admin.groups.platforms.' + section.platform, section.platform) }}</span>
+            <PlatformIcon :platform="section.platform" size="xs" :class="platformTextClass(section.platform)" />
+            <span :class="platformTextClass(section.platform)">{{ t('admin.groups.platforms.' + section.platform, section.platform) }}</span>
           </button>
         </div>
 
@@ -246,8 +246,8 @@
                     class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
                     @change="togglePlatform(p)"
                   />
-                  <PlatformIcon :platform="p" size="xs" :class="getPlatformTextColor(p)" />
-                  <span :class="getPlatformTextColor(p)">{{ t('admin.groups.platforms.' + p, p) }}</span>
+                  <PlatformIcon :platform="p" size="xs" :class="platformTextClass(p)" />
+                  <span :class="platformTextClass(p)">{{ t('admin.groups.platforms.' + p, p) }}</span>
                 </label>
               </div>
             </div>
@@ -309,7 +309,8 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { Channel, CreateChannelRequest, UpdateChannelRequest } from '@/api/admin/channels'
 import type { PlatformSection } from '@/components/admin/channel/types'
-import { findModelConflict, validateIntervals, getPlatformTextColor, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections } from '@/components/admin/channel/types'
+import { findModelConflict, validateIntervals, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections } from '@/components/admin/channel/types'
+import { platformTextClass } from '@/utils/platformColors'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'

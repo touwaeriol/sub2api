@@ -32,9 +32,9 @@
               class="h-3 w-3 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
               @change="toggleGroup(group.id)"
             />
-            <span :class="['font-medium', getPlatformTextColor(group.platform)]">{{ group.name }}</span>
+            <span :class="['font-medium', platformTextClass(group.platform)]">{{ group.name }}</span>
             <span
-              :class="['rounded-full px-1 py-0 text-[10px]', getRateBadgeClass(group.platform)]"
+              :class="['rounded-full px-1 py-0 text-[10px]', platformBadgeLightClass(group.platform)]"
             >{{ group.rate_multiplier }}x</span>
             <span class="text-[10px] text-gray-400">{{ group.account_count || 0 }}</span>
             <span
@@ -70,7 +70,7 @@
             :value="srcModel"
             type="text"
             class="input flex-1 text-xs"
-            :class="getPlatformTextColor(section.platform)"
+            :class="platformTextClass(section.platform)"
             :placeholder="t('admin.channels.form.mappingSource', 'Source model')"
             @change="renameMappingKey(srcModel, ($event.target as HTMLInputElement).value)"
           />
@@ -79,7 +79,7 @@
             :value="section.model_mapping[srcModel]"
             type="text"
             class="input flex-1 text-xs"
-            :class="getPlatformTextColor(section.platform)"
+            :class="platformTextClass(section.platform)"
             :placeholder="t('admin.channels.form.mappingTarget', 'Target model')"
             @input="updateMappingValue(srcModel, ($event.target as HTMLInputElement).value)"
           />
@@ -127,7 +127,7 @@ import { useI18n } from 'vue-i18n'
 import type { AdminGroup } from '@/types'
 import type { Channel } from '@/api/admin/channels'
 import type { PlatformSection, PricingFormEntry } from './types'
-import { getPlatformTextColor, getRateBadgeClass } from './types'
+import { platformTextClass, platformBadgeLightClass } from '@/utils/platformColors'
 import Icon from '@/components/icons/Icon.vue'
 import PricingEntryCard from './PricingEntryCard.vue'
 
