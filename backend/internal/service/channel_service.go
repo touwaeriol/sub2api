@@ -10,6 +10,7 @@ import (
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 	"golang.org/x/sync/singleflight"
@@ -86,6 +87,9 @@ type channelCache struct {
 	wildcardMappingByGP     map[channelGroupPlatformKey][]*wildcardMappingEntry // (groupID, platform) → 通配符映射（前缀长度降序）
 	channelByGroupID        map[int64]*Channel                                  // groupID → 渠道
 	groupPlatform           map[int64]string                                    // groupID → platform
+
+	// 渠道级参数覆盖（编译后的规则快照，按 groupID 索引）
+	paramOverridesByGroup map[int64]*paramoverride.Compiled
 
 	// 冷路径（CRUD 操作）
 	byID     map[int64]*Channel
@@ -192,6 +196,7 @@ func newEmptyChannelCache() *channelCache {
 		wildcardMappingByGP:     make(map[channelGroupPlatformKey][]*wildcardMappingEntry),
 		channelByGroupID:        make(map[int64]*Channel),
 		groupPlatform:           make(map[int64]string),
+		paramOverridesByGroup:   make(map[int64]*paramoverride.Compiled),
 		byID:                    make(map[int64]*Channel),
 	}
 }
@@ -308,11 +313,15 @@ func populateChannelCache(channels []Channel, groupPlatforms map[int64]string) *
 	for i := range channels {
 		ch := &channels[i]
 		cache.byID[ch.ID] = ch
+		compiled := compileChannelParamOverrides(ch)
 		for _, gid := range ch.GroupIDs {
 			cache.channelByGroupID[gid] = ch
 			platform := groupPlatforms[gid]
 			expandPricingToCache(cache, ch, gid, platform)
 			expandMappingToCache(cache, ch, gid, platform)
+			if compiled != nil {
+				cache.paramOverridesByGroup[gid] = compiled
+			}
 		}
 	}
 
