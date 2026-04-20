@@ -309,7 +309,7 @@ import { useAppStore } from '@/stores/app'
 import { adminAPI } from '@/api/admin'
 import type { Channel, CreateChannelRequest, UpdateChannelRequest } from '@/api/admin/channels'
 import type { PlatformSection } from '@/components/admin/channel/types'
-import { findModelConflict, validateIntervals, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections } from '@/components/admin/channel/types'
+import { findModelConflict, validateIntervals, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections, validateParamOverrideSections } from '@/components/admin/channel/types'
 import { platformTextClass } from '@/utils/platformColors'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -658,6 +658,9 @@ async function handleSubmit() {
       }
     }
   }
+
+  const poErr = validateParamOverrideSections(form.platforms, t)
+  if (poErr) { appStore.showError(poErr.message); activeTab.value = poErr.platform; return }
 
   const { group_ids, model_pricing, model_mapping, param_overrides } = platformSectionsToAPI(form.platforms)
 
