@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 )
@@ -171,7 +172,7 @@ func TestApplyParamOverrideHeadersToRequest_CopiesAndOverrides(t *testing.T) {
 	overrides.Set("X-Api-Version", "2024-10")
 	overrides.Add("Anthropic-Beta", "feature-a,feature-b")
 
-	ctx := context.WithValue(context.Background(), paramOverrideContextKey{}, overrides)
+	ctx := paramoverride.WithHeaders(context.Background(), overrides)
 
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/upstream", nil)
 	req.Header.Set("X-Api-Version", "previous")

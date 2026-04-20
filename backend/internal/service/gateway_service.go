@@ -5698,6 +5698,11 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 		logClaudeMimicDebug(req, body, account, tokenType, mimicClaudeCode)
 	}
 
+	// Channel-level header overrides take final precedence over Beta policy /
+	// fingerprint defaults, so users can set arbitrary headers regardless of
+	// the allow-list above.
+	ApplyParamOverrideHeadersToRequest(ctx, req)
+
 	return req, nil
 }
 

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyutil"
 )
@@ -47,6 +48,10 @@ func NewAPIRequestWithURL(ctx context.Context, baseURL, action, accessToken stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("User-Agent", GetUserAgent())
+
+	// 渠道级 header 覆盖（最高优先级）：上游 header 完全重建后再叠加，
+	// 让用户配置的 header 不被基础 3 个默认 header 覆盖。
+	paramoverride.ApplyContextHeadersToRequest(req)
 
 	return req, nil
 }

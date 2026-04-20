@@ -3246,6 +3246,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 		req.Header.Set("content-type", "application/json")
 	}
 
+	// Channel-level header overrides take final precedence so users can set
+	// arbitrary headers regardless of the openaiAllowedHeaders allow-list.
+	ApplyParamOverrideHeadersToRequest(ctx, req)
+
 	return req, nil
 }
 

@@ -9,20 +9,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// paramOverrideContextKey is the unexported context key under which compiled
-// override headers are stored for downstream upstream-request builders.
-type paramOverrideContextKey struct{}
-
-// ParamOverrideHeadersGinKey is the gin.Context key used to mirror the
-// override headers map. Defined as a string constant so handlers/tests can
-// reference it without importing private types.
+// ParamOverrideHeadersGinKey is the gin.Context key under which the published
+// override headers are mirrored. Defined as a string constant so handlers and
+// tests can reference it without importing private types.
 const ParamOverrideHeadersGinKey = "paramOverrideHeaders"
 
 // ApplyParamOverrides mutates the outgoing request body according to the
 // channel-level override rules associated with the caller's group, and
 // publishes any header-targeted overrides through the request context so that
 // the upstream-request builders (which rebuild the wire request) can apply
-// them past their own header whitelists.
+// them past their own header allow-lists.
 //
 // groupID nil -> the caller is not associated with any channel. The function
 // returns the body unchanged and does not touch the context.
@@ -31,10 +27,10 @@ const ParamOverrideHeadersGinKey = "paramOverrideHeaders"
 // buffer produced by sjson; callers should replace their reference.
 //
 // When c is non-nil, header overrides are stored on c.Request.Context() AND
-// the gin.Context store, and c.Request is rewritten with the new context so
-// that downstream service code calling c.Request.Context() observes them.
-// Passing c=nil disables header propagation entirely (body-only mutations
-// still apply).
+// the gin store, and c.Request is rewritten with the new context so that
+// downstream service code calling c.Request.Context() observes them. Passing
+// c=nil disables header propagation entirely (body-only mutations still
+// apply).
 func (s *ChannelService) ApplyParamOverrides(
 	ctx context.Context,
 	c *gin.Context,
@@ -61,7 +57,7 @@ func (s *ChannelService) ApplyParamOverrides(
 // publishHeaderOverrides applies header rules into a fresh http.Header and
 // stores it on both the request context and the gin store so that upstream
 // builders (Anthropic / OpenAI / Antigravity) can re-apply them past their
-// own header whitelists.
+// own header allow-lists.
 func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) {
 	if c == nil || c.Request == nil {
 		return
@@ -72,30 +68,29 @@ func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) 
 		return
 	}
 	c.Set(ParamOverrideHeadersGinKey, headers)
-	newCtx := context.WithValue(c.Request.Context(), paramOverrideContextKey{}, headers)
-	c.Request = c.Request.WithContext(newCtx)
+	c.Request = c.Request.WithContext(paramoverride.WithHeaders(c.Request.Context(), headers))
 }
 
-// ParamOverrideHeadersFromContext returns the override headers stored on the
-// given context, or nil when none were published. Callers must not mutate
-// the returned map (it is shared across the request lifecycle).
+// ParamOverrideHeadersFromContext is a thin re-export of
+// paramoverride.HeadersFromContext so callers in the service layer can
+// inspect the published overrides without importing the low-level package.
 func ParamOverrideHeadersFromContext(ctx context.Context) http.Header {
-	if ctx == nil {
-		return nil
-	}
-	h, _ := ctx.Value(paramOverrideContextKey{}).(http.Header)
-	return h
+	return paramoverride.HeadersFromContext(ctx)
 }
 
-// ApplyParamOverrideHeadersToRequest copies the override headers stored on
-// ctx onto req.Header, replacing any existing values. This is the canonical
-// hook used by all upstream-request builders to ensure user-configured
-// header overrides are not silently dropped by per-platform allow-lists.
+// ApplyParamOverrideHeadersToRequest is a thin re-export of
+// paramoverride.ApplyContextHeadersToRequest. It copies the override headers
+// stored on ctx onto req.Header, replacing any existing values.
 func ApplyParamOverrideHeadersToRequest(ctx context.Context, req *http.Request) {
 	if req == nil {
 		return
 	}
-	overrides := ParamOverrideHeadersFromContext(ctx)
+	// Use req's own context if the caller passed it as the source; this
+	// matches paramoverride.ApplyContextHeadersToRequest's behaviour.
+	if ctx == nil {
+		ctx = req.Context()
+	}
+	overrides := paramoverride.HeadersFromContext(ctx)
 	if len(overrides) == 0 {
 		return
 	}
