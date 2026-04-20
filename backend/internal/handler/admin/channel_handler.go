@@ -304,6 +304,9 @@ func validateParamOverrideRule(r service.ChannelParamOverrideRule) string {
 	if r.Action == service.ParamOverrideActionAppend && r.Target != service.ParamOverrideTargetHeader {
 		return "append_requires_header_target"
 	}
+	if r.Action == service.ParamOverrideActionMerge && r.Target == service.ParamOverrideTargetHeader {
+		return "merge_not_supported_for_header"
+	}
 	if r.Path == "" {
 		return "path_required"
 	}

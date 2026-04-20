@@ -152,3 +152,38 @@ func TestApplyToBodyBytes_SetNull(t *testing.T) {
 		t.Fatalf("expected null, got %s", gjson.GetBytes(out, "thinking").Raw)
 	}
 }
+
+// TestApplyToBodyBytes_LastWriteWins verifies that when multiple rules target
+// the same path, the later rule in the input order wins. This pins the
+// "rules are applied in declared order, no priority field" contract.
+func TestApplyToBodyBytes_LastWriteWins(t *testing.T) {
+	body := []byte(`{}`)
+	rules := mustCompile(t, []Rule{
+		{Enabled: true, Target: TargetBody, Action: ActionSet, Path: "thinking.budget_tokens", Value: json.RawMessage(`1`)},
+		{Enabled: true, Target: TargetBody, Action: ActionSet, Path: "thinking.budget_tokens", Value: json.RawMessage(`2`)},
+		{Enabled: true, Target: TargetBody, Action: ActionSet, Path: "thinking.budget_tokens", Value: json.RawMessage(`3`)},
+	})
+	out := ApplyToBodyBytes(body, rules)
+	if got := gjson.GetBytes(out, "thinking.budget_tokens").Int(); got != 3 {
+		t.Fatalf("expected last rule to win (3), got %d", got)
+	}
+}
+
+// TestApplyToBodyBytes_OrderedChainSetThenMerge verifies that a Set followed
+// by a Merge on the same object path stacks correctly: the Set seeds the
+// object and the Merge layers additional fields on top without losing the
+// seed. This is the typical "initialize then adjust" pattern.
+func TestApplyToBodyBytes_OrderedChainSetThenMerge(t *testing.T) {
+	body := []byte(`{}`)
+	rules := mustCompile(t, []Rule{
+		{Enabled: true, Target: TargetBody, Action: ActionSet, Path: "thinking", Value: json.RawMessage(`{"budget_tokens":1024,"type":"enabled"}`)},
+		{Enabled: true, Target: TargetBody, Action: ActionMerge, Path: "thinking", Value: json.RawMessage(`{"budget_tokens":2048}`)},
+	})
+	out := ApplyToBodyBytes(body, rules)
+	if got := gjson.GetBytes(out, "thinking.budget_tokens").Int(); got != 2048 {
+		t.Fatalf("expected merged budget_tokens=2048, got %d", got)
+	}
+	if got := gjson.GetBytes(out, "thinking.type").String(); got != "enabled" {
+		t.Fatalf("expected type preserved by merge, got %q", got)
+	}
+}
