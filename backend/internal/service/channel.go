@@ -1,10 +1,13 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 )
 
 // BillingMode 计费模式
@@ -31,6 +34,93 @@ const (
 	BillingModelSourceChannelMapped = "channel_mapped"
 )
 
+// Parameter override rule targets and actions. These mirror the authoritative
+// constants in the paramoverride package so that callers in the service /
+// handler layer can reference them without importing the low-level package.
+const (
+	ParamOverrideTargetBody   = paramoverride.TargetBody
+	ParamOverrideTargetHeader = paramoverride.TargetHeader
+
+	ParamOverrideActionSet    = paramoverride.ActionSet
+	ParamOverrideActionMerge  = paramoverride.ActionMerge
+	ParamOverrideActionRemove = paramoverride.ActionRemove
+	ParamOverrideActionAppend = paramoverride.ActionAppend
+
+	ParamOverrideMaxRulesPerPlatform = paramoverride.MaxRulesPerPlatform
+	ParamOverrideMaxModelGlobLength  = paramoverride.MaxModelGlobLength
+	ParamOverrideMaxPathLength       = paramoverride.MaxPathLength
+)
+
+// ChannelParamOverrideRule is the service-layer representation of a single
+// override rule. It is serialized directly to/from the channels.param_overrides
+// JSONB column via the standard encoding/json tags.
+type ChannelParamOverrideRule struct {
+	Enabled     bool            `json:"enabled"`
+	ModelGlob   string          `json:"model_glob"`
+	Target      string          `json:"target"`
+	Action      string          `json:"action"`
+	Path        string          `json:"path"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Description string          `json:"description,omitempty"`
+}
+
+// ChannelParamOverrides maps platform → ordered rule list. The slice order is
+// the application order; compilation preserves it.
+type ChannelParamOverrides map[string][]ChannelParamOverrideRule
+
+// ToParamOverrideRule converts a service-layer rule into the representation
+// consumed by the paramoverride package.
+func (r ChannelParamOverrideRule) ToParamOverrideRule() paramoverride.Rule {
+	return paramoverride.Rule{
+		Enabled:     r.Enabled,
+		ModelGlob:   r.ModelGlob,
+		Target:      r.Target,
+		Action:      r.Action,
+		Path:        r.Path,
+		Value:       r.Value,
+		Description: r.Description,
+	}
+}
+
+// ToParamOverrideRules converts a map of service-layer rules into the
+// map[string][]paramoverride.Rule input expected by paramoverride.Compile.
+func (o ChannelParamOverrides) ToParamOverrideRules() map[string][]paramoverride.Rule {
+	if len(o) == 0 {
+		return nil
+	}
+	out := make(map[string][]paramoverride.Rule, len(o))
+	for platform, rules := range o {
+		converted := make([]paramoverride.Rule, 0, len(rules))
+		for _, r := range rules {
+			converted = append(converted, r.ToParamOverrideRule())
+		}
+		out[platform] = converted
+	}
+	return out
+}
+
+// Clone returns a deep copy of the override map so callers can mutate the
+// result without aliasing the stored snapshot.
+func (o ChannelParamOverrides) Clone() ChannelParamOverrides {
+	if o == nil {
+		return nil
+	}
+	out := make(ChannelParamOverrides, len(o))
+	for platform, rules := range o {
+		copied := make([]ChannelParamOverrideRule, len(rules))
+		for i, r := range rules {
+			cp := r
+			if r.Value != nil {
+				cp.Value = make(json.RawMessage, len(r.Value))
+				copy(cp.Value, r.Value)
+			}
+			copied[i] = cp
+		}
+		out[platform] = copied
+	}
+	return out
+}
+
 // Channel 渠道实体
 type Channel struct {
 	ID                 int64
@@ -49,6 +139,8 @@ type Channel struct {
 	ModelPricing []ChannelModelPricing
 	// 渠道级模型映射（按平台分组：platform → {src→dst}）
 	ModelMapping map[string]map[string]string
+	// 渠道级参数覆盖（按平台分组，rule 数组顺序即应用顺序）
+	ParamOverrides ChannelParamOverrides
 }
 
 // ChannelModelPricing 渠道模型定价条目
@@ -177,6 +269,7 @@ func (c *Channel) Clone() *Channel {
 			cp.ModelMapping[platform] = inner
 		}
 	}
+	cp.ParamOverrides = c.ParamOverrides.Clone()
 	return &cp
 }
 
