@@ -579,6 +579,7 @@ func (s *ChannelService) Create(ctx context.Context, input *CreateChannelInput) 
 		GroupIDs:           input.GroupIDs,
 		ModelPricing:       input.ModelPricing,
 		ModelMapping:       input.ModelMapping,
+		ParamOverrides:     input.ParamOverrides,
 		Features:           input.Features,
 	}
 	if channel.BillingModelSource == "" {
@@ -665,6 +666,9 @@ func (s *ChannelService) applyUpdateInput(ctx context.Context, channel *Channel,
 	if input.ModelMapping != nil {
 		channel.ModelMapping = input.ModelMapping
 	}
+	if input.ParamOverrides != nil {
+		channel.ParamOverrides = *input.ParamOverrides
+	}
 	if input.BillingModelSource != "" {
 		channel.BillingModelSource = input.BillingModelSource
 	}
@@ -747,6 +751,7 @@ type CreateChannelInput struct {
 	GroupIDs           []int64
 	ModelPricing       []ChannelModelPricing
 	ModelMapping       map[string]map[string]string // platform → {src→dst}
+	ParamOverrides     ChannelParamOverrides
 	BillingModelSource string
 	RestrictModels     bool
 	Features           string
@@ -760,6 +765,7 @@ type UpdateChannelInput struct {
 	GroupIDs           *[]int64
 	ModelPricing       *[]ChannelModelPricing
 	ModelMapping       map[string]map[string]string // platform → {src→dst}
+	ParamOverrides     *ChannelParamOverrides       // 指针区分"未提供 vs 空映射"
 	BillingModelSource string
 	RestrictModels     *bool
 	Features           *string

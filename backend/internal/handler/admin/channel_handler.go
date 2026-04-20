@@ -1,6 +1,8 @@
 package admin
 
 import (
+	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -26,26 +28,56 @@ func NewChannelHandler(channelService *service.ChannelService, billingService *s
 // --- Request / Response types ---
 
 type createChannelRequest struct {
-	Name               string                       `json:"name" binding:"required,max=100"`
-	Description        string                       `json:"description"`
-	GroupIDs           []int64                      `json:"group_ids"`
-	ModelPricing       []channelModelPricingRequest `json:"model_pricing"`
-	ModelMapping       map[string]map[string]string `json:"model_mapping"`
-	BillingModelSource string                       `json:"billing_model_source" binding:"omitempty,oneof=requested upstream channel_mapped"`
-	RestrictModels     bool                         `json:"restrict_models"`
-	Features           string                       `json:"features"`
+	Name               string                                `json:"name" binding:"required,max=100"`
+	Description        string                                `json:"description"`
+	GroupIDs           []int64                               `json:"group_ids"`
+	ModelPricing       []channelModelPricingRequest          `json:"model_pricing"`
+	ModelMapping       map[string]map[string]string          `json:"model_mapping"`
+	ParamOverrides     map[string][]paramOverrideRuleRequest `json:"param_overrides"`
+	BillingModelSource string                                `json:"billing_model_source" binding:"omitempty,oneof=requested upstream channel_mapped"`
+	RestrictModels     bool                                  `json:"restrict_models"`
+	Features           string                                `json:"features"`
 }
 
 type updateChannelRequest struct {
-	Name               string                        `json:"name" binding:"omitempty,max=100"`
-	Description        *string                       `json:"description"`
-	Status             string                        `json:"status" binding:"omitempty,oneof=active disabled"`
-	GroupIDs           *[]int64                      `json:"group_ids"`
-	ModelPricing       *[]channelModelPricingRequest `json:"model_pricing"`
-	ModelMapping       map[string]map[string]string  `json:"model_mapping"`
-	BillingModelSource string                        `json:"billing_model_source" binding:"omitempty,oneof=requested upstream channel_mapped"`
-	RestrictModels     *bool                         `json:"restrict_models"`
-	Features           *string                       `json:"features"`
+	Name               string                                 `json:"name" binding:"omitempty,max=100"`
+	Description        *string                                `json:"description"`
+	Status             string                                 `json:"status" binding:"omitempty,oneof=active disabled"`
+	GroupIDs           *[]int64                               `json:"group_ids"`
+	ModelPricing       *[]channelModelPricingRequest          `json:"model_pricing"`
+	ModelMapping       map[string]map[string]string           `json:"model_mapping"`
+	ParamOverrides     *map[string][]paramOverrideRuleRequest `json:"param_overrides"`
+	BillingModelSource string                                 `json:"billing_model_source" binding:"omitempty,oneof=requested upstream channel_mapped"`
+	RestrictModels     *bool                                  `json:"restrict_models"`
+	Features           *string                                `json:"features"`
+}
+
+// paramOverrideRuleRequest mirrors service.ChannelParamOverrideRule for inbound
+// admin API payloads. Validation is performed explicitly (see
+// validateParamOverrideRules) because cross-field constraints (append only for
+// header, value required unless action=remove) are not expressible with the
+// struct tag validator.
+type paramOverrideRuleRequest struct {
+	Enabled     *bool           `json:"enabled"`
+	ModelGlob   string          `json:"model_glob"`
+	Target      string          `json:"target"`
+	Action      string          `json:"action"`
+	Path        string          `json:"path"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Description string          `json:"description,omitempty"`
+}
+
+// paramOverrideRuleResponse is the outbound counterpart. Enabled is returned
+// as a concrete bool (not a pointer) because clients should always see the
+// effective state.
+type paramOverrideRuleResponse struct {
+	Enabled     bool            `json:"enabled"`
+	ModelGlob   string          `json:"model_glob"`
+	Target      string          `json:"target"`
+	Action      string          `json:"action"`
+	Path        string          `json:"path"`
+	Value       json.RawMessage `json:"value,omitempty"`
+	Description string          `json:"description,omitempty"`
 }
 
 type channelModelPricingRequest struct {
@@ -74,18 +106,19 @@ type pricingIntervalRequest struct {
 }
 
 type channelResponse struct {
-	ID                 int64                         `json:"id"`
-	Name               string                        `json:"name"`
-	Description        string                        `json:"description"`
-	Status             string                        `json:"status"`
-	BillingModelSource string                        `json:"billing_model_source"`
-	RestrictModels     bool                          `json:"restrict_models"`
-	Features           string                        `json:"features"`
-	GroupIDs           []int64                       `json:"group_ids"`
-	ModelPricing       []channelModelPricingResponse `json:"model_pricing"`
-	ModelMapping       map[string]map[string]string  `json:"model_mapping"`
-	CreatedAt          string                        `json:"created_at"`
-	UpdatedAt          string                        `json:"updated_at"`
+	ID                 int64                                  `json:"id"`
+	Name               string                                 `json:"name"`
+	Description        string                                 `json:"description"`
+	Status             string                                 `json:"status"`
+	BillingModelSource string                                 `json:"billing_model_source"`
+	RestrictModels     bool                                   `json:"restrict_models"`
+	Features           string                                 `json:"features"`
+	GroupIDs           []int64                                `json:"group_ids"`
+	ModelPricing       []channelModelPricingResponse          `json:"model_pricing"`
+	ModelMapping       map[string]map[string]string           `json:"model_mapping"`
+	ParamOverrides     map[string][]paramOverrideRuleResponse `json:"param_overrides"`
+	CreatedAt          string                                 `json:"created_at"`
+	UpdatedAt          string                                 `json:"updated_at"`
 }
 
 type channelModelPricingResponse struct {
@@ -141,6 +174,7 @@ func channelToResponse(ch *service.Channel) *channelResponse {
 	if resp.ModelMapping == nil {
 		resp.ModelMapping = map[string]map[string]string{}
 	}
+	resp.ParamOverrides = paramOverridesToResponse(ch.ParamOverrides)
 
 	resp.ModelPricing = make([]channelModelPricingResponse, 0, len(ch.ModelPricing))
 	for _, p := range ch.ModelPricing {
@@ -194,6 +228,132 @@ func intervalToResponse(iv service.PricingInterval) pricingIntervalResponse {
 		PerRequestPrice: iv.PerRequestPrice,
 		SortOrder:       iv.SortOrder,
 	}
+}
+
+// paramOverridesRequestToService converts the admin-API request map into the
+// service-layer representation. The second return value carries a structured
+// error when a rule fails validation; callers must surface it before the
+// service call.
+func paramOverridesRequestToService(req map[string][]paramOverrideRuleRequest) (service.ChannelParamOverrides, error) {
+	if len(req) == 0 {
+		return nil, nil
+	}
+	out := make(service.ChannelParamOverrides, len(req))
+	for platform, rules := range req {
+		if len(rules) > service.ParamOverrideMaxRulesPerPlatform {
+			return nil, infraerrors.BadRequest("PARAM_OVERRIDE_INVALID",
+				"too many rules for platform").
+				WithMetadata(map[string]string{
+					"platform": platform,
+					"count":    strconv.Itoa(len(rules)),
+					"max":      strconv.Itoa(service.ParamOverrideMaxRulesPerPlatform),
+					"reason":   "too_many_rules",
+				})
+		}
+		converted := make([]service.ChannelParamOverrideRule, 0, len(rules))
+		for idx, r := range rules {
+			svcRule, err := paramOverrideRuleRequestToService(platform, idx, r)
+			if err != nil {
+				return nil, err
+			}
+			converted = append(converted, svcRule)
+		}
+		out[platform] = converted
+	}
+	return out, nil
+}
+
+// paramOverrideRuleRequestToService converts a single request rule, applying
+// default Enabled=true semantics and validating the cross-field constraints.
+func paramOverrideRuleRequestToService(platform string, idx int, r paramOverrideRuleRequest) (service.ChannelParamOverrideRule, error) {
+	enabled := true
+	if r.Enabled != nil {
+		enabled = *r.Enabled
+	}
+	svcRule := service.ChannelParamOverrideRule{
+		Enabled:     enabled,
+		ModelGlob:   r.ModelGlob,
+		Target:      r.Target,
+		Action:      r.Action,
+		Path:        r.Path,
+		Value:       r.Value,
+		Description: r.Description,
+	}
+	if reason := validateParamOverrideRule(svcRule); reason != "" {
+		return service.ChannelParamOverrideRule{}, paramOverrideRuleError(platform, idx, reason)
+	}
+	return svcRule, nil
+}
+
+// validateParamOverrideRule checks the static shape of a single rule and
+// returns an empty string when valid, or a short reason code otherwise.
+// The reason is meant for the error details metadata; the full message is
+// built by paramOverrideRuleError.
+func validateParamOverrideRule(r service.ChannelParamOverrideRule) string {
+	switch r.Target {
+	case service.ParamOverrideTargetBody, service.ParamOverrideTargetHeader:
+	default:
+		return "invalid_target"
+	}
+	switch r.Action {
+	case service.ParamOverrideActionSet, service.ParamOverrideActionMerge,
+		service.ParamOverrideActionRemove, service.ParamOverrideActionAppend:
+	default:
+		return "invalid_action"
+	}
+	if r.Action == service.ParamOverrideActionAppend && r.Target != service.ParamOverrideTargetHeader {
+		return "append_requires_header_target"
+	}
+	if r.Path == "" {
+		return "path_required"
+	}
+	if len(r.Path) > service.ParamOverrideMaxPathLength {
+		return "path_too_long"
+	}
+	if r.Target == service.ParamOverrideTargetBody && r.Path == "model" {
+		return "path_model_reserved"
+	}
+	if len(r.ModelGlob) > service.ParamOverrideMaxModelGlobLength {
+		return "model_glob_too_long"
+	}
+	if r.Action != service.ParamOverrideActionRemove && len(r.Value) == 0 {
+		return "value_required"
+	}
+	return ""
+}
+
+// paramOverrideRuleError returns a structured infraerror for a rejected rule.
+func paramOverrideRuleError(platform string, idx int, reason string) error {
+	return infraerrors.BadRequest("PARAM_OVERRIDE_INVALID",
+		fmt.Sprintf("invalid param override rule (platform=%s, index=%d, reason=%s)", platform, idx, reason)).
+		WithMetadata(map[string]string{
+			"platform":   platform,
+			"rule_index": strconv.Itoa(idx),
+			"reason":     reason,
+		})
+}
+
+// paramOverridesToResponse converts the service-layer override map into the
+// outbound response type, substituting an empty map for nil so the JSON
+// payload is always a well-formed object.
+func paramOverridesToResponse(overrides service.ChannelParamOverrides) map[string][]paramOverrideRuleResponse {
+	out := make(map[string][]paramOverrideRuleResponse, len(overrides))
+	for platform, rules := range overrides {
+		items := make([]paramOverrideRuleResponse, 0, len(rules))
+		for _, r := range rules {
+			items = append(items, paramOverrideRuleResponse{
+				Enabled:     r.Enabled,
+				ModelGlob:   r.ModelGlob,
+				Target:      r.Target,
+				Action:      r.Action,
+				Path:        r.Path,
+				Value:       r.Value,
+				Description: r.Description,
+			})
+		}
+		out[platform] = items
+	}
+	return out
 }
 
 func pricingRequestToService(reqs []channelModelPricingRequest) []service.ChannelModelPricing {
@@ -296,12 +456,19 @@ func (h *ChannelHandler) Create(c *gin.Context) {
 
 	pricing := pricingRequestToService(req.ModelPricing)
 
+	paramOverrides, err := paramOverridesRequestToService(req.ParamOverrides)
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
 	channel, err := h.channelService.Create(c.Request.Context(), &service.CreateChannelInput{
 		Name:               req.Name,
 		Description:        req.Description,
 		GroupIDs:           req.GroupIDs,
 		ModelPricing:       pricing,
 		ModelMapping:       req.ModelMapping,
+		ParamOverrides:     paramOverrides,
 		BillingModelSource: req.BillingModelSource,
 		RestrictModels:     req.RestrictModels,
 		Features:           req.Features,
@@ -342,6 +509,14 @@ func (h *ChannelHandler) Update(c *gin.Context) {
 	if req.ModelPricing != nil {
 		pricing := pricingRequestToService(*req.ModelPricing)
 		input.ModelPricing = &pricing
+	}
+	if req.ParamOverrides != nil {
+		paramOverrides, err := paramOverridesRequestToService(*req.ParamOverrides)
+		if err != nil {
+			response.ErrorFrom(c, err)
+			return
+		}
+		input.ParamOverrides = &paramOverrides
 	}
 
 	channel, err := h.channelService.Update(c.Request.Context(), id, input)
