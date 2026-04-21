@@ -10,8 +10,8 @@
         :value="rule.model_glob"
         type="text"
         class="input w-32 text-xs"
-        :placeholder="t('admin.channels.form.paramOverride.modelGlobPlaceholder', '* 或 claude-*')"
-        :aria-label="t('admin.channels.form.paramOverride.modelGlob', 'Model glob')"
+        :placeholder="t('admin.channels.form.paramOverride.modelGlobPlaceholder')"
+        :aria-label="t('admin.channels.form.paramOverride.modelGlob')"
         @input="emitField('model_glob', ($event.target as HTMLInputElement).value)"
       />
 
@@ -33,7 +33,8 @@
         <button
           type="button"
           class="rounded p-1 text-gray-400 hover:text-red-500"
-          :title="t('admin.channels.form.paramOverride.remove', '删除')"
+          :title="t('admin.channels.form.paramOverride.remove')"
+          :aria-label="t('admin.channels.form.paramOverride.remove')"
           @click="emit('remove')"
         >
           <Icon name="trash" size="sm" />
@@ -45,7 +46,7 @@
     <div class="mt-2 grid grid-cols-1 gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)]">
       <div>
         <label class="input-label text-[11px] mb-1">
-          {{ t('admin.channels.form.paramOverride.path', '字段路径') }}
+          {{ t('admin.channels.form.paramOverride.path') }}
         </label>
         <input
           :value="rule.path"
@@ -58,41 +59,41 @@
         <datalist :id="pathListId">
           <option v-for="preset in pathPresets" :key="preset" :value="preset" />
         </datalist>
-        <p v-if="reservedPathError" class="mt-1 text-[11px] text-red-500">
-          {{ reservedPathError }}
+        <p v-if="warnings.reservedPathError" class="mt-1 text-[11px] text-red-500">
+          {{ warnings.reservedPathError }}
         </p>
       </div>
 
       <div>
         <label class="input-label text-[11px] mb-1">
-          {{ t('admin.channels.form.paramOverride.value', '值 (JSON)') }}
+          {{ t('admin.channels.form.paramOverride.value') }}
         </label>
         <textarea
           :value="valueText"
           rows="2"
           class="input text-xs font-mono"
           :disabled="isValueDisabled"
-          :placeholder="t('admin.channels.form.paramOverride.valuePlaceholder', 'JSON 格式的值')"
+          :placeholder="t('admin.channels.form.paramOverride.valuePlaceholder')"
           @input="onValueInput(($event.target as HTMLTextAreaElement).value)"
         ></textarea>
         <p v-if="isValueDisabled" class="mt-1 text-[11px] text-gray-400">
-          {{ t('admin.channels.form.paramOverride.valueDisabledHint', '移除动作无需填写值') }}
+          {{ t('admin.channels.form.paramOverride.valueDisabledHint') }}
         </p>
         <p v-else-if="jsonError" class="mt-1 text-[11px] text-red-500">
-          {{ t('admin.channels.form.paramOverride.invalidJson', '值不是合法 JSON') }}
+          {{ t('admin.channels.form.paramOverride.invalidJson') }}
         </p>
-        <p v-else-if="nullValueWarning" class="mt-1 text-[11px] text-red-500">
-          {{ nullValueWarning }}
+        <p v-else-if="warnings.nullValueWarning" class="mt-1 text-[11px] text-red-500">
+          {{ warnings.nullValueWarning }}
         </p>
       </div>
     </div>
 
     <!-- Incompatible combo warnings (action/target) -->
-    <p v-if="mergeHeaderWarning" class="mt-2 text-[11px] text-red-500">
-      {{ mergeHeaderWarning }}
+    <p v-if="warnings.mergeHeaderWarning" class="mt-2 text-[11px] text-red-500">
+      {{ warnings.mergeHeaderWarning }}
     </p>
-    <p v-else-if="appendBodyWarning" class="mt-2 text-[11px] text-red-500">
-      {{ appendBodyWarning }}
+    <p v-else-if="warnings.appendBodyWarning" class="mt-2 text-[11px] text-red-500">
+      {{ warnings.appendBodyWarning }}
     </p>
 
     <!-- Description -->
@@ -101,8 +102,8 @@
         :value="rule.description"
         type="text"
         class="input text-xs"
-        :placeholder="t('admin.channels.form.paramOverride.descriptionPlaceholder', '可选备注')"
-        :aria-label="t('admin.channels.form.paramOverride.description', '备注')"
+        :placeholder="t('admin.channels.form.paramOverride.descriptionPlaceholder')"
+        :aria-label="t('admin.channels.form.paramOverride.description')"
         @input="emitField('description', ($event.target as HTMLInputElement).value)"
       />
     </div>
@@ -118,18 +119,14 @@ import Icon from '@/components/icons/Icon.vue'
 import {
   PARAM_OVERRIDE_ACTIONS,
   PARAM_OVERRIDE_TARGETS,
-  TARGET_BODY,
   TARGET_HEADER,
-  ACTION_MERGE,
   ACTION_REMOVE,
-  ACTION_APPEND,
   type ParamOverrideAction,
   type ParamOverrideTarget,
   BODY_PATH_PRESETS,
   HEADER_KEY_PRESETS,
-  RESERVED_BODY_PATHS,
 } from './paramOverrideConstants'
-import { parseJsonValue, stringifyValue } from './paramOverrideHelpers'
+import { computeRuleWarnings, parseJsonValue, stringifyValue } from './paramOverrideHelpers'
 import type { ChannelParamOverrideRule } from '@/api/admin/channels'
 
 const { t } = useI18n()
@@ -149,13 +146,13 @@ const emit = defineEmits<{
 const targetOptions = computed(() =>
   PARAM_OVERRIDE_TARGETS.map(v => ({
     value: v,
-    label: t(`admin.channels.form.paramOverride.targets.${v}`, v),
+    label: t(`admin.channels.form.paramOverride.targets.${v}`),
   })),
 )
 const actionOptions = computed(() =>
   PARAM_OVERRIDE_ACTIONS.map(v => ({
     value: v,
-    label: t(`admin.channels.form.paramOverride.actions.${v}`, v),
+    label: t(`admin.channels.form.paramOverride.actions.${v}`),
   })),
 )
 
@@ -167,8 +164,8 @@ const pathPresets = computed<readonly string[]>(() => {
 })
 const pathPlaceholder = computed(() =>
   props.rule.target === TARGET_HEADER
-    ? t('admin.channels.form.paramOverride.pathPlaceholderHeader', 'e.g. anthropic-beta')
-    : t('admin.channels.form.paramOverride.pathPlaceholderBody', 'e.g. thinking.budget_tokens'),
+    ? t('admin.channels.form.paramOverride.pathPlaceholderHeader')
+    : t('admin.channels.form.paramOverride.pathPlaceholderBody'),
 )
 
 // ── Value editor (local text state + parse validation) ──
@@ -200,31 +197,10 @@ function onValueInput(text: string) {
 }
 
 // ── Validation warnings (displayed inline; backend still authoritative) ──
-const reservedPathError = computed<string | null>(() => {
-  if (props.rule.target !== TARGET_BODY) return null
-  if (!(RESERVED_BODY_PATHS as readonly string[]).includes(props.rule.path)) return null
-  return t('admin.channels.form.paramOverride.reservedPath', { path: props.rule.path })
-})
-
-const mergeHeaderWarning = computed<string | null>(() =>
-  props.rule.action === ACTION_MERGE && props.rule.target === TARGET_HEADER
-    ? t('admin.channels.form.paramOverride.mergeHeaderNotSupported', 'Merge not supported for headers')
-    : null,
-)
-
-const appendBodyWarning = computed<string | null>(() =>
-  props.rule.action === ACTION_APPEND && props.rule.target === TARGET_BODY
-    ? t('admin.channels.form.paramOverride.appendBodyNotSupported', 'Append not supported for body')
-    : null,
-)
-
-// Non-remove actions + value == null: prompt the user to switch to Remove.
-// Mirrors the backend paramOverrideReasonValueNullUseRemove check.
-const nullValueWarning = computed<string | null>(() => {
-  if (props.rule.action === ACTION_REMOVE) return null
-  if (props.rule.value !== null) return null
-  return t('admin.channels.form.paramOverride.valueNullUseRemove')
-})
+// All four static-shape warnings are computed by computeRuleWarnings so the
+// logic can be unit-tested as a pure function and the component stays under
+// the 220-line soft cap.
+const warnings = computed(() => computeRuleWarnings(props.rule, t))
 
 // ── Field emitters ──
 function emitField<K extends keyof ChannelParamOverrideRule>(field: K, value: ChannelParamOverrideRule[K]) {

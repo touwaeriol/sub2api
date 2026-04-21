@@ -3,7 +3,7 @@
     <div class="mb-1 flex items-center justify-between">
       <div class="flex flex-col">
         <label class="input-label text-xs mb-0">
-          {{ t('admin.channels.form.paramOverrides', '自定义参数') }}
+          {{ t('admin.channels.form.paramOverrides') }}
           <span
             v-if="rules.length > 0"
             class="ml-1 font-normal text-gray-400"
@@ -12,7 +12,7 @@
           </span>
         </label>
         <p class="mt-0.5 text-[11px] text-gray-400">
-          {{ t('admin.channels.form.paramOverridesHint', '请求经过模型映射后，按顺序改写请求体/请求头') }}
+          {{ t('admin.channels.form.paramOverridesHint') }}
         </p>
       </div>
       <button
@@ -20,7 +20,7 @@
         class="text-xs text-primary-600 hover:text-primary-700"
         @click="addRule"
       >
-        + {{ t('admin.channels.form.paramOverride.addRule', '添加规则') }}
+        + {{ t('admin.channels.form.paramOverride.addRule') }}
       </button>
     </div>
 
@@ -28,7 +28,7 @@
       v-if="rules.length === 0"
       class="rounded border border-dashed border-gray-300 p-2 text-center text-xs text-gray-400 dark:border-dark-500"
     >
-      {{ t('admin.channels.form.noParamOverrides', '暂无参数覆盖规则，点击"添加"创建') }}
+      {{ t('admin.channels.form.noParamOverrides') }}
     </div>
 
     <div v-else class="space-y-2">
@@ -50,7 +50,8 @@
             type="button"
             class="rounded p-0.5 text-gray-300 hover:text-primary-500 disabled:opacity-20"
             :disabled="idx === 0"
-            :title="t('admin.channels.form.paramOverride.moveUp', '上移')"
+            :title="t('admin.channels.form.paramOverride.moveUp')"
+            :aria-label="t('admin.channels.form.paramOverride.moveUp')"
             @click="moveRule(idx, idx - 1)"
           >
             <Icon name="chevronUp" size="sm" />
@@ -59,7 +60,8 @@
             type="button"
             class="rounded p-0.5 text-gray-300 hover:text-primary-500 disabled:opacity-20"
             :disabled="idx === rules.length - 1"
-            :title="t('admin.channels.form.paramOverride.moveDown', '下移')"
+            :title="t('admin.channels.form.paramOverride.moveDown')"
+            :aria-label="t('admin.channels.form.paramOverride.moveDown')"
             @click="moveRule(idx, idx + 1)"
           >
             <Icon name="chevronDown" size="sm" />

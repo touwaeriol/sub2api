@@ -20,13 +20,20 @@ export type { ParamOverrideAction, ParamOverrideTarget }
  * Named aliases for the individual action / target values. UI components
  * compare rule fields against these instead of bare string literals, so a
  * rename on the wire format only needs to touch the API constants file.
+ *
+ * Literals are written explicitly (rather than PARAM_OVERRIDE_TARGETS[0]
+ * positional indexing) and constrained via `satisfies` so:
+ *  (a) a reader doesn't need to count array positions to know which value
+ *      each name refers to, and
+ *  (b) if the enum ever drifts, TS fails at compile time because the
+ *      literal no longer satisfies the corresponding union.
  */
-export const TARGET_BODY = PARAM_OVERRIDE_TARGETS[0]
-export const TARGET_HEADER = PARAM_OVERRIDE_TARGETS[1]
-export const ACTION_SET = PARAM_OVERRIDE_ACTIONS[0]
-export const ACTION_MERGE = PARAM_OVERRIDE_ACTIONS[1]
-export const ACTION_REMOVE = PARAM_OVERRIDE_ACTIONS[2]
-export const ACTION_APPEND = PARAM_OVERRIDE_ACTIONS[3]
+export const TARGET_BODY = 'body' as const satisfies ParamOverrideTarget
+export const TARGET_HEADER = 'header' as const satisfies ParamOverrideTarget
+export const ACTION_SET = 'set' as const satisfies ParamOverrideAction
+export const ACTION_MERGE = 'merge' as const satisfies ParamOverrideAction
+export const ACTION_REMOVE = 'remove' as const satisfies ParamOverrideAction
+export const ACTION_APPEND = 'append' as const satisfies ParamOverrideAction
 
 /** 平台 body 路径预设，仅作为 datalist 提示（用户可自行输入） */
 export const BODY_PATH_PRESETS: Record<string, readonly string[]> = {

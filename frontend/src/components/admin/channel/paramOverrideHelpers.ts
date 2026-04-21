@@ -7,7 +7,15 @@
  */
 
 import type { ChannelParamOverrideRule } from '@/api/admin/channels'
-import { ACTION_SET, TARGET_BODY } from './paramOverrideConstants'
+import {
+  ACTION_APPEND,
+  ACTION_MERGE,
+  ACTION_REMOVE,
+  ACTION_SET,
+  RESERVED_BODY_PATHS,
+  TARGET_BODY,
+  TARGET_HEADER,
+} from './paramOverrideConstants'
 
 export interface ParsedJsonValue {
   value: unknown
@@ -60,4 +68,56 @@ export function createEmptyRule(): ChannelParamOverrideRule {
     value: null,
     description: '',
   }
+}
+
+/**
+ * Signature of vue-i18n's `t` narrowed to the lookups this helper performs.
+ * Exported so ParamOverrideEntryCard can pass its own `t` in without the
+ * full vue-i18n overloaded type noise.
+ */
+export type ParamOverrideWarningTranslator = (key: string, named?: Record<string, unknown>) => string
+
+/**
+ * Set of inline warnings shown on a single rule card. Each field is either
+ * the translated message string or null when the corresponding condition
+ * does not apply. Kept flat (rather than a single union) so the template can
+ * v-if each warning independently without computing a tag type.
+ */
+export interface RuleWarnings {
+  reservedPathError: string | null
+  mergeHeaderWarning: string | null
+  appendBodyWarning: string | null
+  nullValueWarning: string | null
+}
+
+/**
+ * Compute all four static-shape warnings a ParamOverrideEntryCard displays
+ * inline. Pure function so the component body stays under the 220-line
+ * soft cap and the validation logic can be unit-tested without mounting Vue.
+ */
+export function computeRuleWarnings(
+  rule: ChannelParamOverrideRule,
+  t: ParamOverrideWarningTranslator,
+): RuleWarnings {
+  const reservedPathError =
+    rule.target === TARGET_BODY && (RESERVED_BODY_PATHS as readonly string[]).includes(rule.path)
+      ? t('admin.channels.form.paramOverride.reservedPath', { path: rule.path })
+      : null
+
+  const mergeHeaderWarning =
+    rule.action === ACTION_MERGE && rule.target === TARGET_HEADER
+      ? t('admin.channels.form.paramOverride.mergeHeaderNotSupported')
+      : null
+
+  const appendBodyWarning =
+    rule.action === ACTION_APPEND && rule.target === TARGET_BODY
+      ? t('admin.channels.form.paramOverride.appendBodyNotSupported')
+      : null
+
+  const nullValueWarning =
+    rule.action !== ACTION_REMOVE && rule.value === null
+      ? t('admin.channels.form.paramOverride.valueNullUseRemove')
+      : null
+
+  return { reservedPathError, mergeHeaderWarning, appendBodyWarning, nullValueWarning }
 }
