@@ -70,7 +70,7 @@ func TestApplyParamOverrides_NilGroupIDReturnsBodyUnchanged(t *testing.T) {
 	if c.Request.Header.Get("X-Keep") != "original" {
 		t.Fatalf("expected X-Keep header preserved, got %q", c.Request.Header.Get("X-Keep"))
 	}
-	if got := ParamOverrideHeadersFromContext(c.Request.Context()); got != nil {
+	if got := paramoverride.HeadersFromContext(c.Request.Context()); got != nil {
 		t.Fatalf("expected no override headers published, got %+v", got)
 	}
 }
@@ -150,7 +150,7 @@ func TestApplyParamOverrides_HeaderPublishedToContext(t *testing.T) {
 	gid := int64(1)
 	_ = svc.ApplyParamOverrides(context.Background(), c, &gid, "anthropic", "claude-3", body)
 
-	overrides := ParamOverrideHeadersFromContext(c.Request.Context())
+	overrides := paramoverride.HeadersFromContext(c.Request.Context())
 	if overrides == nil {
 		t.Fatalf("expected override headers stored on request context")
 	}
@@ -167,38 +167,11 @@ func TestApplyParamOverrides_HeaderPublishedToContext(t *testing.T) {
 	}
 }
 
-func TestApplyParamOverrideHeadersToRequest_CopiesAndOverrides(t *testing.T) {
-	overrides := http.Header{}
-	overrides.Set("X-Api-Version", "2024-10")
-	overrides.Add("Anthropic-Beta", "feature-a,feature-b")
-
-	ctx := paramoverride.WithHeaders(context.Background(), overrides)
-
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/upstream", nil)
-	req.Header.Set("X-Api-Version", "previous")
-	req.Header.Set("Other", "untouched")
-
-	ApplyParamOverrideHeadersToRequest(ctx, req)
-
-	if got := req.Header.Get("X-Api-Version"); got != "2024-10" {
-		t.Fatalf("expected X-Api-Version overwritten, got %q", got)
-	}
-	if got := req.Header.Get("Anthropic-Beta"); got != "feature-a,feature-b" {
-		t.Fatalf("expected Anthropic-Beta set, got %q", got)
-	}
-	if got := req.Header.Get("Other"); got != "untouched" {
-		t.Fatalf("expected unrelated header preserved, got %q", got)
-	}
-}
-
-func TestApplyParamOverrideHeadersToRequest_NoOpWhenContextEmpty(t *testing.T) {
-	req, _ := http.NewRequest(http.MethodPost, "/upstream", nil)
-	req.Header.Set("X", "keep")
-	ApplyParamOverrideHeadersToRequest(context.Background(), req)
-	if got := req.Header.Get("X"); got != "keep" {
-		t.Fatalf("expected unchanged, got %q", got)
-	}
-}
+// Note: tests for the now-removed service-layer wrappers
+// ApplyParamOverrideHeadersToRequest / ParamOverrideHeadersFromContext were
+// removed in PR-6 Commit C alongside the wrappers. The underlying
+// behaviour is covered by the paramoverride package's own tests; see
+// backend/internal/pkg/paramoverride/context_test.go.
 
 func TestApplyParamOverrides_ModelGlobFiltering(t *testing.T) {
 	repo := makeStandardRepo(

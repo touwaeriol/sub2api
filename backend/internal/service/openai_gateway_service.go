@@ -24,6 +24,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/apicompat"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 	"github.com/cespare/xxhash/v2"
@@ -2765,7 +2766,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 
 	// 渠道级 header 覆盖在 passthrough 路径同样适用，优先级高于 OAuth 兜底值，
 	// 与 buildUpstreamRequest 的行为对齐，否则用户配置在此路径下会静默失效。
-	ApplyParamOverrideHeadersToRequest(ctx, req)
+	paramoverride.ApplyContextHeadersToRequest(req)
 
 	return req, nil
 }
@@ -3268,7 +3269,7 @@ func (s *OpenAIGatewayService) buildUpstreamRequest(ctx context.Context, c *gin.
 
 	// Channel-level header overrides take final precedence so users can set
 	// arbitrary headers regardless of the openaiAllowedHeaders allow-list.
-	ApplyParamOverrideHeadersToRequest(ctx, req)
+	paramoverride.ApplyContextHeadersToRequest(req)
 
 	return req, nil
 }

@@ -72,7 +72,7 @@ func TestApplyParamOverrides_AnthropicBodyAndHeaderReachUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build upstream request: %v", err)
 	}
-	ApplyParamOverrideHeadersToRequest(c.Request.Context(), upstream)
+	paramoverride.ApplyContextHeadersToRequest(upstream)
 
 	if got := upstream.Header.Get("X-Forced"); got != "yes" {
 		t.Fatalf("expected X-Forced=yes on upstream request, got %q", got)
@@ -100,7 +100,7 @@ func TestApplyParamOverrides_OpenAIBodyAndHeaderReachUpstream(t *testing.T) {
 
 	upstream, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, "https://api.openai.com/v1/responses", bytes.NewReader(body))
 	upstream.Header.Set("OpenAI-Beta", "existing-feature")
-	ApplyParamOverrideHeadersToRequest(c.Request.Context(), upstream)
+	paramoverride.ApplyContextHeadersToRequest(upstream)
 
 	if got := upstream.Header.Get("OpenAI-Beta"); got != "responses=experimental" {
 		// ApplyToHeaders Append + ApplyContextHeadersToRequest overwrite:
@@ -164,12 +164,12 @@ func TestApplyParamOverrides_NoGroupIDSkipsEverything(t *testing.T) {
 	if string(body) != `{"model":"claude-3"}` {
 		t.Fatalf("expected body unchanged, got %s", string(body))
 	}
-	if h := ParamOverrideHeadersFromContext(c.Request.Context()); h != nil {
+	if h := paramoverride.HeadersFromContext(c.Request.Context()); h != nil {
 		t.Fatalf("expected no published headers, got %+v", h)
 	}
 
 	upstream, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, "https://example.com/x", bytes.NewReader(body))
-	ApplyParamOverrideHeadersToRequest(c.Request.Context(), upstream)
+	paramoverride.ApplyContextHeadersToRequest(upstream)
 	if upstream.Header.Get("X-Forced") != "" {
 		t.Fatalf("expected no override header propagated, got %q", upstream.Header.Get("X-Forced"))
 	}
@@ -197,7 +197,7 @@ func TestApplyParamOverrides_ContextPropagatesThroughRequestWithContext(t *testi
 	if newCtx == originalCtx {
 		t.Fatalf("expected c.Request to be replaced with a derived context")
 	}
-	overridesFromCtx := ParamOverrideHeadersFromContext(newCtx)
+	overridesFromCtx := paramoverride.HeadersFromContext(newCtx)
 	if overridesFromCtx == nil || overridesFromCtx.Get("X-Version") != "v1" {
 		t.Fatalf("expected override headers accessible via c.Request.Context(), got %+v", overridesFromCtx)
 	}
@@ -258,7 +258,7 @@ func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 
 	// Simulate the WS handler capturing ctx early, before ApplyParamOverrides.
 	stale := c.Request.Context()
-	if ParamOverrideHeadersFromContext(stale) != nil {
+	if paramoverride.HeadersFromContext(stale) != nil {
 		t.Fatalf("pre-apply ctx must not carry overrides yet")
 	}
 
@@ -271,7 +271,7 @@ func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 	if fresh == stale {
 		t.Fatalf("expected c.Request.Context() to change after ApplyParamOverrides")
 	}
-	headers := ParamOverrideHeadersFromContext(fresh)
+	headers := paramoverride.HeadersFromContext(fresh)
 	if headers == nil {
 		t.Fatalf("expected override headers on refreshed ctx, got nil")
 	}
@@ -280,14 +280,14 @@ func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 	}
 
 	// Negative control: without the refresh, the stale ctx still has nothing.
-	if h := ParamOverrideHeadersFromContext(stale); h != nil {
+	if h := paramoverride.HeadersFromContext(stale); h != nil {
 		t.Fatalf("stale ctx should not see published overrides (context.WithValue is immutable); got %+v", h)
 	}
 }
 
 // TestOpenAIBuildUpstreamRequestOpenAIPassthrough_AppliesContextHeaderOverrides
 // is the peer of the test above for the OAuth passthrough path. Without the
-// ApplyParamOverrideHeadersToRequest hook at the end of
+// paramoverride.ApplyContextHeadersToRequest hook at the end of
 // buildUpstreamRequestOpenAIPassthrough, user-configured header overrides
 // were silently dropped even though the allow-list would have allowed some
 // of them through — because the passthrough path reassigns Authorization,

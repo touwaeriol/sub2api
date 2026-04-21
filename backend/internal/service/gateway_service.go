@@ -26,6 +26,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/usagestats"
 	"github.com/Wei-Shaw/sub2api/internal/util/responseheaders"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
@@ -5700,8 +5701,9 @@ func (s *GatewayService) buildUpstreamRequest(ctx context.Context, c *gin.Contex
 
 	// Channel-level header overrides take final precedence over Beta policy /
 	// fingerprint defaults, so users can set arbitrary headers regardless of
-	// the allow-list above.
-	ApplyParamOverrideHeadersToRequest(ctx, req)
+	// the allow-list above. Same entry point as antigravity/client.go for
+	// style consistency across the three upstream builders.
+	paramoverride.ApplyContextHeadersToRequest(req)
 
 	return req, nil
 }

@@ -71,37 +71,6 @@ func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) 
 	c.Request = c.Request.WithContext(paramoverride.WithHeaders(c.Request.Context(), headers))
 }
 
-// ParamOverrideHeadersFromContext is a thin re-export of
-// paramoverride.HeadersFromContext so callers in the service layer can
-// inspect the published overrides without importing the low-level package.
-func ParamOverrideHeadersFromContext(ctx context.Context) http.Header {
-	return paramoverride.HeadersFromContext(ctx)
-}
-
-// ApplyParamOverrideHeadersToRequest is a thin re-export of
-// paramoverride.ApplyContextHeadersToRequest. It copies the override headers
-// stored on ctx onto req.Header, replacing any existing values.
-func ApplyParamOverrideHeadersToRequest(ctx context.Context, req *http.Request) {
-	if req == nil {
-		return
-	}
-	// Use req's own context if the caller passed it as the source; this
-	// matches paramoverride.ApplyContextHeadersToRequest's behaviour.
-	if ctx == nil {
-		ctx = req.Context()
-	}
-	overrides := paramoverride.HeadersFromContext(ctx)
-	if len(overrides) == 0 {
-		return
-	}
-	for name, values := range overrides {
-		req.Header.Del(name)
-		for _, v := range values {
-			req.Header.Add(name, v)
-		}
-	}
-}
-
 // getCompiledParamOverrides returns the compiled override snapshot for the
 // given group, or nil when none is configured. Cache load failures are logged
 // and treated as "no overrides" to avoid blocking the request.
