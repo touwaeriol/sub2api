@@ -90,11 +90,17 @@ func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) 
 // getCompiledParamOverrides returns the compiled override snapshot for the
 // given group, or nil when none is configured. Cache load failures are logged
 // and treated as "no overrides" to avoid blocking the request.
+//
+// The log line includes channel_id when the cache maps the group to a
+// channel — matches the context that compileChannelParamOverrides already
+// logs, so ops can correlate "cache load failed" with "which channel's
+// config is at stake" without grepping groupID → channelID by hand.
 func (s *ChannelService) getCompiledParamOverrides(ctx context.Context, groupID int64) *paramoverride.Compiled {
 	cache, err := s.loadCache(ctx)
 	if err != nil {
 		slog.Warn("paramoverride: failed to load channel cache",
 			"group_id", groupID,
+			"channel_id", s.lookupCachedChannelID(groupID),
 			"error", err.Error(),
 		)
 		return nil
@@ -103,6 +109,21 @@ func (s *ChannelService) getCompiledParamOverrides(ctx context.Context, groupID 
 		return nil
 	}
 	return cache.paramOverridesByGroup[groupID]
+}
+
+// lookupCachedChannelID reads the last-known channel ID for a group from
+// whatever cache snapshot is currently stored (even a stale one). Returns 0
+// when no snapshot is available — callers should treat 0 as "unknown".
+// Never returns an error; log enrichment must never block the request path.
+func (s *ChannelService) lookupCachedChannelID(groupID int64) int64 {
+	cached, ok := s.cache.Load().(*channelCache)
+	if !ok || cached == nil {
+		return 0
+	}
+	if ch, ok := cached.channelByGroupID[groupID]; ok && ch != nil {
+		return ch.ID
+	}
+	return 0
 }
 
 // compileChannelParamOverrides pre-compiles the override rules for a single
