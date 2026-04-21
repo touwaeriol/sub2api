@@ -239,3 +239,41 @@ func TestOpenAIBuildUpstreamRequest_AppliesContextHeaderOverrides(t *testing.T) 
 		t.Fatalf("expected override header to reach upstream, got %q", got)
 	}
 }
+
+// TestOpenAIBuildUpstreamRequestOpenAIPassthrough_AppliesContextHeaderOverrides
+// is the peer of the test above for the OAuth passthrough path. Without the
+// ApplyParamOverrideHeadersToRequest hook at the end of
+// buildUpstreamRequestOpenAIPassthrough, user-configured header overrides
+// were silently dropped even though the allow-list would have allowed some
+// of them through — because the passthrough path reassigns Authorization,
+// session_id, etc. unconditionally after allow-list copy.
+func TestOpenAIBuildUpstreamRequestOpenAIPassthrough_AppliesContextHeaderOverrides(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	rec := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(rec)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewReader([]byte(`{"model":"gpt-5"}`)))
+
+	overrides := http.Header{}
+	overrides.Set("OpenAI-Beta", "user-forced-value")
+	overrides.Set("X-Custom-Override", "yes")
+	ctx := paramoverride.WithHeaders(c.Request.Context(), overrides)
+
+	svc := &OpenAIGatewayService{}
+	account := &Account{
+		Type:        AccountTypeOAuth,
+		Credentials: map[string]any{"chatgpt_account_id": "chatgpt-acc"},
+	}
+
+	req, err := svc.buildUpstreamRequestOpenAIPassthrough(ctx, c, account, []byte(`{"model":"gpt-5"}`), "token")
+	if err != nil {
+		t.Fatalf("buildUpstreamRequestOpenAIPassthrough: %v", err)
+	}
+	if got := req.Header.Get("X-Custom-Override"); got != "yes" {
+		t.Fatalf("expected custom override header to reach upstream, got %q", got)
+	}
+	// Override must win even against the passthrough's own default
+	// "responses=experimental" fallback.
+	if got := req.Header.Get("OpenAI-Beta"); got != "user-forced-value" {
+		t.Fatalf("expected OpenAI-Beta override to beat passthrough default, got %q", got)
+	}
+}

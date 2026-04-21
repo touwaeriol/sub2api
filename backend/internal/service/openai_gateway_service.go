@@ -2763,6 +2763,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 		req.Header.Set("content-type", "application/json")
 	}
 
+	// 渠道级 header 覆盖在 passthrough 路径同样适用，优先级高于 OAuth 兜底值，
+	// 与 buildUpstreamRequest 的行为对齐，否则用户配置在此路径下会静默失效。
+	ApplyParamOverrideHeadersToRequest(ctx, req)
+
 	return req, nil
 }
 
