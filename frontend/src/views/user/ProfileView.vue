@@ -22,7 +22,7 @@
 
 <script setup lang="ts">
 import { ref, computed, h, onMounted } from 'vue'; import { useI18n } from 'vue-i18n'
-import { useAuthStore } from '@/stores/auth'; import { formatDate } from '@/utils/format'
+import { useAuthStore } from '@/stores/auth'; import { formatDate, formatCurrency } from '@/utils/format'
 import { authAPI } from '@/api'; import AppLayout from '@/components/layout/AppLayout.vue'
 import StatCard from '@/components/common/StatCard.vue'
 import ProfileInfoCard from '@/components/user/profile/ProfileInfoCard.vue'
@@ -39,5 +39,4 @@ const BoltIcon = { render: () => h('svg', { fill: 'none', viewBox: '0 0 24 24', 
 const CalendarIcon = { render: () => h('svg', { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' }, [h('path', { d: 'M6.75 3v2.25M17.25 3v2.25' })]) }
 
 onMounted(async () => { try { const s = await authAPI.getPublicSettings(); contactInfo.value = s.contact_info || '' } catch (error) { console.error('Failed to load contact info:', error) } })
-const formatCurrency = (v: number) => `$${v.toFixed(2)}`
 </script>
