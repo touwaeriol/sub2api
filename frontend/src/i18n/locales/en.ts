@@ -1859,7 +1859,39 @@ export default {
             merge: 'Merge',
             remove: 'Remove',
             append: 'Append'
+          },
+          reasons: {
+            invalid_target: 'Target must be body or header',
+            invalid_action: 'Action is invalid',
+            append_requires_header_target: 'Append action is only supported for headers',
+            merge_not_supported_for_header: 'Merge action is not supported for headers',
+            path_required: 'Field path is required',
+            path_too_long: 'Field path exceeds the max length',
+            path_model_reserved: "Reserved path 'model' cannot be overridden",
+            model_glob_too_long: 'Model glob exceeds the max length',
+            value_required: 'Non-remove actions require a JSON value',
+            value_null_use_remove: 'Value cannot be null; use the "Remove" action to delete a field',
+            too_many_rules: 'Rule count exceeds the per-platform limit',
+            compile_failed: 'Failed to compile rule; check the path or value',
+            unknown: 'Invalid parameter override rule'
           }
+        }
+      },
+      pricing: {
+        unnamedModel: 'Unnamed',
+        interval: {
+          priceInput: 'input price',
+          priceOutput: 'output price',
+          priceCacheWrite: 'cache write price',
+          priceCacheRead: 'cache read price',
+          pricePerRequest: 'per-request price',
+          unbounded: '∞',
+          minNegative: 'Interval #{idx}: min tokens ({value}) cannot be negative',
+          maxNotPositive: 'Interval #{idx}: max tokens ({value}) must be greater than 0',
+          maxNotGreaterThanMin: 'Interval #{idx}: max tokens ({max}) must be greater than min tokens ({min})',
+          priceNegative: 'Interval #{idx}: {label} cannot be negative',
+          unboundedMustBeLast: 'Interval #{idx}: unbounded interval (empty max tokens) must be the last one',
+          overlap: 'Intervals #{prevIdx} and #{currIdx} overlap: previous upper bound ({prevMax}) is greater than current lower bound ({currMin})'
         }
       }
     },

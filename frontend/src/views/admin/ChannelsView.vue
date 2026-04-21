@@ -311,6 +311,7 @@ import type { Channel, CreateChannelRequest, UpdateChannelRequest } from '@/api/
 import type { PlatformSection } from '@/components/admin/channel/types'
 import { findModelConflict, validateIntervals, PLATFORM_ORDER, platformSectionsToAPI, channelToPlatformSections, validateParamOverrideSections } from '@/components/admin/channel/types'
 import { platformTextClass } from '@/utils/platformColors'
+import { extractApiErrorMessage } from '@/utils/apiError'
 import type { AdminGroup, GroupPlatform } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
@@ -648,10 +649,10 @@ async function handleSubmit() {
   for (const section of form.platforms.filter(s => s.enabled)) {
     for (const entry of section.model_pricing) {
       if (!entry.intervals || entry.intervals.length === 0) continue
-      const intervalErr = validateIntervals(entry.intervals)
+      const intervalErr = validateIntervals(entry.intervals, t)
       if (intervalErr) {
         const platformLabel = t('admin.groups.platforms.' + section.platform, section.platform)
-        const modelLabel = entry.models.join(', ') || '未命名'
+        const modelLabel = entry.models.join(', ') || t('admin.channels.pricing.unnamedModel')
         appStore.showError(`${platformLabel} - ${modelLabel}: ${intervalErr}`)
         activeTab.value = section.platform
         return
@@ -696,10 +697,20 @@ async function handleSubmit() {
     }
     closeDialog()
     loadChannels()
-  } catch (error: any) {
-    const msg = error.response?.data?.detail || (editingChannel.value
+  } catch (error: unknown) {
+    const fallback = editingChannel.value
       ? t('admin.channels.updateError', 'Failed to update channel')
-      : t('admin.channels.createError', 'Failed to create channel'))
+      : t('admin.channels.createError', 'Failed to create channel')
+    // Prefer the localized param-override reason when the backend attached
+    // one; otherwise fall back to the generic error / network message. This
+    // ensures users who hit a server-side validation (e.g. compile_failed,
+    // too_many_rules) see the localized explanation instead of the raw
+    // English debug string.
+    const msg = extractApiErrorMessage(error, fallback, {
+      prefix: 'admin.channels.form.paramOverride.reasons.',
+      t,
+      unknownKey: 'unknown',
+    })
     appStore.showError(msg)
     console.error('Error saving channel:', error)
   } finally {

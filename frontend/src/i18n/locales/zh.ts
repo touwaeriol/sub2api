@@ -1946,7 +1946,39 @@ export default {
             merge: '合并',
             remove: '移除',
             append: '追加'
+          },
+          reasons: {
+            invalid_target: '规则作用对象非法，必须是请求体或请求头',
+            invalid_action: '规则动作非法',
+            append_requires_header_target: '追加动作仅支持请求头',
+            merge_not_supported_for_header: '请求头不支持合并动作',
+            path_required: '字段路径不能为空',
+            path_too_long: '字段路径长度超过上限',
+            path_model_reserved: "禁止覆盖保留字段 'model'",
+            model_glob_too_long: '模型匹配规则长度超过上限',
+            value_required: '非移除动作必须提供 JSON 值',
+            value_null_use_remove: '值不能为 null，请改用"移除"动作删除字段',
+            too_many_rules: '该平台规则数量超过上限',
+            compile_failed: '规则编译失败，请检查字段路径或值是否合法',
+            unknown: '参数覆盖规则不合法'
           }
+        }
+      },
+      pricing: {
+        unnamedModel: '未命名',
+        interval: {
+          priceInput: '输入价格',
+          priceOutput: '输出价格',
+          priceCacheWrite: '缓存写入价格',
+          priceCacheRead: '缓存读取价格',
+          pricePerRequest: '单次价格',
+          unbounded: '∞',
+          minNegative: '区间 #{idx}: 最小 token 数 ({value}) 不能为负数',
+          maxNotPositive: '区间 #{idx}: 最大 token 数 ({value}) 必须大于 0',
+          maxNotGreaterThanMin: '区间 #{idx}: 最大 token 数 ({max}) 必须大于最小 token 数 ({min})',
+          priceNegative: '区间 #{idx}: {label}不能为负数',
+          unboundedMustBeLast: '区间 #{idx}: 无上限区间（最大 token 数为空）只能是最后一个',
+          overlap: '区间 #{prevIdx} 和 #{currIdx} 重叠：前一个区间上界 ({prevMax}) 大于当前区间下界 ({currMin})'
         }
       }
     },
