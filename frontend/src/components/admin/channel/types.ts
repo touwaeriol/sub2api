@@ -360,14 +360,21 @@ export function validateParamOverrideSections(
   return null
 }
 
-type ParamOverrideIssue =
+export type ParamOverrideIssue =
   | 'path_required'
   | 'reserved_path'
   | 'merge_not_supported_for_header'
   | 'append_requires_header_target'
   | 'value_required'
+  | 'value_null_use_remove'
 
-function paramOverrideRuleIssue(rule: ChannelParamOverrideRule): ParamOverrideIssue | null {
+/**
+ * Static-shape check for a single rule. Mirrors the backend
+ * validateParamOverrideRule in handler/admin/channel_handler.go so that the
+ * admin UI surfaces the same rejections without a server round-trip.
+ * Exported so ParamOverrideEntryCard can highlight issues inline.
+ */
+export function paramOverrideRuleIssue(rule: ChannelParamOverrideRule): ParamOverrideIssue | null {
   if (!rule.enabled) return null
   if (rule.path.trim() === '') return 'path_required'
   if (rule.target === TARGET_BODY && (RESERVED_BODY_PATHS as readonly string[]).includes(rule.path)) {
@@ -379,8 +386,12 @@ function paramOverrideRuleIssue(rule: ChannelParamOverrideRule): ParamOverrideIs
   if (rule.action === ACTION_APPEND && rule.target === TARGET_BODY) {
     return 'append_requires_header_target'
   }
-  if (rule.action !== ACTION_REMOVE && rule.value === undefined) {
-    return 'value_required'
+  if (rule.action !== ACTION_REMOVE) {
+    if (rule.value === undefined) return 'value_required'
+    // Reject literal JSON null for non-remove actions; the user should
+    // switch the action to Remove to delete a field. Aligned with the
+    // backend paramOverrideReasonValueNullUseRemove guard.
+    if (rule.value === null) return 'value_null_use_remove'
   }
   return null
 }
@@ -404,5 +415,7 @@ function formatParamOverrideIssue(
       return `${prefix}: ${t('admin.channels.form.paramOverride.appendBodyNotSupported')}`
     case 'value_required':
       return `${prefix}: ${t('admin.channels.form.paramOverride.value')}`
+    case 'value_null_use_remove':
+      return `${prefix}: ${t('admin.channels.form.paramOverride.valueNullUseRemove')}`
   }
 }

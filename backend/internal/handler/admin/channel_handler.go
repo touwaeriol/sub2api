@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -13,6 +14,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// Param override validation reason codes. Strings are embedded in the
+// structured error's metadata["reason"] and consumed verbatim by the
+// frontend, so they must stay stable across releases and must not be
+// localised.
+const (
+	paramOverrideReasonInvalidTarget        = "invalid_target"
+	paramOverrideReasonInvalidAction        = "invalid_action"
+	paramOverrideReasonAppendRequiresHeader = "append_requires_header_target"
+	paramOverrideReasonMergeNotSupported    = "merge_not_supported_for_header"
+	paramOverrideReasonPathRequired         = "path_required"
+	paramOverrideReasonPathTooLong          = "path_too_long"
+	paramOverrideReasonPathModelReserved    = "path_model_reserved"
+	paramOverrideReasonGlobTooLong          = "model_glob_too_long"
+	paramOverrideReasonValueRequired        = "value_required"
+	paramOverrideReasonValueNullUseRemove   = "value_null_use_remove"
+	paramOverrideReasonTooManyRules         = "too_many_rules"
+)
+
+// paramOverrideLiteralNull is the JSON literal for `null`. A Set/Merge/Append
+// rule with this value has no runtime effect distinct from "delete the
+// field", and is almost always a user mistake (they forgot to switch the
+// action to Remove). Reject it at admin time to force the explicit
+// semantics.
+var paramOverrideLiteralNull = []byte("null")
 
 // ChannelHandler handles admin channel management
 type ChannelHandler struct {
@@ -247,7 +273,7 @@ func paramOverridesRequestToService(req map[string][]paramOverrideRuleRequest) (
 					"platform": platform,
 					"count":    strconv.Itoa(len(rules)),
 					"max":      strconv.Itoa(service.ParamOverrideMaxRulesPerPlatform),
-					"reason":   "too_many_rules",
+					"reason":   paramOverrideReasonTooManyRules,
 				})
 		}
 		converted := make([]service.ChannelParamOverrideRule, 0, len(rules))
@@ -293,34 +319,43 @@ func validateParamOverrideRule(r service.ChannelParamOverrideRule) string {
 	switch r.Target {
 	case service.ParamOverrideTargetBody, service.ParamOverrideTargetHeader:
 	default:
-		return "invalid_target"
+		return paramOverrideReasonInvalidTarget
 	}
 	switch r.Action {
 	case service.ParamOverrideActionSet, service.ParamOverrideActionMerge,
 		service.ParamOverrideActionRemove, service.ParamOverrideActionAppend:
 	default:
-		return "invalid_action"
+		return paramOverrideReasonInvalidAction
 	}
 	if r.Action == service.ParamOverrideActionAppend && r.Target != service.ParamOverrideTargetHeader {
-		return "append_requires_header_target"
+		return paramOverrideReasonAppendRequiresHeader
 	}
 	if r.Action == service.ParamOverrideActionMerge && r.Target == service.ParamOverrideTargetHeader {
-		return "merge_not_supported_for_header"
+		return paramOverrideReasonMergeNotSupported
 	}
 	if r.Path == "" {
-		return "path_required"
+		return paramOverrideReasonPathRequired
 	}
 	if len(r.Path) > service.ParamOverrideMaxPathLength {
-		return "path_too_long"
+		return paramOverrideReasonPathTooLong
 	}
 	if r.Target == service.ParamOverrideTargetBody && r.Path == "model" {
-		return "path_model_reserved"
+		return paramOverrideReasonPathModelReserved
 	}
 	if len(r.ModelGlob) > service.ParamOverrideMaxModelGlobLength {
-		return "model_glob_too_long"
+		return paramOverrideReasonGlobTooLong
 	}
-	if r.Action != service.ParamOverrideActionRemove && len(r.Value) == 0 {
-		return "value_required"
+	if r.Action != service.ParamOverrideActionRemove {
+		if len(r.Value) == 0 {
+			return paramOverrideReasonValueRequired
+		}
+		// Reject literal JSON null for non-remove actions. Set/Merge/Append
+		// with null is almost always a mistake: the user meant to delete
+		// the field and should use the Remove action instead. Matching
+		// after TrimSpace so `  null  ` is also rejected.
+		if bytes.Equal(bytes.TrimSpace(r.Value), paramOverrideLiteralNull) {
+			return paramOverrideReasonValueNullUseRemove
+		}
 	}
 	return ""
 }

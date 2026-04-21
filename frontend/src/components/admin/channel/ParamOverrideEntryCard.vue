@@ -81,6 +81,9 @@
         <p v-else-if="jsonError" class="mt-1 text-[11px] text-red-500">
           {{ t('admin.channels.form.paramOverride.invalidJson', '值不是合法 JSON') }}
         </p>
+        <p v-else-if="nullValueWarning" class="mt-1 text-[11px] text-red-500">
+          {{ nullValueWarning }}
+        </p>
       </div>
     </div>
 
@@ -115,6 +118,11 @@ import Icon from '@/components/icons/Icon.vue'
 import {
   PARAM_OVERRIDE_ACTIONS,
   PARAM_OVERRIDE_TARGETS,
+  TARGET_BODY,
+  TARGET_HEADER,
+  ACTION_MERGE,
+  ACTION_REMOVE,
+  ACTION_APPEND,
   type ParamOverrideAction,
   type ParamOverrideTarget,
   BODY_PATH_PRESETS,
@@ -154,11 +162,11 @@ const actionOptions = computed(() =>
 // ── Path presets (datalist auto-complete) ──
 const pathListId = computed(() => `po-path-${props.platform}-${props.ruleIndex}`)
 const pathPresets = computed<readonly string[]>(() => {
-  const table = props.rule.target === 'header' ? HEADER_KEY_PRESETS : BODY_PATH_PRESETS
+  const table = props.rule.target === TARGET_HEADER ? HEADER_KEY_PRESETS : BODY_PATH_PRESETS
   return table[props.platform] ?? []
 })
 const pathPlaceholder = computed(() =>
-  props.rule.target === 'header'
+  props.rule.target === TARGET_HEADER
     ? t('admin.channels.form.paramOverride.pathPlaceholderHeader', 'e.g. anthropic-beta')
     : t('admin.channels.form.paramOverride.pathPlaceholderBody', 'e.g. thinking.budget_tokens'),
 )
@@ -181,7 +189,7 @@ watch(
   },
 )
 
-const isValueDisabled = computed(() => props.rule.action === 'remove')
+const isValueDisabled = computed(() => props.rule.action === ACTION_REMOVE)
 
 function onValueInput(text: string) {
   valueText.value = text
@@ -193,22 +201,30 @@ function onValueInput(text: string) {
 
 // ── Validation warnings (displayed inline; backend still authoritative) ──
 const reservedPathError = computed<string | null>(() => {
-  if (props.rule.target !== 'body') return null
+  if (props.rule.target !== TARGET_BODY) return null
   if (!(RESERVED_BODY_PATHS as readonly string[]).includes(props.rule.path)) return null
   return t('admin.channels.form.paramOverride.reservedPath', { path: props.rule.path })
 })
 
 const mergeHeaderWarning = computed<string | null>(() =>
-  props.rule.action === 'merge' && props.rule.target === 'header'
+  props.rule.action === ACTION_MERGE && props.rule.target === TARGET_HEADER
     ? t('admin.channels.form.paramOverride.mergeHeaderNotSupported', 'Merge not supported for headers')
     : null,
 )
 
 const appendBodyWarning = computed<string | null>(() =>
-  props.rule.action === 'append' && props.rule.target === 'body'
+  props.rule.action === ACTION_APPEND && props.rule.target === TARGET_BODY
     ? t('admin.channels.form.paramOverride.appendBodyNotSupported', 'Append not supported for body')
     : null,
 )
+
+// Non-remove actions + value == null: prompt the user to switch to Remove.
+// Mirrors the backend paramOverrideReasonValueNullUseRemove check.
+const nullValueWarning = computed<string | null>(() => {
+  if (props.rule.action === ACTION_REMOVE) return null
+  if (props.rule.value !== null) return null
+  return t('admin.channels.form.paramOverride.valueNullUseRemove')
+})
 
 // ── Field emitters ──
 function emitField<K extends keyof ChannelParamOverrideRule>(field: K, value: ChannelParamOverrideRule[K]) {

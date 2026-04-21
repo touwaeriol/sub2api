@@ -58,8 +58,8 @@ func TestValidateParamOverrideRule_RejectsMergeHeader(t *testing.T) {
 		Value:  json.RawMessage(`{"x":1}`),
 	}
 	reason := validateParamOverrideRule(rule)
-	if reason != "merge_not_supported_for_header" {
-		t.Fatalf("expected merge_not_supported_for_header, got %q", reason)
+	if reason != paramOverrideReasonMergeNotSupported {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonMergeNotSupported, reason)
 	}
 }
 
@@ -71,8 +71,8 @@ func TestValidateParamOverrideRule_RejectsAppendBody(t *testing.T) {
 		Value:  json.RawMessage(`"bar"`),
 	}
 	reason := validateParamOverrideRule(rule)
-	if reason != "append_requires_header_target" {
-		t.Fatalf("expected append_requires_header_target, got %q", reason)
+	if reason != paramOverrideReasonAppendRequiresHeader {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonAppendRequiresHeader, reason)
 	}
 }
 
@@ -84,8 +84,98 @@ func TestValidateParamOverrideRule_ReservedModelPath(t *testing.T) {
 		Value:  json.RawMessage(`"claude-x"`),
 	}
 	reason := validateParamOverrideRule(rule)
-	if reason != "path_model_reserved" {
-		t.Fatalf("expected path_model_reserved, got %q", reason)
+	if reason != paramOverrideReasonPathModelReserved {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonPathModelReserved, reason)
+	}
+}
+
+func TestValidateParamOverrideRule_RejectsNullValueForSet(t *testing.T) {
+	rule := service.ChannelParamOverrideRule{
+		Target: service.ParamOverrideTargetBody,
+		Action: service.ParamOverrideActionSet,
+		Path:   "thinking.budget_tokens",
+		Value:  json.RawMessage(`null`),
+	}
+	reason := validateParamOverrideRule(rule)
+	if reason != paramOverrideReasonValueNullUseRemove {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonValueNullUseRemove, reason)
+	}
+}
+
+func TestValidateParamOverrideRule_RejectsNullValueForMerge(t *testing.T) {
+	rule := service.ChannelParamOverrideRule{
+		Target: service.ParamOverrideTargetBody,
+		Action: service.ParamOverrideActionMerge,
+		Path:   "thinking",
+		Value:  json.RawMessage(`null`),
+	}
+	reason := validateParamOverrideRule(rule)
+	if reason != paramOverrideReasonValueNullUseRemove {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonValueNullUseRemove, reason)
+	}
+}
+
+func TestValidateParamOverrideRule_RejectsNullValueForAppend(t *testing.T) {
+	rule := service.ChannelParamOverrideRule{
+		Target: service.ParamOverrideTargetHeader,
+		Action: service.ParamOverrideActionAppend,
+		Path:   "Anthropic-Beta",
+		Value:  json.RawMessage(`null`),
+	}
+	reason := validateParamOverrideRule(rule)
+	if reason != paramOverrideReasonValueNullUseRemove {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonValueNullUseRemove, reason)
+	}
+}
+
+func TestValidateParamOverrideRule_RejectsNullValueWithWhitespace(t *testing.T) {
+	// `  null  ` (surrounding whitespace) should also trip the guard.
+	rule := service.ChannelParamOverrideRule{
+		Target: service.ParamOverrideTargetBody,
+		Action: service.ParamOverrideActionSet,
+		Path:   "thinking.budget_tokens",
+		Value:  json.RawMessage(`  null  `),
+	}
+	reason := validateParamOverrideRule(rule)
+	if reason != paramOverrideReasonValueNullUseRemove {
+		t.Fatalf("expected %s, got %q", paramOverrideReasonValueNullUseRemove, reason)
+	}
+}
+
+func TestValidateParamOverrideRule_AllowsNullValueForRemove(t *testing.T) {
+	// Remove actions ignore Value entirely, so null/empty/whatever all pass.
+	rule := service.ChannelParamOverrideRule{
+		Target: service.ParamOverrideTargetBody,
+		Action: service.ParamOverrideActionRemove,
+		Path:   "thinking",
+		Value:  json.RawMessage(`null`),
+	}
+	if reason := validateParamOverrideRule(rule); reason != "" {
+		t.Fatalf("expected remove+null to validate, got reason %q", reason)
+	}
+}
+
+func TestParamOverridesRequestToService_BubblesNullValueAsStructuredError(t *testing.T) {
+	req := map[string][]paramOverrideRuleRequest{
+		"openai": {
+			{
+				Target: service.ParamOverrideTargetBody,
+				Action: service.ParamOverrideActionSet,
+				Path:   "reasoning.effort",
+				Value:  json.RawMessage(`null`),
+			},
+		},
+	}
+	_, err := paramOverridesRequestToService(req)
+	if err == nil {
+		t.Fatalf("expected error for set+null value")
+	}
+	var appErr *infraerrors.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected ApplicationError, got %T: %v", err, err)
+	}
+	if appErr.Metadata["reason"] != paramOverrideReasonValueNullUseRemove {
+		t.Fatalf("expected metadata reason %s, got %q", paramOverrideReasonValueNullUseRemove, appErr.Metadata["reason"])
 	}
 }
 
@@ -111,8 +201,8 @@ func TestParamOverridesRequestToService_BubblesMergeHeaderAsStructuredError(t *t
 	if appErr.Reason != "PARAM_OVERRIDE_INVALID" {
 		t.Fatalf("expected reason PARAM_OVERRIDE_INVALID, got %q", appErr.Reason)
 	}
-	if appErr.Metadata["reason"] != "merge_not_supported_for_header" {
-		t.Fatalf("expected metadata reason merge_not_supported_for_header, got %q", appErr.Metadata["reason"])
+	if appErr.Metadata["reason"] != paramOverrideReasonMergeNotSupported {
+		t.Fatalf("expected metadata reason %s, got %q", paramOverrideReasonMergeNotSupported, appErr.Metadata["reason"])
 	}
 	if appErr.Metadata["platform"] != "anthropic" {
 		t.Fatalf("expected metadata platform=anthropic, got %q", appErr.Metadata["platform"])
