@@ -89,6 +89,60 @@ export function newClientId(): string {
 }
 
 /**
+ * Issue union emitted by `classifyRuleIssue`. Variants mirror the subset of
+ * backend `paramOverrideReasonXxx` codes the admin UI can detect without a
+ * server round-trip. Kept here alongside the predicates below so adding a
+ * new defect only requires updating this file.
+ */
+export type ParamOverrideIssue = 'path_required' | 'reserved_path' | 'merge_not_supported_for_header' | 'append_requires_header_target' | 'value_required' | 'value_null_use_remove'
+
+// Predicates for the 4 rule-shape defects that both the form-level validator
+// and the inline card warnings share. Extracting them is the DRY backbone:
+// `classifyRuleIssue` and `computeRuleWarnings` each call the same predicate.
+
+export function isReservedBodyPathIssue(rule: ChannelParamOverrideRule): boolean {
+  return (
+    rule.target === TARGET_BODY &&
+    (RESERVED_BODY_PATHS as readonly string[]).includes(rule.path)
+  )
+}
+
+export function isMergeOnHeaderIssue(rule: ChannelParamOverrideRule): boolean {
+  return rule.action === ACTION_MERGE && rule.target === TARGET_HEADER
+}
+
+export function isAppendOnBodyIssue(rule: ChannelParamOverrideRule): boolean {
+  return rule.action === ACTION_APPEND && rule.target === TARGET_BODY
+}
+
+export function isNullValueNonRemoveIssue(rule: ChannelParamOverrideRule): boolean {
+  return rule.action !== ACTION_REMOVE && rule.value === null
+}
+
+/**
+ * classifyRuleIssue is the single source of truth for "what's the most
+ * important defect on this rule, if any?". Used by paramOverrideRuleIssue in
+ * types.ts to drive pre-submit validation; the inline card warnings in
+ * `computeRuleWarnings` below consume the shared predicates directly (they
+ * need to surface multiple issues at once rather than a single top pick).
+ *
+ * Order reflects user-action priority: errors that prevent saving come
+ * first, semantic mismatches next, then the null-value nudge.
+ */
+export function classifyRuleIssue(rule: ChannelParamOverrideRule): ParamOverrideIssue | null {
+  if (!rule.enabled) return null
+  if (rule.path.trim() === '') return 'path_required'
+  if (isReservedBodyPathIssue(rule)) return 'reserved_path'
+  if (isMergeOnHeaderIssue(rule)) return 'merge_not_supported_for_header'
+  if (isAppendOnBodyIssue(rule)) return 'append_requires_header_target'
+  if (rule.action !== ACTION_REMOVE) {
+    if (rule.value === undefined) return 'value_required'
+    if (rule.value === null) return 'value_null_use_remove'
+  }
+  return null
+}
+
+/**
  * Signature of vue-i18n's `t` narrowed to the lookups this helper performs.
  * Exported so ParamOverrideEntryCard can pass its own `t` in without the
  * full vue-i18n overloaded type noise.
@@ -117,25 +171,18 @@ export function computeRuleWarnings(
   rule: ChannelParamOverrideRule,
   t: ParamOverrideWarningTranslator,
 ): RuleWarnings {
-  const reservedPathError =
-    rule.target === TARGET_BODY && (RESERVED_BODY_PATHS as readonly string[]).includes(rule.path)
+  return {
+    reservedPathError: isReservedBodyPathIssue(rule)
       ? t('admin.channels.form.paramOverride.reservedPath', { path: rule.path })
-      : null
-
-  const mergeHeaderWarning =
-    rule.action === ACTION_MERGE && rule.target === TARGET_HEADER
+      : null,
+    mergeHeaderWarning: isMergeOnHeaderIssue(rule)
       ? t('admin.channels.form.paramOverride.mergeHeaderNotSupported')
-      : null
-
-  const appendBodyWarning =
-    rule.action === ACTION_APPEND && rule.target === TARGET_BODY
+      : null,
+    appendBodyWarning: isAppendOnBodyIssue(rule)
       ? t('admin.channels.form.paramOverride.appendBodyNotSupported')
-      : null
-
-  const nullValueWarning =
-    rule.action !== ACTION_REMOVE && rule.value === null
+      : null,
+    nullValueWarning: isNullValueNonRemoveIssue(rule)
       ? t('admin.channels.form.paramOverride.valueNullUseRemove')
-      : null
-
-  return { reservedPathError, mergeHeaderWarning, appendBodyWarning, nullValueWarning }
+      : null,
+  }
 }
