@@ -15,6 +15,7 @@ import {
   TARGET_HEADER,
   RESERVED_BODY_PATHS,
 } from './paramOverrideConstants'
+import { newClientId } from './paramOverrideHelpers'
 
 /** 平台排序顺序（界面显示 + 转换时遍历） */
 export const PLATFORM_ORDER: GroupPlatform[] = ['anthropic', 'openai', 'gemini', 'antigravity']
@@ -226,6 +227,18 @@ export interface PlatformSectionsAPIPayload {
   param_overrides: ChannelParamOverrides
 }
 
+/**
+ * Return a shallow copy of the rule with the frontend-only `_clientId`
+ * field removed, so the payload is safe to send to the backend (which
+ * doesn't know about the field and treats unknown JSON fields as a
+ * validation problem).
+ */
+function stripClientId(rule: ChannelParamOverrideRule): ChannelParamOverrideRule {
+  const copy = { ...rule }
+  delete copy._clientId
+  return copy
+}
+
 /** 将启用的 PlatformSection 聚合为后端请求体 */
 export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSectionsAPIPayload {
   const group_ids: number[] = []
@@ -242,7 +255,10 @@ export function platformSectionsToAPI(sections: PlatformSection[]): PlatformSect
     }
 
     if (section.param_overrides.length > 0) {
-      param_overrides[section.platform] = section.param_overrides.map(r => ({ ...r }))
+      // Strip the frontend-only `_clientId` from every rule before it hits
+      // the API — the backend rejects unknown fields and, even if it
+      // didn't, we don't want the identifier to land in the DB.
+      param_overrides[section.platform] = section.param_overrides.map(stripClientId)
     }
 
     for (const entry of section.model_pricing) {
@@ -315,7 +331,11 @@ export function channelToPlatformSections(channel: Channel, allGroups: AdminGrou
       group_ids: groupIds,
       model_mapping: { ...mapping },
       model_pricing: pricing,
-      param_overrides: overrides.map(r => ({ ...r }))
+      // Synthesise a fresh _clientId for every rule read from the server,
+      // so Vue's :key remains stable across subsequent reorders / edits
+      // in this form session. The id is stripped again in
+      // platformSectionsToAPI before the next save.
+      param_overrides: overrides.map(r => ({ ...r, _clientId: newClientId() }))
     })
   }
 

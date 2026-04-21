@@ -56,7 +56,9 @@ export function stringifyValue(v: unknown): string {
 
 /**
  * Factory for a blank rule. Defaults: enabled, `*` glob (match all), body
- * Set action, no path or value — the user fills those in.
+ * Set action, no path or value — the user fills those in. A fresh
+ * `_clientId` is assigned so the rule is usable as a stable Vue :key
+ * throughout its edit lifetime.
  */
 export function createEmptyRule(): ChannelParamOverrideRule {
   return {
@@ -67,7 +69,23 @@ export function createEmptyRule(): ChannelParamOverrideRule {
     path: '',
     value: null,
     description: '',
+    _clientId: newClientId(),
   }
+}
+
+/**
+ * Generate a stable identifier for a rule's _clientId field. Uses
+ * crypto.randomUUID() when available (all modern browsers + Node 18+) and
+ * falls back to a Math.random-derived string for the rare legacy target.
+ * The value is opaque to the backend — see the comment on
+ * ChannelParamOverrideRule._clientId.
+ */
+export function newClientId(): string {
+  const cryptoObj = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined
+  if (cryptoObj && typeof cryptoObj.randomUUID === 'function') {
+    return cryptoObj.randomUUID()
+  }
+  return `po-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
 }
 
 /**

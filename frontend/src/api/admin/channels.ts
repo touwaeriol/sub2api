@@ -26,6 +26,13 @@ export interface ChannelParamOverrideRule {
   path: string
   value: unknown
   description: string
+  // _clientId is a frontend-only identifier used as a stable Vue :key so
+  // textarea / input state doesn't get lost when the user reorders the
+  // list. MUST be stripped before sending the rule to the backend (see
+  // platformSectionsToAPI in components/admin/channel/types.ts). Never
+  // populated by server responses; channelToPlatformSections synthesises
+  // one on read.
+  _clientId?: string
 }
 
 export type ChannelParamOverrides = Record<string, ChannelParamOverrideRule[]>

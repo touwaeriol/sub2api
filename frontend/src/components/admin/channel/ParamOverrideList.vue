@@ -34,7 +34,7 @@
     <div v-else class="space-y-2">
       <div
         v-for="(rule, idx) in rules"
-        :key="idx"
+        :key="rule._clientId ?? idx"
         class="relative"
       >
         <ParamOverrideEntryCard
