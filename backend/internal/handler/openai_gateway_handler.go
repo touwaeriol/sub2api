@@ -1299,6 +1299,10 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 		c.Request.Context(), c, apiKey.GroupID,
 		account.Platform, channelMappingWS.MappedModel, wsFirstMessage,
 	)
+	// ApplyParamOverrides 会通过 c.Request.WithContext(...) 替换 c.Request，
+	// 因此上面函数返回后必须重新读取最新的 c.Request.Context()，否则 1074 行
+	// 捕获的旧 ctx 不包含 paramoverride headers，上游 WS dial 会丢失覆盖。
+	ctx = c.Request.Context()
 
 	if err := h.gatewayService.ProxyResponsesWebSocketFromClient(ctx, c, wsConn, account, token, wsFirstMessage, hooks); err != nil {
 		h.gatewayService.ReportOpenAIAccountScheduleResult(account.ID, false, nil)

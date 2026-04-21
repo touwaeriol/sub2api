@@ -240,6 +240,51 @@ func TestOpenAIBuildUpstreamRequest_AppliesContextHeaderOverrides(t *testing.T) 
 	}
 }
 
+// TestApplyParamOverrides_WSContextCarriesHeaderOverrides simulates the WS
+// handler's ctx refresh pattern: after ApplyParamOverrides replaces
+// c.Request, any previously-captured `ctx := c.Request.Context()` variable
+// is stale, and the handler must re-read c.Request.Context() before
+// forwarding it to the upstream WS dial. This test pins that refresh
+// behaviour so a future regression in openai_gateway_handler's WS path
+// (dropping the `ctx = c.Request.Context()` line) is caught at test time.
+func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
+	overrides := ChannelParamOverrides{
+		"openai": {
+			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+				"X-Forced-WS", json.RawMessage(`"ws-value"`)),
+		},
+	}
+	svc, c := newAnthropicUpstreamTestContext(t, overrides, "openai")
+
+	// Simulate the WS handler capturing ctx early, before ApplyParamOverrides.
+	stale := c.Request.Context()
+	if ParamOverrideHeadersFromContext(stale) != nil {
+		t.Fatalf("pre-apply ctx must not carry overrides yet")
+	}
+
+	gid := int64(1)
+	body := []byte(`{"model":"gpt-realtime","type":"response.create"}`)
+	_ = svc.ApplyParamOverrides(stale, c, &gid, "openai", "gpt-realtime", body)
+
+	// Simulate the handler's `ctx = c.Request.Context()` refresh.
+	fresh := c.Request.Context()
+	if fresh == stale {
+		t.Fatalf("expected c.Request.Context() to change after ApplyParamOverrides")
+	}
+	headers := ParamOverrideHeadersFromContext(fresh)
+	if headers == nil {
+		t.Fatalf("expected override headers on refreshed ctx, got nil")
+	}
+	if got := headers.Get("X-Forced-WS"); got != "ws-value" {
+		t.Fatalf("expected X-Forced-WS=ws-value on refreshed ctx, got %q", got)
+	}
+
+	// Negative control: without the refresh, the stale ctx still has nothing.
+	if h := ParamOverrideHeadersFromContext(stale); h != nil {
+		t.Fatalf("stale ctx should not see published overrides (context.WithValue is immutable); got %+v", h)
+	}
+}
+
 // TestOpenAIBuildUpstreamRequestOpenAIPassthrough_AppliesContextHeaderOverrides
 // is the peer of the test above for the OAuth passthrough path. Without the
 // ApplyParamOverrideHeadersToRequest hook at the end of
