@@ -211,3 +211,74 @@ func TestParamOverridesRequestToService_BubblesMergeHeaderAsStructuredError(t *t
 		t.Fatalf("expected metadata rule_index=0, got %q", appErr.Metadata["rule_index"])
 	}
 }
+
+// TestParamOverridesRequestToService_RejectsInvalidValueJsonOnCompile covers
+// the main Compile-time failure mode the preflight exists to catch: the
+// admin static shape check accepts any non-empty bytes for
+// json.RawMessage, so a hand-crafted invalid JSON payload passes
+// validateParamOverrideRule but trips Compile's classifyValue
+// json.Unmarshal. Without the preflight this only surfaced at request
+// time via slog.Warn, silently disabling the rule.
+//
+// (Glob compile failures are structurally impossible: compileGlob wraps
+// every non-'*'/'?' char in regexp.QuoteMeta, so the resulting regex is
+// always valid. The ValueRequired / PathRequired branches inside Compile
+// are already pre-covered by validateParamOverrideRule in this package.)
+func TestParamOverridesRequestToService_RejectsInvalidValueJsonOnCompile(t *testing.T) {
+	req := map[string][]paramOverrideRuleRequest{
+		"openai": {
+			{
+				Target: service.ParamOverrideTargetBody,
+				Action: service.ParamOverrideActionSet,
+				Path:   "reasoning.effort",
+				// {not json — passes the "len(Value)==0" static check but
+				// classifyValue's json.Unmarshal will fail.
+				Value: json.RawMessage(`{not json`),
+			},
+		},
+	}
+	_, err := paramOverridesRequestToService(req)
+	if err == nil {
+		t.Fatalf("expected error for invalid JSON value at compile time")
+	}
+	var appErr *infraerrors.ApplicationError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected ApplicationError, got %T: %v", err, err)
+	}
+	if appErr.Reason != "PARAM_OVERRIDE_INVALID" {
+		t.Fatalf("expected reason PARAM_OVERRIDE_INVALID, got %q", appErr.Reason)
+	}
+	if appErr.Metadata["reason"] != paramOverrideReasonCompileFailed {
+		t.Fatalf("expected metadata reason %s, got %q", paramOverrideReasonCompileFailed, appErr.Metadata["reason"])
+	}
+	if appErr.Metadata["platform"] != "openai" {
+		t.Fatalf("expected metadata platform=openai, got %q", appErr.Metadata["platform"])
+	}
+	if appErr.Metadata["compile_error"] == "" {
+		t.Fatalf("expected non-empty compile_error in metadata")
+	}
+}
+
+// TestParamOverridesRequestToService_CompilesCleanRules sanity-checks that
+// the preflight does not break valid rules — a full round-trip through
+// validate + Compile must leave the converted map intact.
+func TestParamOverridesRequestToService_CompilesCleanRules(t *testing.T) {
+	req := map[string][]paramOverrideRuleRequest{
+		"anthropic": {
+			{
+				ModelGlob: "claude-*",
+				Target:    service.ParamOverrideTargetBody,
+				Action:    service.ParamOverrideActionSet,
+				Path:      "thinking.budget_tokens",
+				Value:     json.RawMessage(`2048`),
+			},
+		},
+	}
+	out, err := paramOverridesRequestToService(req)
+	if err != nil {
+		t.Fatalf("expected clean rule to pass, got %v", err)
+	}
+	if len(out["anthropic"]) != 1 {
+		t.Fatalf("expected 1 converted rule, got %d", len(out["anthropic"]))
+	}
+}

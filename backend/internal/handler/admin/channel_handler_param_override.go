@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -26,6 +27,7 @@ const (
 	paramOverrideReasonValueRequired        = "value_required"
 	paramOverrideReasonValueNullUseRemove   = "value_null_use_remove"
 	paramOverrideReasonTooManyRules         = "too_many_rules"
+	paramOverrideReasonCompileFailed        = "compile_failed"
 )
 
 // paramOverrideLiteralNull is the JSON literal for `null`. A Set/Merge/Append
@@ -93,7 +95,35 @@ func paramOverridesRequestToService(req map[string][]paramOverrideRuleRequest) (
 		}
 		out[platform] = converted
 	}
+	// Preflight paramoverride.Compile so users see any compile-time rejection
+	// (invalid glob pattern, value that isn't legal JSON, etc.) at write time
+	// instead of silently at request time via a runtime slog.Warn.
+	if err := preflightCompileParamOverrides(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// preflightCompileParamOverrides runs paramoverride.Compile once per platform
+// so every Compile-time rejection surfaces as a structured admin API error
+// rather than a runtime slog.Warn that leaves the rule silently disabled.
+func preflightCompileParamOverrides(overrides service.ChannelParamOverrides) error {
+	for platform, rules := range overrides {
+		pkgRules := make([]paramoverride.Rule, 0, len(rules))
+		for _, r := range rules {
+			pkgRules = append(pkgRules, r.ToParamOverrideRule())
+		}
+		if _, err := paramoverride.Compile(map[string][]paramoverride.Rule{platform: pkgRules}); err != nil {
+			return infraerrors.BadRequest("PARAM_OVERRIDE_INVALID",
+				fmt.Sprintf("failed to compile param overrides for platform %q: %s", platform, err.Error())).
+				WithMetadata(map[string]string{
+					"platform":      platform,
+					"reason":        paramOverrideReasonCompileFailed,
+					"compile_error": err.Error(),
+				})
+		}
+	}
+	return nil
 }
 
 // paramOverrideRuleRequestToService converts a single request rule, applying
