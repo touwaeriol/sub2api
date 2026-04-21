@@ -26,13 +26,13 @@ const ParamOverrideHeadersGinKey = "paramOverrideHeaders"
 // The returned slice is either the original body (no mutation) or a fresh
 // buffer produced by sjson; callers should replace their reference.
 //
-// When c is non-nil, header overrides are stored on c.Request.Context() AND
-// the gin store, and c.Request is rewritten with the new context so that
-// downstream service code calling c.Request.Context() observes them. Passing
-// c=nil disables header propagation entirely (body-only mutations still
-// apply).
+// When c is non-nil, the request's existing context is used for cache loads,
+// header overrides are stored on c.Request.Context() AND the gin store, and
+// c.Request is rewritten with the new context so that downstream service code
+// calling c.Request.Context() observes them. Passing c=nil is supported for
+// body-only tests and uses context.Background() for cache loads; header
+// propagation is disabled in that mode (no Request to attach headers to).
 func (s *ChannelService) ApplyParamOverrides(
-	ctx context.Context,
 	c *gin.Context,
 	groupID *int64,
 	platform string,
@@ -42,7 +42,7 @@ func (s *ChannelService) ApplyParamOverrides(
 	if groupID == nil {
 		return body
 	}
-	compiled := s.getCompiledParamOverrides(ctx, *groupID)
+	compiled := s.getCompiledParamOverrides(requestContext(c), *groupID)
 	if compiled.IsEmpty() {
 		return body
 	}
@@ -52,6 +52,16 @@ func (s *ChannelService) ApplyParamOverrides(
 	}
 	publishHeaderOverrides(c, rules)
 	return paramoverride.ApplyToBodyBytes(body, rules)
+}
+
+// requestContext returns c.Request.Context() when available, falling back to
+// context.Background(). Used by ApplyParamOverrides so the cache load still
+// has a context when unit tests pass c=nil for body-only assertions.
+func requestContext(c *gin.Context) context.Context {
+	if c != nil && c.Request != nil {
+		return c.Request.Context()
+	}
+	return context.Background()
 }
 
 // publishHeaderOverrides applies header rules into a fresh http.Header and

@@ -674,7 +674,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 
 			// 应用渠道级参数覆盖（body + header；header 通过 context 传递到上游构建器）
 			body = h.gatewayService.ApplyParamOverrides(
-				c.Request.Context(), c, apiKey.GroupID,
+				c, apiKey.GroupID,
 				account.Platform, channelMapping.MappedModel, body,
 			)
 			parsedReq.Body = body

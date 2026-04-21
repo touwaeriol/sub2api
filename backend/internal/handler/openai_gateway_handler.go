@@ -301,7 +301,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		// 应用渠道级参数覆盖（body + header）
 		forwardBody = h.gatewayService.ApplyParamOverrides(
-			c.Request.Context(), c, apiKey.GroupID,
+			c, apiKey.GroupID,
 			account.Platform, channelMapping.MappedModel, forwardBody,
 		)
 		result, err := h.gatewayService.Forward(c.Request.Context(), c, account, forwardBody)
@@ -684,7 +684,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		// 应用渠道级参数覆盖（body + header）
 		forwardBody = h.gatewayService.ApplyParamOverrides(
-			c.Request.Context(), c, apiKey.GroupID,
+			c, apiKey.GroupID,
 			account.Platform, channelMappingMsg.MappedModel, forwardBody,
 		)
 		result, err := h.gatewayService.ForwardAsAnthropic(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
@@ -1296,7 +1296,7 @@ func (h *OpenAIGatewayHandler) ResponsesWebSocket(c *gin.Context) {
 	}
 	// 应用渠道级参数覆盖到 WS 首条消息（body + header；header 通过 context 传递到上游 WS dial）
 	wsFirstMessage = h.gatewayService.ApplyParamOverrides(
-		c.Request.Context(), c, apiKey.GroupID,
+		c, apiKey.GroupID,
 		account.Platform, channelMappingWS.MappedModel, wsFirstMessage,
 	)
 	// ApplyParamOverrides 会通过 c.Request.WithContext(...) 替换 c.Request，

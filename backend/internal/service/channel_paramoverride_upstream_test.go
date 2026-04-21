@@ -60,7 +60,7 @@ func TestApplyParamOverrides_AnthropicBodyAndHeaderReachUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3-opus","thinking":{"budget_tokens":512}}`)
 	gid := int64(1)
-	body = svc.ApplyParamOverrides(c.Request.Context(), c, &gid, "anthropic", "claude-3-opus", body)
+	body = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
 
 	if got := gjson.GetBytes(body, "thinking.budget_tokens").Int(); got != 2048 {
 		t.Fatalf("body override not applied, got %s", string(body))
@@ -92,7 +92,7 @@ func TestApplyParamOverrides_OpenAIBodyAndHeaderReachUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"gpt-5","reasoning":{"effort":"medium"}}`)
 	gid := int64(1)
-	body = svc.ApplyParamOverrides(c.Request.Context(), c, &gid, "openai", "gpt-5", body)
+	body = svc.ApplyParamOverrides(c, &gid, "openai", "gpt-5", body)
 
 	if got := gjson.GetBytes(body, "reasoning.effort").String(); got != "high" {
 		t.Fatalf("expected reasoning.effort=high, got %q", got)
@@ -127,7 +127,7 @@ func TestApplyParamOverrides_AntigravityHeaderReachesUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"gemini-2.5"}`)
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(c.Request.Context(), c, &gid, "antigravity", "gemini-2.5", body)
+	_ = svc.ApplyParamOverrides(c, &gid, "antigravity", "gemini-2.5", body)
 
 	// Simulate Antigravity's NewAPIRequestWithURL: fresh request with only
 	// the hard-coded Content-Type / Authorization / User-Agent, then the
@@ -159,7 +159,7 @@ func TestApplyParamOverrides_NoGroupIDSkipsEverything(t *testing.T) {
 	svc, c := newAnthropicUpstreamTestContext(t, overrides, "anthropic")
 
 	body := []byte(`{"model":"claude-3"}`)
-	body = svc.ApplyParamOverrides(c.Request.Context(), c, nil, "anthropic", "claude-3", body)
+	body = svc.ApplyParamOverrides(c, nil, "anthropic", "claude-3", body)
 
 	if string(body) != `{"model":"claude-3"}` {
 		t.Fatalf("expected body unchanged, got %s", string(body))
@@ -190,7 +190,7 @@ func TestApplyParamOverrides_ContextPropagatesThroughRequestWithContext(t *testi
 
 	originalCtx := c.Request.Context()
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(originalCtx, c, &gid, "anthropic", "claude-3", []byte(`{}`))
+	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3", []byte(`{}`))
 
 	// After the call, c.Request.Context() should carry the override map.
 	newCtx := c.Request.Context()
@@ -264,7 +264,7 @@ func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 
 	gid := int64(1)
 	body := []byte(`{"model":"gpt-realtime","type":"response.create"}`)
-	_ = svc.ApplyParamOverrides(stale, c, &gid, "openai", "gpt-realtime", body)
+	_ = svc.ApplyParamOverrides(c, &gid, "openai", "gpt-realtime", body)
 
 	// Simulate the handler's `ctx = c.Request.Context()` refresh.
 	fresh := c.Request.Context()

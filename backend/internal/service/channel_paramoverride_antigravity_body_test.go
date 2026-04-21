@@ -3,7 +3,6 @@
 package service
 
 import (
-	"context"
 	"encoding/json"
 	"testing"
 
@@ -46,7 +45,7 @@ func TestApplyParamOverrides_AntigravityThinkingBudgetPropagatesToGemini(t *test
 		"thinking": {"type": "enabled", "budget_tokens": 512}
 	}`)
 	gid := int64(1)
-	mutated := svc.ApplyParamOverrides(context.Background(), c, &gid, "antigravity", "claude-opus-4-6", body)
+	mutated := svc.ApplyParamOverrides(c, &gid, "antigravity", "claude-opus-4-6", body)
 
 	// Sanity check the sjson-level result before we feed it through the
 	// Claude→Gemini transformer.
@@ -110,7 +109,7 @@ func TestApplyParamOverrides_AntigravityThinkingTypeDisabledStripsThinkingConfig
 		"thinking": {"type": "enabled", "budget_tokens": 1024}
 	}`)
 	gid := int64(1)
-	mutated := svc.ApplyParamOverrides(context.Background(), c, &gid, "antigravity", "claude-opus-4-6", body)
+	mutated := svc.ApplyParamOverrides(c, &gid, "antigravity", "claude-opus-4-6", body)
 
 	if got := gjson.GetBytes(mutated, "thinking.type").String(); got != "disabled" {
 		t.Fatalf("expected body.thinking.type=disabled, got %q", got)

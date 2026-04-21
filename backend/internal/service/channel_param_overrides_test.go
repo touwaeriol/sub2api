@@ -63,7 +63,7 @@ func TestApplyParamOverrides_NilGroupIDReturnsBodyUnchanged(t *testing.T) {
 	c := newGinTestContext()
 	c.Request.Header.Set("X-Keep", "original")
 
-	out := svc.ApplyParamOverrides(context.Background(), c, nil, "anthropic", "claude-3", body)
+	out := svc.ApplyParamOverrides(c, nil, "anthropic", "claude-3", body)
 	if string(out) != string(body) {
 		t.Fatalf("expected body unchanged, got %s", string(out))
 	}
@@ -84,7 +84,7 @@ func TestApplyParamOverrides_EmptyRulesReturnsBodyUnchanged(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3"}`)
 	gid := int64(1)
-	out := svc.ApplyParamOverrides(context.Background(), nil, &gid, "anthropic", "claude-3", body)
+	out := svc.ApplyParamOverrides(nil, &gid, "anthropic", "claude-3", body)
 	if string(out) != string(body) {
 		t.Fatalf("expected body unchanged, got %s", string(out))
 	}
@@ -104,7 +104,7 @@ func TestApplyParamOverrides_BodySetApplied(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3","thinking":{"budget_tokens":512}}`)
 	gid := int64(1)
-	out := svc.ApplyParamOverrides(context.Background(), nil, &gid, "anthropic", "claude-3", body)
+	out := svc.ApplyParamOverrides(nil, &gid, "anthropic", "claude-3", body)
 	if got := gjson.GetBytes(out, "thinking.budget_tokens").Int(); got != 2048 {
 		t.Fatalf("expected budget_tokens=2048, got %d", got)
 	}
@@ -127,7 +127,7 @@ func TestApplyParamOverrides_CrossPlatformIsolation(t *testing.T) {
 
 	body := []byte(`{"model":"gpt-4"}`)
 	gid := int64(1)
-	out := svc.ApplyParamOverrides(context.Background(), nil, &gid, "openai", "gpt-4", body)
+	out := svc.ApplyParamOverrides(nil, &gid, "openai", "gpt-4", body)
 	if string(out) != string(body) {
 		t.Fatalf("expected openai body unchanged, got %s", string(out))
 	}
@@ -148,7 +148,7 @@ func TestApplyParamOverrides_HeaderPublishedToContext(t *testing.T) {
 	body := []byte(`{"model":"claude-3"}`)
 	c := newGinTestContext()
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(context.Background(), c, &gid, "anthropic", "claude-3", body)
+	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3", body)
 
 	overrides := paramoverride.HeadersFromContext(c.Request.Context())
 	if overrides == nil {
@@ -192,16 +192,15 @@ func TestApplyParamOverrides_ModelGlobFiltering(t *testing.T) {
 	svc := newTestChannelService(repo)
 
 	gid := int64(1)
-	ctx := context.Background()
 
 	// Matches claude-*
-	out := svc.ApplyParamOverrides(ctx, nil, &gid, "anthropic", "claude-3-opus", []byte(`{}`))
+	out := svc.ApplyParamOverrides(nil, &gid, "anthropic", "claude-3-opus", []byte(`{}`))
 	if got := gjson.GetBytes(out, "max_tokens").Int(); got != 4096 {
 		t.Fatalf("expected max_tokens=4096 for claude-3-opus, got %d", got)
 	}
 
 	// Does not match gpt-*
-	out = svc.ApplyParamOverrides(ctx, nil, &gid, "anthropic", "gpt-4", []byte(`{}`))
+	out = svc.ApplyParamOverrides(nil, &gid, "anthropic", "gpt-4", []byte(`{}`))
 	if gjson.GetBytes(out, "max_tokens").Exists() {
 		t.Fatalf("expected gpt-4 body unchanged, got %s", string(out))
 	}
@@ -238,7 +237,7 @@ func TestApplyParamOverrides_CacheInvalidatedAfterUpdate(t *testing.T) {
 	// First call: no overrides -> body unchanged.
 	ctx := context.Background()
 	gid := int64(1)
-	out := svc.ApplyParamOverrides(ctx, nil, &gid, "anthropic", "claude-3", []byte(`{}`))
+	out := svc.ApplyParamOverrides(nil, &gid, "anthropic", "claude-3", []byte(`{}`))
 	if gjson.GetBytes(out, "thinking.budget_tokens").Exists() {
 		t.Fatalf("expected initial body unchanged, got %s", string(out))
 	}
@@ -251,7 +250,7 @@ func TestApplyParamOverrides_CacheInvalidatedAfterUpdate(t *testing.T) {
 	}
 
 	// Second call: overrides now applied.
-	out = svc.ApplyParamOverrides(ctx, nil, &gid, "anthropic", "claude-3", []byte(`{}`))
+	out = svc.ApplyParamOverrides(nil, &gid, "anthropic", "claude-3", []byte(`{}`))
 	if got := gjson.GetBytes(out, "thinking.budget_tokens").Int(); got != 4096 {
 		t.Fatalf("expected budget_tokens=4096 after update, got %d", got)
 	}

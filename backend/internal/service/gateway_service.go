@@ -8028,7 +8028,6 @@ func (s *GatewayService) ResolveChannelMappingAndRestrict(ctx context.Context, g
 // ApplyParamOverrides 委托渠道服务应用参数覆盖（body 改写 + header 通过 context 发布）。
 // 兜底：channelService 为空时直接返回原 body。
 func (s *GatewayService) ApplyParamOverrides(
-	ctx context.Context,
 	c *gin.Context,
 	groupID *int64,
 	platform string,
@@ -8038,7 +8037,7 @@ func (s *GatewayService) ApplyParamOverrides(
 	if s.channelService == nil {
 		return body
 	}
-	return s.channelService.ApplyParamOverrides(ctx, c, groupID, platform, model, body)
+	return s.channelService.ApplyParamOverrides(c, groupID, platform, model, body)
 }
 
 // checkChannelPricingRestriction 根据渠道计费基准检查模型是否受定价列表限制。

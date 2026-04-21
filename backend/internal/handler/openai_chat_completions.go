@@ -192,7 +192,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		// 应用渠道级参数覆盖（body + header）
 		forwardBody = h.gatewayService.ApplyParamOverrides(
-			c.Request.Context(), c, apiKey.GroupID,
+			c, apiKey.GroupID,
 			account.Platform, channelMapping.MappedModel, forwardBody,
 		)
 		result, err := h.gatewayService.ForwardAsChatCompletions(c.Request.Context(), c, account, forwardBody, promptCacheKey, defaultMappedModel)
