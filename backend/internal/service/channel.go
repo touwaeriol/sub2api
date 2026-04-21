@@ -34,29 +34,6 @@ const (
 	BillingModelSourceChannelMapped = "channel_mapped"
 )
 
-// Parameter override rule targets, actions, and size limits. These mirror
-// the authoritative constants in the [paramoverride] package so that
-// callers in the service / handler layer can reference them without
-// importing the low-level package.
-//
-// Authoritative semantics — matching rule precedence, target/action
-// validation, and compile-time checks — live in internal/pkg/paramoverride.
-// See [paramoverride.Compile], [paramoverride.ApplyToBodyBytes], and
-// [paramoverride.ApplyToHeaders] for the behaviour these constants select.
-const (
-	ParamOverrideTargetBody   = paramoverride.TargetBody
-	ParamOverrideTargetHeader = paramoverride.TargetHeader
-
-	ParamOverrideActionSet    = paramoverride.ActionSet
-	ParamOverrideActionMerge  = paramoverride.ActionMerge
-	ParamOverrideActionRemove = paramoverride.ActionRemove
-	ParamOverrideActionAppend = paramoverride.ActionAppend
-
-	ParamOverrideMaxRulesPerPlatform = paramoverride.MaxRulesPerPlatform
-	ParamOverrideMaxModelGlobLength  = paramoverride.MaxModelGlobLength
-	ParamOverrideMaxPathLength       = paramoverride.MaxPathLength
-)
-
 // ChannelParamOverrideRule is the service-layer representation of a single
 // override rule. It is serialized directly to/from the channels.param_overrides
 // JSONB column via the standard encoding/json tags.

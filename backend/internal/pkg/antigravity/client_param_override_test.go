@@ -12,7 +12,7 @@ import (
 
 // TestNewAPIRequestWithURL_AppliesContextHeaderOverrides verifies that the
 // Antigravity client's request builder applies header overrides attached to
-// ctx via paramoverride.WithHeaders. This is the final safety net because
+// ctx via paramoverride.WithHeaderPayload. This is the final safety net because
 // the Antigravity upstream header is fully rebuilt (only 3 hard-coded
 // headers); without this hook user-configured header overrides for Gemini
 // upstream requests would silently disappear.
@@ -20,7 +20,7 @@ func TestNewAPIRequestWithURL_AppliesContextHeaderOverrides(t *testing.T) {
 	overrides := http.Header{}
 	overrides.Set("X-Goog-User-Project", "project-abc")
 	overrides.Set("User-Agent", "override-ua")
-	ctx := paramoverride.WithHeaders(context.Background(), overrides)
+	ctx := paramoverride.WithHeaderPayload(context.Background(), paramoverride.HeaderPayload{Headers: overrides})
 
 	req, err := NewAPIRequestWithURL(ctx, "https://example.com", "generateContent", "tok", []byte(`{}`))
 	if err != nil {

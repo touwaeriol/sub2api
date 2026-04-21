@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/antigravity"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/tidwall/gjson"
 )
 
@@ -29,7 +30,7 @@ import (
 func TestApplyParamOverrides_AntigravityThinkingBudgetPropagatesToGemini(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"antigravity": {
-			makeParamOverrideRule(ParamOverrideTargetBody, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetBody, paramoverride.ActionSet,
 				"thinking.budget_tokens", json.RawMessage(`5000`)),
 		},
 	}
@@ -45,7 +46,7 @@ func TestApplyParamOverrides_AntigravityThinkingBudgetPropagatesToGemini(t *test
 		"thinking": {"type": "enabled", "budget_tokens": 512}
 	}`)
 	gid := int64(1)
-	mutated := svc.ApplyParamOverrides(c, &gid, "antigravity", "claude-opus-4-6", body)
+	mutated := applyOverridesViaGin(svc, c, &gid, "antigravity", "claude-opus-4-6", body)
 
 	// Sanity check the sjson-level result before we feed it through the
 	// Claude→Gemini transformer.
@@ -96,7 +97,7 @@ func TestApplyParamOverrides_AntigravityThinkingBudgetPropagatesToGemini(t *test
 func TestApplyParamOverrides_AntigravityThinkingTypeDisabledStripsThinkingConfig(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"antigravity": {
-			makeParamOverrideRule(ParamOverrideTargetBody, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetBody, paramoverride.ActionSet,
 				"thinking.type", json.RawMessage(`"disabled"`)),
 		},
 	}
@@ -109,7 +110,7 @@ func TestApplyParamOverrides_AntigravityThinkingTypeDisabledStripsThinkingConfig
 		"thinking": {"type": "enabled", "budget_tokens": 1024}
 	}`)
 	gid := int64(1)
-	mutated := svc.ApplyParamOverrides(c, &gid, "antigravity", "claude-opus-4-6", body)
+	mutated := applyOverridesViaGin(svc, c, &gid, "antigravity", "claude-opus-4-6", body)
 
 	if got := gjson.GetBytes(mutated, "thinking.type").String(); got != "disabled" {
 		t.Fatalf("expected body.thinking.type=disabled, got %q", got)

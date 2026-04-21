@@ -6,85 +6,72 @@ import (
 	"net/http"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
-	"github.com/gin-gonic/gin"
 )
-
-// ParamOverrideHeadersGinKey is the gin.Context key under which the published
-// override headers are mirrored. Defined as a string constant so handlers and
-// tests can reference it without importing private types.
-const ParamOverrideHeadersGinKey = "paramOverrideHeaders"
 
 // ApplyParamOverrides mutates the outgoing request body according to the
 // channel-level override rules associated with the caller's group, and
-// publishes any header-targeted overrides through the request context so that
-// the upstream-request builders (which rebuild the wire request) can apply
-// them past their own header allow-lists.
+// publishes any header-targeted overrides through the returned context so
+// that the upstream-request builders (which rebuild the wire request) can
+// apply them past their own header allow-lists.
+//
+// Signature is framework-agnostic on purpose: a *ChannelService is core
+// domain, it must not depend on gin. The handler-facing wrappers
+// (GatewayService.ApplyParamOverrides, OpenAIGatewayService.ApplyParamOverrides)
+// are the place where the returned ctx gets re-attached to the gin.Context's
+// *http.Request.
 //
 // groupID nil -> the caller is not associated with any channel. The function
-// returns the body unchanged and does not touch the context.
+// returns the input body and input ctx unchanged.
 //
 // The returned slice is either the original body (no mutation) or a fresh
 // buffer produced by sjson; callers should replace their reference.
-//
-// When c is non-nil, the request's existing context is used for cache loads,
-// header overrides are stored on c.Request.Context() AND the gin store, and
-// c.Request is rewritten with the new context so that downstream service code
-// calling c.Request.Context() observes them. Passing c=nil is supported for
-// body-only tests and uses context.Background() for cache loads; header
-// propagation is disabled in that mode (no Request to attach headers to).
+// The returned ctx is either the input ctx (no headers to publish) or a
+// child carrying the HeaderPayload.
 func (s *ChannelService) ApplyParamOverrides(
-	c *gin.Context,
+	ctx context.Context,
 	groupID *int64,
 	platform string,
 	model string,
 	body []byte,
-) []byte {
-	if groupID == nil {
-		return body
+) ([]byte, context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	compiled := s.getCompiledParamOverrides(requestContext(c), *groupID)
+	if groupID == nil {
+		return body, ctx
+	}
+	compiled := s.getCompiledParamOverrides(ctx, *groupID)
 	if compiled.IsEmpty() {
-		return body
+		return body, ctx
 	}
 	rules := compiled.Match(platform, model)
 	if len(rules) == 0 {
-		return body
+		return body, ctx
 	}
-	publishHeaderOverrides(c, rules)
-	return paramoverride.ApplyToBodyBytes(body, rules)
-}
-
-// requestContext returns c.Request.Context() when available, falling back to
-// context.Background(). Used by ApplyParamOverrides so the cache load still
-// has a context when unit tests pass c=nil for body-only assertions.
-func requestContext(c *gin.Context) context.Context {
-	if c != nil && c.Request != nil {
-		return c.Request.Context()
-	}
-	return context.Background()
+	ctx = publishHeaderOverrides(ctx, rules)
+	return paramoverride.ApplyToBodyBytes(body, rules), ctx
 }
 
 // publishHeaderOverrides applies header rules into a fresh http.Header and
-// stores the resulting payload (headers + append-key metadata) on both the
-// request context and the gin store so that upstream builders (Anthropic /
-// OpenAI / Antigravity) can re-apply them past their own header allow-lists.
+// returns a child of ctx carrying the resulting payload (headers + append-key
+// metadata) so that upstream builders (Anthropic / OpenAI / Antigravity) can
+// re-apply them past their own header allow-lists.
 //
 // The append-key metadata is what lets ApplyContextHeadersToRequest preserve
 // Beta-policy / fingerprint defaults when merging — without it, a user
 // append rule on anthropic-beta would wipe the "context-1m-2025-08-07"
 // token the Beta policy had just set.
-func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) {
-	if c == nil || c.Request == nil {
-		return
-	}
+//
+// Returns ctx unchanged when no header rules fired (zero allocation fast
+// path).
+func publishHeaderOverrides(ctx context.Context, rules []paramoverride.CompiledRule) context.Context {
 	headers := http.Header{}
 	appendKeys := paramoverride.ApplyToHeadersWithMetadata(headers, rules)
 	if len(headers) == 0 {
-		return
+		return ctx
 	}
 	payload := paramoverride.HeaderPayload{Headers: headers, AppendKeys: appendKeys}
-	c.Set(ParamOverrideHeadersGinKey, headers)
-	c.Request = c.Request.WithContext(paramoverride.WithHeaderPayload(c.Request.Context(), payload))
+	return paramoverride.WithHeaderPayload(ctx, payload)
 }
 
 // getCompiledParamOverrides returns the compiled override snapshot for the

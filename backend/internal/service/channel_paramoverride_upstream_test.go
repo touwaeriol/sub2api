@@ -48,12 +48,25 @@ func newAnthropicUpstreamTestContext(t *testing.T, overrides ChannelParamOverrid
 	return svc, c
 }
 
+// applyOverridesViaGin replicates the gin.Context wiring that the
+// handler-facing GatewayService.ApplyParamOverrides wrapper does in
+// production: call the framework-agnostic ChannelService.ApplyParamOverrides
+// with ctx, then write the returned ctx back onto c.Request so subsequent
+// c.Request.Context() reads see the header payload. Tests exercising the
+// upstream request builders rely on this adapter because those builders
+// read overrides off c.Request.Context() via paramoverride.ApplyContextHeadersToRequest.
+func applyOverridesViaGin(svc *ChannelService, c *gin.Context, gid *int64, platform, model string, body []byte) []byte {
+	newBody, newCtx := svc.ApplyParamOverrides(c.Request.Context(), gid, platform, model, body)
+	c.Request = c.Request.WithContext(newCtx)
+	return newBody
+}
+
 func TestApplyParamOverrides_AnthropicBodyAndHeaderReachUpstream(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"anthropic": {
-			makeParamOverrideRule(ParamOverrideTargetBody, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetBody, paramoverride.ActionSet,
 				"thinking.budget_tokens", json.RawMessage(`2048`)),
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"X-Forced", json.RawMessage(`"yes"`)),
 		},
 	}
@@ -61,7 +74,7 @@ func TestApplyParamOverrides_AnthropicBodyAndHeaderReachUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3-opus","thinking":{"budget_tokens":512}}`)
 	gid := int64(1)
-	body = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
+	body = applyOverridesViaGin(svc, c, &gid, "anthropic", "claude-3-opus", body)
 
 	if got := gjson.GetBytes(body, "thinking.budget_tokens").Int(); got != 2048 {
 		t.Fatalf("body override not applied, got %s", string(body))
@@ -83,9 +96,9 @@ func TestApplyParamOverrides_AnthropicBodyAndHeaderReachUpstream(t *testing.T) {
 func TestApplyParamOverrides_OpenAIBodyAndHeaderReachUpstream(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"openai": {
-			makeParamOverrideRule(ParamOverrideTargetBody, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetBody, paramoverride.ActionSet,
 				"reasoning.effort", json.RawMessage(`"high"`)),
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionAppend,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionAppend,
 				"OpenAI-Beta", json.RawMessage(`"responses=experimental"`)),
 		},
 	}
@@ -93,7 +106,7 @@ func TestApplyParamOverrides_OpenAIBodyAndHeaderReachUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"gpt-5","reasoning":{"effort":"medium"}}`)
 	gid := int64(1)
-	body = svc.ApplyParamOverrides(c, &gid, "openai", "gpt-5", body)
+	body = applyOverridesViaGin(svc, c, &gid, "openai", "gpt-5", body)
 
 	if got := gjson.GetBytes(body, "reasoning.effort").String(); got != "high" {
 		t.Fatalf("expected reasoning.effort=high, got %q", got)
@@ -122,7 +135,7 @@ func TestApplyParamOverrides_AntigravityHeaderReachesUpstream(t *testing.T) {
 	// carries the override through the context value.
 	overrides := ChannelParamOverrides{
 		"antigravity": {
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"X-Goog-User-Project", json.RawMessage(`"project-abc"`)),
 		},
 	}
@@ -130,7 +143,7 @@ func TestApplyParamOverrides_AntigravityHeaderReachesUpstream(t *testing.T) {
 
 	body := []byte(`{"model":"gemini-2.5"}`)
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(c, &gid, "antigravity", "gemini-2.5", body)
+	_ = applyOverridesViaGin(svc, c, &gid, "antigravity", "gemini-2.5", body)
 
 	// Simulate Antigravity's NewAPIRequestWithURL: fresh request with only
 	// the hard-coded Content-Type / Authorization / User-Agent, then the
@@ -159,7 +172,7 @@ func TestApplyParamOverrides_AntigravityHeaderReachesUpstream(t *testing.T) {
 func TestApplyParamOverrides_AppendPreservesBetaPolicyDefault(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"anthropic": {
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionAppend,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionAppend,
 				"Anthropic-Beta", json.RawMessage(`"interleaved-thinking-2025-05-14"`)),
 		},
 	}
@@ -167,7 +180,7 @@ func TestApplyParamOverrides_AppendPreservesBetaPolicyDefault(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3-opus"}`)
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
+	_ = applyOverridesViaGin(svc, c, &gid, "anthropic", "claude-3-opus", body)
 
 	// Simulate buildUpstreamRequest's Beta-policy defaults already being set
 	// on the upstream request before the paramoverride hook fires.
@@ -192,7 +205,7 @@ func TestApplyParamOverrides_AppendPreservesBetaPolicyDefault(t *testing.T) {
 func TestApplyParamOverrides_SetStillOverwritesBetaPolicyDefault(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"anthropic": {
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"Anthropic-Beta", json.RawMessage(`"my-exact-value"`)),
 		},
 	}
@@ -200,7 +213,7 @@ func TestApplyParamOverrides_SetStillOverwritesBetaPolicyDefault(t *testing.T) {
 
 	body := []byte(`{"model":"claude-3-opus"}`)
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
+	_ = applyOverridesViaGin(svc, c, &gid, "anthropic", "claude-3-opus", body)
 
 	upstream, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
 	upstream.Header.Set("Anthropic-Beta", "context-1m-2025-08-07")
@@ -215,16 +228,16 @@ func TestApplyParamOverrides_SetStillOverwritesBetaPolicyDefault(t *testing.T) {
 func TestApplyParamOverrides_NoGroupIDSkipsEverything(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"anthropic": {
-			makeParamOverrideRule(ParamOverrideTargetBody, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetBody, paramoverride.ActionSet,
 				"x", json.RawMessage(`1`)),
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"X-Forced", json.RawMessage(`"yes"`)),
 		},
 	}
 	svc, c := newAnthropicUpstreamTestContext(t, overrides, "anthropic")
 
 	body := []byte(`{"model":"claude-3"}`)
-	body = svc.ApplyParamOverrides(c, nil, "anthropic", "claude-3", body)
+	body = applyOverridesViaGin(svc, c, nil, "anthropic", "claude-3", body)
 
 	if string(body) != `{"model":"claude-3"}` {
 		t.Fatalf("expected body unchanged, got %s", string(body))
@@ -247,7 +260,7 @@ func TestApplyParamOverrides_ContextPropagatesThroughRequestWithContext(t *testi
 	// ctx inside the service layer.
 	overrides := ChannelParamOverrides{
 		"anthropic": {
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"X-Version", json.RawMessage(`"v1"`)),
 		},
 	}
@@ -255,7 +268,7 @@ func TestApplyParamOverrides_ContextPropagatesThroughRequestWithContext(t *testi
 
 	originalCtx := c.Request.Context()
 	gid := int64(1)
-	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3", []byte(`{}`))
+	_ = applyOverridesViaGin(svc, c, &gid, "anthropic", "claude-3", []byte(`{}`))
 
 	// After the call, c.Request.Context() should carry the override map.
 	newCtx := c.Request.Context()
@@ -288,7 +301,7 @@ func TestOpenAIBuildUpstreamRequest_AppliesContextHeaderOverrides(t *testing.T) 
 
 	overrides := http.Header{}
 	overrides.Set("X-Custom-Override", "yes")
-	ctx := paramoverride.WithHeaders(c.Request.Context(), overrides)
+	ctx := paramoverride.WithHeaderPayload(c.Request.Context(), paramoverride.HeaderPayload{Headers: overrides})
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
@@ -315,7 +328,7 @@ func TestOpenAIBuildUpstreamRequest_AppliesContextHeaderOverrides(t *testing.T) 
 func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 	overrides := ChannelParamOverrides{
 		"openai": {
-			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+			makeParamOverrideRule(paramoverride.TargetHeader, paramoverride.ActionSet,
 				"X-Forced-WS", json.RawMessage(`"ws-value"`)),
 		},
 	}
@@ -329,7 +342,7 @@ func TestApplyParamOverrides_WSContextCarriesHeaderOverrides(t *testing.T) {
 
 	gid := int64(1)
 	body := []byte(`{"model":"gpt-realtime","type":"response.create"}`)
-	_ = svc.ApplyParamOverrides(c, &gid, "openai", "gpt-realtime", body)
+	_ = applyOverridesViaGin(svc, c, &gid, "openai", "gpt-realtime", body)
 
 	// Simulate the handler's `ctx = c.Request.Context()` refresh.
 	fresh := c.Request.Context()
@@ -366,7 +379,7 @@ func TestOpenAIBuildUpstreamRequestOpenAIPassthrough_AppliesContextHeaderOverrid
 	overrides := http.Header{}
 	overrides.Set("OpenAI-Beta", "user-forced-value")
 	overrides.Set("X-Custom-Override", "yes")
-	ctx := paramoverride.WithHeaders(c.Request.Context(), overrides)
+	ctx := paramoverride.WithHeaderPayload(c.Request.Context(), paramoverride.HeaderPayload{Headers: overrides})
 
 	svc := &OpenAIGatewayService{}
 	account := &Account{
