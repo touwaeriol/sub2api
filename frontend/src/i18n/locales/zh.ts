@@ -1936,6 +1936,7 @@ export default {
           mergeHeaderNotSupported: '请求头不支持合并动作',
           appendBodyNotSupported: '请求体不支持追加动作',
           valueNullUseRemove: '值为空时请改用"移除"动作删除字段',
+          ruleIndexLabel: '规则 {n}',
           targets: {
             body: '请求体',
             header: '请求头'

@@ -1849,6 +1849,7 @@ export default {
           mergeHeaderNotSupported: 'Merge action is not supported for headers',
           appendBodyNotSupported: 'Append action is not supported for body',
           valueNullUseRemove: 'Use the "Remove" action to delete a field; empty value is not allowed for Set/Merge/Append',
+          ruleIndexLabel: 'Rule {n}',
           targets: {
             body: 'Body',
             header: 'Header'

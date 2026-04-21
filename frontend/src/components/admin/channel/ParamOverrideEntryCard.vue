@@ -1,8 +1,12 @@
 <template>
-  <div class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800">
+  <div
+    class="rounded-lg border border-gray-200 bg-gray-50 p-3 dark:border-dark-600 dark:bg-dark-800"
+    role="group"
+    :aria-label="t('admin.channels.form.paramOverride.ruleIndexLabel', { n: ruleIndex + 1 })"
+  >
     <!-- Header row: enabled toggle + glob + target + action + remove -->
     <div class="flex flex-wrap items-center gap-2">
-      <span class="text-xs text-gray-400 dark:text-gray-500">#{{ ruleIndex + 1 }}</span>
+      <span class="text-xs text-gray-400 dark:text-gray-500" aria-hidden="true">#{{ ruleIndex + 1 }}</span>
 
       <Toggle :model-value="rule.enabled" @update:model-value="emitField('enabled', $event)" />
 
