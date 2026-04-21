@@ -77,15 +77,17 @@ type ChangePasswordRequest struct {
 type UserService struct {
 	userRepo             UserRepository
 	authCacheInvalidator APIKeyAuthCacheInvalidator
-	billingCache         BillingCache
+	// balanceCache 只用于余额变更后失效缓存（ISP：仅 BalanceCache 子接口，非完整 BillingCache）
+	balanceCache BalanceCache
 }
 
-// NewUserService 创建用户服务实例
-func NewUserService(userRepo UserRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, billingCache BillingCache) *UserService {
+// NewUserService 创建用户服务实例。
+// balanceCache 参数类型为 BalanceCache 子接口；生产注入同一份 *billingCache 实现。
+func NewUserService(userRepo UserRepository, authCacheInvalidator APIKeyAuthCacheInvalidator, balanceCache BalanceCache) *UserService {
 	return &UserService{
 		userRepo:             userRepo,
 		authCacheInvalidator: authCacheInvalidator,
-		billingCache:         billingCache,
+		balanceCache:         balanceCache,
 	}
 }
 
@@ -200,11 +202,11 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 	if s.authCacheInvalidator != nil {
 		s.authCacheInvalidator.InvalidateAuthCacheByUserID(ctx, userID)
 	}
-	if s.billingCache != nil {
+	if s.balanceCache != nil {
 		go func() {
 			cacheCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := s.billingCache.InvalidateUserBalance(cacheCtx, userID); err != nil {
+			if err := s.balanceCache.InvalidateUserBalance(cacheCtx, userID); err != nil {
 				log.Printf("invalidate user balance cache failed: user_id=%d err=%v", userID, err)
 			}
 		}()
