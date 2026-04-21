@@ -37,6 +37,12 @@ const (
 // semantics.
 var paramOverrideLiteralNull = []byte("null")
 
+// paramOverrideReservedBodyPath is the body path callers are forbidden from
+// overriding: rewriting `model` at the paramoverride layer would desync the
+// billing record and the actual upstream model. Matches the frontend
+// RESERVED_BODY_PATHS constant.
+const paramOverrideReservedBodyPath = "model"
+
 // paramOverrideRuleRequest mirrors service.ChannelParamOverrideRule for inbound
 // admin API payloads. Validation is performed explicitly (see
 // validateParamOverrideRules) because cross-field constraints (append only for
@@ -176,7 +182,7 @@ func validateParamOverrideRule(r service.ChannelParamOverrideRule) string {
 	if len(r.Path) > service.ParamOverrideMaxPathLength {
 		return paramOverrideReasonPathTooLong
 	}
-	if r.Target == service.ParamOverrideTargetBody && r.Path == "model" {
+	if r.Target == service.ParamOverrideTargetBody && r.Path == paramOverrideReservedBodyPath {
 		return paramOverrideReasonPathModelReserved
 	}
 	if len(r.ModelGlob) > service.ParamOverrideMaxModelGlobLength {

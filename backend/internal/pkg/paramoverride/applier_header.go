@@ -73,6 +73,10 @@ func decodeHeaderValue(rule *CompiledRule) (string, bool) {
 
 // appendHeaderValue appends value to the existing comma-separated list under
 // name, deduplicating so repeated Compile→Apply cycles stay idempotent.
+// Comparison uses strings.EqualFold: HTTP token matching is case-insensitive
+// per RFC 7230 §3.2.4 for field names, and the de-facto convention for
+// token lists in headers like Anthropic-Beta / OpenAI-Beta also treats
+// tokens case-insensitively.
 func appendHeaderValue(h http.Header, name, value string) {
 	existing := h.Get(name)
 	if existing == "" {
@@ -80,7 +84,7 @@ func appendHeaderValue(h http.Header, name, value string) {
 		return
 	}
 	for _, part := range strings.Split(existing, ",") {
-		if strings.TrimSpace(part) == value {
+		if strings.EqualFold(strings.TrimSpace(part), value) {
 			return
 		}
 	}

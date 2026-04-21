@@ -67,6 +67,23 @@ func TestApplyToHeaders_Append_Dedup(t *testing.T) {
 	}
 }
 
+// TestApplyToHeaders_Append_DedupIgnoresCase pins the case-insensitive dedup
+// contract: HTTP header tokens are case-insensitive, so appending a token
+// that differs only in case from an existing one must be a no-op.
+func TestApplyToHeaders_Append_DedupIgnoresCase(t *testing.T) {
+	h := http.Header{}
+	h.Set("Anthropic-Beta", "Feature-A,feature-b")
+	rules := mustCompileHeaders(t, []Rule{{
+		Enabled: true, Target: TargetHeader, Action: ActionAppend,
+		// Different casing vs. "Feature-A" already in the list.
+		Path: "Anthropic-Beta", Value: json.RawMessage(`"FEATURE-a"`),
+	}})
+	ApplyToHeaders(h, rules)
+	if got := h.Get("Anthropic-Beta"); got != "Feature-A,feature-b" {
+		t.Fatalf("expected case-insensitive dedup, got %q", got)
+	}
+}
+
 func TestApplyToHeaders_Remove(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Extra", "to-be-removed")
