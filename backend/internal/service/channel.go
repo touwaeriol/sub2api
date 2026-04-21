@@ -34,9 +34,15 @@ const (
 	BillingModelSourceChannelMapped = "channel_mapped"
 )
 
-// Parameter override rule targets and actions. These mirror the authoritative
-// constants in the paramoverride package so that callers in the service /
-// handler layer can reference them without importing the low-level package.
+// Parameter override rule targets, actions, and size limits. These mirror
+// the authoritative constants in the [paramoverride] package so that
+// callers in the service / handler layer can reference them without
+// importing the low-level package.
+//
+// Authoritative semantics — matching rule precedence, target/action
+// validation, and compile-time checks — live in internal/pkg/paramoverride.
+// See [paramoverride.Compile], [paramoverride.ApplyToBodyBytes], and
+// [paramoverride.ApplyToHeaders] for the behaviour these constants select.
 const (
 	ParamOverrideTargetBody   = paramoverride.TargetBody
 	ParamOverrideTargetHeader = paramoverride.TargetHeader
