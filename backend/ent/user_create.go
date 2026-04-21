@@ -21,6 +21,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/user"
 	"github.com/Wei-Shaw/sub2api/ent/userattributevalue"
 	"github.com/Wei-Shaw/sub2api/ent/usersubscription"
+	"github.com/Wei-Shaw/sub2api/ent/userusagelimitrule"
 )
 
 // UserCreate is the builder for creating a User entity.
@@ -211,6 +212,34 @@ func (_c *UserCreate) SetNillableTotpEnabledAt(v *time.Time) *UserCreate {
 	return _c
 }
 
+// SetUsageLimitEnabled sets the "usage_limit_enabled" field.
+func (_c *UserCreate) SetUsageLimitEnabled(v bool) *UserCreate {
+	_c.mutation.SetUsageLimitEnabled(v)
+	return _c
+}
+
+// SetNillableUsageLimitEnabled sets the "usage_limit_enabled" field if the given value is not nil.
+func (_c *UserCreate) SetNillableUsageLimitEnabled(v *bool) *UserCreate {
+	if v != nil {
+		_c.SetUsageLimitEnabled(*v)
+	}
+	return _c
+}
+
+// SetDailyUsageLimitUsd sets the "daily_usage_limit_usd" field.
+func (_c *UserCreate) SetDailyUsageLimitUsd(v float64) *UserCreate {
+	_c.mutation.SetDailyUsageLimitUsd(v)
+	return _c
+}
+
+// SetNillableDailyUsageLimitUsd sets the "daily_usage_limit_usd" field if the given value is not nil.
+func (_c *UserCreate) SetNillableDailyUsageLimitUsd(v *float64) *UserCreate {
+	if v != nil {
+		_c.SetDailyUsageLimitUsd(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *UserCreate) AddAPIKeyIDs(ids ...int64) *UserCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -359,6 +388,21 @@ func (_c *UserCreate) AddPaymentOrders(v ...*PaymentOrder) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddPaymentOrderIDs(ids...)
+}
+
+// AddUsageLimitRuleIDs adds the "usage_limit_rules" edge to the UserUsageLimitRule entity by IDs.
+func (_c *UserCreate) AddUsageLimitRuleIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddUsageLimitRuleIDs(ids...)
+	return _c
+}
+
+// AddUsageLimitRules adds the "usage_limit_rules" edges to the UserUsageLimitRule entity.
+func (_c *UserCreate) AddUsageLimitRules(v ...*UserUsageLimitRule) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddUsageLimitRuleIDs(ids...)
 }
 
 // Mutation returns the UserMutation object of the builder.
@@ -586,6 +630,14 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 		_spec.SetField(user.FieldTotpEnabledAt, field.TypeTime, value)
 		_node.TotpEnabledAt = &value
 	}
+	if value, ok := _c.mutation.UsageLimitEnabled(); ok {
+		_spec.SetField(user.FieldUsageLimitEnabled, field.TypeBool, value)
+		_node.UsageLimitEnabled = &value
+	}
+	if value, ok := _c.mutation.DailyUsageLimitUsd(); ok {
+		_spec.SetField(user.FieldDailyUsageLimitUsd, field.TypeFloat64, value)
+		_node.DailyUsageLimitUsd = &value
+	}
 	if nodes := _c.mutation.APIKeysIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
 			Rel:     sqlgraph.O2M,
@@ -743,6 +795,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(paymentorder.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.UsageLimitRulesIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.UsageLimitRulesTable,
+			Columns: []string{user.UsageLimitRulesColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(userusagelimitrule.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -985,6 +1053,48 @@ func (u *UserUpsert) UpdateTotpEnabledAt() *UserUpsert {
 // ClearTotpEnabledAt clears the value of the "totp_enabled_at" field.
 func (u *UserUpsert) ClearTotpEnabledAt() *UserUpsert {
 	u.SetNull(user.FieldTotpEnabledAt)
+	return u
+}
+
+// SetUsageLimitEnabled sets the "usage_limit_enabled" field.
+func (u *UserUpsert) SetUsageLimitEnabled(v bool) *UserUpsert {
+	u.Set(user.FieldUsageLimitEnabled, v)
+	return u
+}
+
+// UpdateUsageLimitEnabled sets the "usage_limit_enabled" field to the value that was provided on create.
+func (u *UserUpsert) UpdateUsageLimitEnabled() *UserUpsert {
+	u.SetExcluded(user.FieldUsageLimitEnabled)
+	return u
+}
+
+// ClearUsageLimitEnabled clears the value of the "usage_limit_enabled" field.
+func (u *UserUpsert) ClearUsageLimitEnabled() *UserUpsert {
+	u.SetNull(user.FieldUsageLimitEnabled)
+	return u
+}
+
+// SetDailyUsageLimitUsd sets the "daily_usage_limit_usd" field.
+func (u *UserUpsert) SetDailyUsageLimitUsd(v float64) *UserUpsert {
+	u.Set(user.FieldDailyUsageLimitUsd, v)
+	return u
+}
+
+// UpdateDailyUsageLimitUsd sets the "daily_usage_limit_usd" field to the value that was provided on create.
+func (u *UserUpsert) UpdateDailyUsageLimitUsd() *UserUpsert {
+	u.SetExcluded(user.FieldDailyUsageLimitUsd)
+	return u
+}
+
+// AddDailyUsageLimitUsd adds v to the "daily_usage_limit_usd" field.
+func (u *UserUpsert) AddDailyUsageLimitUsd(v float64) *UserUpsert {
+	u.Add(user.FieldDailyUsageLimitUsd, v)
+	return u
+}
+
+// ClearDailyUsageLimitUsd clears the value of the "daily_usage_limit_usd" field.
+func (u *UserUpsert) ClearDailyUsageLimitUsd() *UserUpsert {
+	u.SetNull(user.FieldDailyUsageLimitUsd)
 	return u
 }
 
@@ -1247,6 +1357,55 @@ func (u *UserUpsertOne) UpdateTotpEnabledAt() *UserUpsertOne {
 func (u *UserUpsertOne) ClearTotpEnabledAt() *UserUpsertOne {
 	return u.Update(func(s *UserUpsert) {
 		s.ClearTotpEnabledAt()
+	})
+}
+
+// SetUsageLimitEnabled sets the "usage_limit_enabled" field.
+func (u *UserUpsertOne) SetUsageLimitEnabled(v bool) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetUsageLimitEnabled(v)
+	})
+}
+
+// UpdateUsageLimitEnabled sets the "usage_limit_enabled" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateUsageLimitEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateUsageLimitEnabled()
+	})
+}
+
+// ClearUsageLimitEnabled clears the value of the "usage_limit_enabled" field.
+func (u *UserUpsertOne) ClearUsageLimitEnabled() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearUsageLimitEnabled()
+	})
+}
+
+// SetDailyUsageLimitUsd sets the "daily_usage_limit_usd" field.
+func (u *UserUpsertOne) SetDailyUsageLimitUsd(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.SetDailyUsageLimitUsd(v)
+	})
+}
+
+// AddDailyUsageLimitUsd adds v to the "daily_usage_limit_usd" field.
+func (u *UserUpsertOne) AddDailyUsageLimitUsd(v float64) *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.AddDailyUsageLimitUsd(v)
+	})
+}
+
+// UpdateDailyUsageLimitUsd sets the "daily_usage_limit_usd" field to the value that was provided on create.
+func (u *UserUpsertOne) UpdateDailyUsageLimitUsd() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateDailyUsageLimitUsd()
+	})
+}
+
+// ClearDailyUsageLimitUsd clears the value of the "daily_usage_limit_usd" field.
+func (u *UserUpsertOne) ClearDailyUsageLimitUsd() *UserUpsertOne {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearDailyUsageLimitUsd()
 	})
 }
 
@@ -1675,6 +1834,55 @@ func (u *UserUpsertBulk) UpdateTotpEnabledAt() *UserUpsertBulk {
 func (u *UserUpsertBulk) ClearTotpEnabledAt() *UserUpsertBulk {
 	return u.Update(func(s *UserUpsert) {
 		s.ClearTotpEnabledAt()
+	})
+}
+
+// SetUsageLimitEnabled sets the "usage_limit_enabled" field.
+func (u *UserUpsertBulk) SetUsageLimitEnabled(v bool) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetUsageLimitEnabled(v)
+	})
+}
+
+// UpdateUsageLimitEnabled sets the "usage_limit_enabled" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateUsageLimitEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateUsageLimitEnabled()
+	})
+}
+
+// ClearUsageLimitEnabled clears the value of the "usage_limit_enabled" field.
+func (u *UserUpsertBulk) ClearUsageLimitEnabled() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearUsageLimitEnabled()
+	})
+}
+
+// SetDailyUsageLimitUsd sets the "daily_usage_limit_usd" field.
+func (u *UserUpsertBulk) SetDailyUsageLimitUsd(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.SetDailyUsageLimitUsd(v)
+	})
+}
+
+// AddDailyUsageLimitUsd adds v to the "daily_usage_limit_usd" field.
+func (u *UserUpsertBulk) AddDailyUsageLimitUsd(v float64) *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.AddDailyUsageLimitUsd(v)
+	})
+}
+
+// UpdateDailyUsageLimitUsd sets the "daily_usage_limit_usd" field to the value that was provided on create.
+func (u *UserUpsertBulk) UpdateDailyUsageLimitUsd() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.UpdateDailyUsageLimitUsd()
+	})
+}
+
+// ClearDailyUsageLimitUsd clears the value of the "daily_usage_limit_usd" field.
+func (u *UserUpsertBulk) ClearDailyUsageLimitUsd() *UserUpsertBulk {
+	return u.Update(func(s *UserUpsert) {
+		s.ClearDailyUsageLimitUsd()
 	})
 }
 

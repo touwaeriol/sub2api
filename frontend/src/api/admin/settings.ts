@@ -29,6 +29,10 @@ export interface SystemSettings {
   default_balance: number
   default_concurrency: number
   default_subscriptions: DefaultSubscriptionSetting[]
+  // 用户每日配额限制（feature issue #1750）
+  usage_limit_enabled: boolean
+  default_usage_limit_enabled: boolean
+  default_daily_usage_limit_usd: number
   // OEM settings
   site_name: string
   site_logo: string
@@ -148,6 +152,10 @@ export interface UpdateSettingsRequest {
   default_balance?: number
   default_concurrency?: number
   default_subscriptions?: DefaultSubscriptionSetting[]
+  // 用户每日配额限制（feature issue #1750）
+  usage_limit_enabled?: boolean
+  default_usage_limit_enabled?: boolean
+  default_daily_usage_limit_usd?: number
   site_name?: string
   site_logo?: string
   site_subtitle?: string

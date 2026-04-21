@@ -1493,6 +1493,65 @@
               </div>
             </div>
 
+            <!-- 用户每日配额限制（feature issue #1750；契约 §1.4） -->
+            <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
+              <div class="mb-3">
+                <label class="font-medium text-gray-900 dark:text-white">
+                  {{ t('userQuota.globalEnabled') }}
+                </label>
+              </div>
+              <div class="grid grid-cols-1 gap-6 md:grid-cols-3">
+                <label class="flex items-start gap-2">
+                  <input
+                    v-model="form.usage_limit_enabled"
+                    type="checkbox"
+                    class="mt-1"
+                  />
+                  <div>
+                    <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t('userQuota.globalEnabled') }}
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('userQuota.globalEnabledHint') }}
+                    </p>
+                  </div>
+                </label>
+                <label class="flex items-start gap-2">
+                  <input
+                    v-model="form.default_usage_limit_enabled"
+                    type="checkbox"
+                    class="mt-1"
+                    :disabled="!form.usage_limit_enabled"
+                  />
+                  <div>
+                    <div class="text-sm font-medium text-gray-700 dark:text-gray-300">
+                      {{ t('userQuota.defaultEnabled') }}
+                    </div>
+                    <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      {{ t('userQuota.defaultEnabledHint') }}
+                    </p>
+                  </div>
+                </label>
+                <div>
+                  <label class="mb-2 block text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('userQuota.defaultDailyLimit') }}
+                  </label>
+                  <input
+                    v-model.number="form.default_daily_usage_limit_usd"
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    class="input"
+                    placeholder="0"
+                    :disabled="!form.usage_limit_enabled"
+                  />
+                  <p class="mt-1.5 text-xs text-gray-500 dark:text-gray-400">
+                    {{ t('userQuota.defaultDailyLimitHint') }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
             <div class="border-t border-gray-100 pt-4 dark:border-dark-700">
               <div class="mb-3 flex items-center justify-between">
                 <div>
@@ -2656,6 +2715,10 @@ const form = reactive<SettingsForm>({
   default_balance: 0,
   default_concurrency: 1,
   default_subscriptions: [],
+  // 用户每日配额限制（feature issue #1750）
+  usage_limit_enabled: false,
+  default_usage_limit_enabled: false,
+  default_daily_usage_limit_usd: 0,
   site_name: 'Sub2API',
   site_logo: '',
   site_subtitle: 'Subscription to API Conversion Platform',
@@ -3072,6 +3135,10 @@ async function saveSettings() {
       default_balance: form.default_balance,
       default_concurrency: form.default_concurrency,
       default_subscriptions: normalizedDefaultSubscriptions,
+      // 用户每日配额限制（feature issue #1750）
+      usage_limit_enabled: form.usage_limit_enabled,
+      default_usage_limit_enabled: form.default_usage_limit_enabled,
+      default_daily_usage_limit_usd: Number(form.default_daily_usage_limit_usd) || 0,
       site_name: form.site_name,
       site_logo: form.site_logo,
       site_subtitle: form.site_subtitle,

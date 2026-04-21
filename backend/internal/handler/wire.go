@@ -35,6 +35,7 @@ func ProvideAdminHandlers(
 	scheduledTestHandler *admin.ScheduledTestHandler,
 	channelHandler *admin.ChannelHandler,
 	paymentHandler *admin.PaymentHandler,
+	quotaHandler *admin.QuotaHandler,
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:             dashboardHandler,
@@ -63,7 +64,17 @@ func ProvideAdminHandlers(
 		ScheduledTest:         scheduledTestHandler,
 		Channel:               channelHandler,
 		Payment:               paymentHandler,
+		Quota:                 quotaHandler,
 	}
+}
+
+// ProvideUserHandler 在构造后调用 SetQuotaService 注入 quota 依赖（feature issue #1750）。
+func ProvideUserHandler(userService *service.UserService, quotaService service.QuotaService) *UserHandler {
+	h := NewUserHandler(userService)
+	if quotaService != nil {
+		h.SetQuotaService(quotaService)
+	}
+	return h
 }
 
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
@@ -117,7 +128,7 @@ func ProvideHandlers(
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
-	NewUserHandler,
+	ProvideUserHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,
@@ -157,6 +168,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewScheduledTestHandler,
 	admin.NewChannelHandler,
 	admin.NewPaymentHandler,
+	admin.NewQuotaHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

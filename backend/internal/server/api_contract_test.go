@@ -605,7 +605,10 @@ func TestAPIContracts(t *testing.T) {
 					"payment_cancel_rate_limit_max": 0,
 					"payment_cancel_rate_limit_window": 0,
 					"payment_cancel_rate_limit_unit": "",
-					"payment_cancel_rate_limit_window_mode": ""
+					"payment_cancel_rate_limit_window_mode": "",
+					"usage_limit_enabled": false,
+					"default_usage_limit_enabled": false,
+					"default_daily_usage_limit_usd": 0
 				}
 			}`,
 		},
@@ -890,6 +893,10 @@ func (r *stubUserRepo) EnableTotp(ctx context.Context, userID int64) error {
 }
 
 func (r *stubUserRepo) DisableTotp(ctx context.Context, userID int64) error {
+	return errors.New("not implemented")
+}
+
+func (r *stubUserRepo) UpdateUsageLimit(ctx context.Context, userID int64, enabled *bool, dailyUsageLimitUSD *float64) error {
 	return errors.New("not implemented")
 }
 

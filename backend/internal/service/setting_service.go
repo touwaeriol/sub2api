@@ -555,6 +555,15 @@ func (s *SettingService) UpdateSettings(ctx context.Context, settings *SystemSet
 	// 默认配置
 	updates[SettingKeyDefaultConcurrency] = strconv.Itoa(settings.DefaultConcurrency)
 	updates[SettingKeyDefaultBalance] = strconv.FormatFloat(settings.DefaultBalance, 'f', 8, 64)
+
+	// 用户每日配额限制（feature issue #1750）
+	updates[SettingKeyUsageLimitEnabled] = strconv.FormatBool(settings.UsageLimitEnabled)
+	updates[SettingKeyDefaultUsageLimitEnabled] = strconv.FormatBool(settings.DefaultUsageLimitEnabled)
+	if settings.DefaultDailyUsageLimitUSD < 0 {
+		settings.DefaultDailyUsageLimitUSD = 0
+	}
+	updates[SettingKeyDefaultDailyUsageLimitUSD] = strconv.FormatFloat(settings.DefaultDailyUsageLimitUSD, 'f', 8, 64)
+
 	defaultSubsJSON, err := json.Marshal(settings.DefaultSubscriptions)
 	if err != nil {
 		return fmt.Errorf("marshal default subscriptions: %w", err)
@@ -880,6 +889,46 @@ func (s *SettingService) GetDefaultSubscriptions(ctx context.Context) []DefaultS
 	return parseDefaultSubscriptions(value)
 }
 
+// GetBool 通用布尔 setting 读取（用于 QuotaService 等下游），
+// 设置不存在或解析失败时返回 false, nil（不当作错误）。
+func (s *SettingService) GetBool(ctx context.Context, key string) (bool, error) {
+	value, err := s.settingRepo.GetValue(ctx, key)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return value == "true", nil
+}
+
+// GetFloat 通用浮点 setting 读取（用于 QuotaService 等下游），
+// 设置不存在或解析失败时返回 0, nil。
+func (s *SettingService) GetFloat(ctx context.Context, key string) (float64, error) {
+	value, err := s.settingRepo.GetValue(ctx, key)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	v, convErr := strconv.ParseFloat(value, 64)
+	if convErr != nil {
+		return 0, nil
+	}
+	return v, nil
+}
+
+// GetDefaultDailyUsageLimitUSD 获取新建用户默认的每日配额（feature issue #1750）。
+// 0 或未设置代表不下发（用户 daily_usage_limit_usd 保持 nil=不限）。
+func (s *SettingService) GetDefaultDailyUsageLimitUSD(ctx context.Context) float64 {
+	v, _ := s.GetFloat(ctx, SettingKeyDefaultDailyUsageLimitUSD)
+	if v < 0 {
+		return 0
+	}
+	return v
+}
+
 // InitializeDefaultSettings 初始化默认设置
 func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 	// 检查是否已有设置
@@ -1000,6 +1049,13 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		result.DefaultBalance = s.cfg.Default.UserBalance
 	}
 	result.DefaultSubscriptions = parseDefaultSubscriptions(settings[SettingKeyDefaultSubscriptions])
+
+	// 用户每日配额限制（feature issue #1750）
+	result.UsageLimitEnabled = settings[SettingKeyUsageLimitEnabled] == "true"
+	result.DefaultUsageLimitEnabled = settings[SettingKeyDefaultUsageLimitEnabled] == "true"
+	if v, err := strconv.ParseFloat(settings[SettingKeyDefaultDailyUsageLimitUSD], 64); err == nil && v >= 0 {
+		result.DefaultDailyUsageLimitUSD = v
+	}
 
 	// 敏感信息直接返回，方便测试连接时使用
 	result.SMTPPassword = settings[SettingKeySMTPPassword]

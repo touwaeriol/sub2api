@@ -241,8 +241,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	// 2) billing eligibility check (after wait)
 	if err := h.billingCacheService.CheckBillingEligibility(c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription); err != nil {
 		reqLog.Info("gemini.billing_eligibility_check_failed", zap.Error(err))
-		status, _, message := billingErrorDetails(err)
-		googleError(c, status, message)
+		status, code, message, metadata := billingErrorDetails(err)
+		googleErrorWithReason(c, status, code, message, metadata)
 		return
 	}
 
@@ -633,13 +633,26 @@ type pathParseError struct{ msg string }
 func (e *pathParseError) Error() string { return e.msg }
 
 func googleError(c *gin.Context, status int, message string) {
-	c.JSON(status, gin.H{
+	googleErrorWithReason(c, status, "", message, nil)
+}
+
+// googleErrorWithReason 带 reason + metadata 的 Google API 格式错误响应
+// （feature issue #1750：配额超限等场景要求前端能取到 metadata 和 reason 做 i18n 渲染）
+func googleErrorWithReason(c *gin.Context, status int, reason, message string, metadata map[string]string) {
+	body := gin.H{
 		"error": gin.H{
 			"code":    status,
 			"message": message,
 			"status":  googleapi.HTTPStatusToGoogleStatus(status),
 		},
-	})
+	}
+	if reason != "" {
+		body["reason"] = reason
+	}
+	if len(metadata) > 0 {
+		body["metadata"] = metadata
+	}
+	c.JSON(status, body)
 }
 
 func writeUpstreamResponse(c *gin.Context, res *service.UpstreamHTTPResult) {

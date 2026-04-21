@@ -157,6 +157,9 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		DefaultConcurrency:                   settings.DefaultConcurrency,
 		DefaultBalance:                       settings.DefaultBalance,
 		DefaultSubscriptions:                 defaultSubscriptions,
+		UsageLimitEnabled:                    settings.UsageLimitEnabled,
+		DefaultUsageLimitEnabled:             settings.DefaultUsageLimitEnabled,
+		DefaultDailyUsageLimitUSD:            settings.DefaultDailyUsageLimitUSD,
 		EnableModelFallback:                  settings.EnableModelFallback,
 		FallbackModelAnthropic:               settings.FallbackModelAnthropic,
 		FallbackModelOpenAI:                  settings.FallbackModelOpenAI,
@@ -272,6 +275,11 @@ type UpdateSettingsRequest struct {
 	DefaultConcurrency   int                              `json:"default_concurrency"`
 	DefaultBalance       float64                          `json:"default_balance"`
 	DefaultSubscriptions []dto.DefaultSubscriptionSetting `json:"default_subscriptions"`
+
+	// 用户每日配额限制（feature issue #1750）
+	UsageLimitEnabled         *bool    `json:"usage_limit_enabled"`
+	DefaultUsageLimitEnabled  *bool    `json:"default_usage_limit_enabled"`
+	DefaultDailyUsageLimitUSD *float64 `json:"default_daily_usage_limit_usd"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -828,17 +836,36 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		DefaultConcurrency:               req.DefaultConcurrency,
 		DefaultBalance:                   req.DefaultBalance,
 		DefaultSubscriptions:             defaultSubscriptions,
-		EnableModelFallback:              req.EnableModelFallback,
-		FallbackModelAnthropic:           req.FallbackModelAnthropic,
-		FallbackModelOpenAI:              req.FallbackModelOpenAI,
-		FallbackModelGemini:              req.FallbackModelGemini,
-		FallbackModelAntigravity:         req.FallbackModelAntigravity,
-		EnableIdentityPatch:              req.EnableIdentityPatch,
-		IdentityPatchPrompt:              req.IdentityPatchPrompt,
-		MinClaudeCodeVersion:             req.MinClaudeCodeVersion,
-		MaxClaudeCodeVersion:             req.MaxClaudeCodeVersion,
-		AllowUngroupedKeyScheduling:      req.AllowUngroupedKeyScheduling,
-		BackendModeEnabled:               req.BackendModeEnabled,
+		// 用户每日配额限制（feature issue #1750）
+		UsageLimitEnabled: func() bool {
+			if req.UsageLimitEnabled != nil {
+				return *req.UsageLimitEnabled
+			}
+			return previousSettings.UsageLimitEnabled
+		}(),
+		DefaultUsageLimitEnabled: func() bool {
+			if req.DefaultUsageLimitEnabled != nil {
+				return *req.DefaultUsageLimitEnabled
+			}
+			return previousSettings.DefaultUsageLimitEnabled
+		}(),
+		DefaultDailyUsageLimitUSD: func() float64 {
+			if req.DefaultDailyUsageLimitUSD != nil {
+				return *req.DefaultDailyUsageLimitUSD
+			}
+			return previousSettings.DefaultDailyUsageLimitUSD
+		}(),
+		EnableModelFallback:         req.EnableModelFallback,
+		FallbackModelAnthropic:      req.FallbackModelAnthropic,
+		FallbackModelOpenAI:         req.FallbackModelOpenAI,
+		FallbackModelGemini:         req.FallbackModelGemini,
+		FallbackModelAntigravity:    req.FallbackModelAntigravity,
+		EnableIdentityPatch:         req.EnableIdentityPatch,
+		IdentityPatchPrompt:         req.IdentityPatchPrompt,
+		MinClaudeCodeVersion:        req.MinClaudeCodeVersion,
+		MaxClaudeCodeVersion:        req.MaxClaudeCodeVersion,
+		AllowUngroupedKeyScheduling: req.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:          req.BackendModeEnabled,
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled

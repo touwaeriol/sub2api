@@ -90,5 +90,12 @@ func RegisterUserRoutes(
 			subscriptions.GET("/progress", h.Subscription.GetProgress)
 			subscriptions.GET("/summary", h.Subscription.GetSummary)
 		}
+
+		// 用户每日配额状态（feature issue #1750）
+		// 契约端点：GET /api/v1/users/me/quota/status
+		usersMe := authenticated.Group("/users/me")
+		{
+			usersMe.GET("/quota/status", h.User.GetMyQuotaStatus)
+		}
 	}
 }

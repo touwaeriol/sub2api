@@ -72,6 +72,20 @@ func (User) Fields() []ent.Field {
 		field.Time("totp_enabled_at").
 			Optional().
 			Nillable(),
+
+		// 每日配额限制（feature issue #1750）
+		// usage_limit_enabled 三态：nil=跟随 settings.default_usage_limit_enabled；
+		// true/false=强制覆盖
+		field.Bool("usage_limit_enabled").
+			Optional().
+			Nillable().
+			Comment("用户级配额启用状态；nil=跟随全局默认，true/false=强制覆盖"),
+
+		field.Float("daily_usage_limit_usd").
+			SchemaType(map[string]string{dialect.Postgres: "numeric(20,8)"}).
+			Optional().
+			Nillable().
+			Comment("用户每日总配额上限（USD）；nil=不限"),
 	}
 }
 
@@ -88,6 +102,7 @@ func (User) Edges() []ent.Edge {
 		edge.To("attribute_values", UserAttributeValue.Type),
 		edge.To("promo_code_usages", PromoCodeUsage.Type),
 		edge.To("payment_orders", PaymentOrder.Type),
+		edge.To("usage_limit_rules", UserUsageLimitRule.Type),
 	}
 }
 

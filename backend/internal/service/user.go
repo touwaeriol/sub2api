@@ -30,6 +30,11 @@ type User struct {
 	TotpEnabled         bool       // 是否启用 TOTP
 	TotpEnabledAt       *time.Time // TOTP 启用时间
 
+	// 每日配额限制（feature issue #1750）
+	// UsageLimitEnabled 三态：nil=跟随全局默认；true/false=强制覆盖
+	UsageLimitEnabled  *bool
+	DailyUsageLimitUSD *float64 // nil 或 <=0 表示不限
+
 	APIKeys       []APIKey
 	Subscriptions []UserSubscription
 }

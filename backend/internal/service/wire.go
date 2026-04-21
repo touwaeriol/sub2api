@@ -465,6 +465,7 @@ var ProviderSet = wire.NewSet(
 	ProvidePaymentConfigService,
 	NewPaymentService,
 	ProvidePaymentOrderExpiryService,
+	ProvideQuotaService,
 )
 
 // ProvidePaymentConfigService wraps NewPaymentConfigService to accept the named
@@ -478,4 +479,21 @@ func ProvidePaymentOrderExpiryService(paymentSvc *PaymentService) *PaymentOrderE
 	svc := NewPaymentOrderExpiryService(paymentSvc, 60*time.Second)
 	svc.Start()
 	return svc
+}
+
+// ProvideQuotaService 创建 QuotaService（feature issue #1750）并反向注入 BillingCacheService。
+// 依赖：ruleRepo / userRepo（同时作为 QuotaUserWriter）/ groupRepo / settingService / billingCache。
+func ProvideQuotaService(
+	ruleRepo UserUsageLimitRuleRepository,
+	userRepo UserRepository,
+	groupRepo GroupRepository,
+	settingService *SettingService,
+	billingCache BillingCache,
+	billingCacheService *BillingCacheService,
+) QuotaService {
+	qs := NewQuotaService(ruleRepo, userRepo, userRepo, groupRepo, settingService, billingCache)
+	if billingCacheService != nil {
+		billingCacheService.SetQuotaService(qs)
+	}
+	return qs
 }

@@ -45,6 +45,10 @@ type User struct {
 	TotpEnabled bool `json:"totp_enabled,omitempty"`
 	// TotpEnabledAt holds the value of the "totp_enabled_at" field.
 	TotpEnabledAt *time.Time `json:"totp_enabled_at,omitempty"`
+	// 用户级配额启用状态；nil=跟随全局默认，true/false=强制覆盖
+	UsageLimitEnabled *bool `json:"usage_limit_enabled,omitempty"`
+	// 用户每日总配额上限（USD）；nil=不限
+	DailyUsageLimitUsd *float64 `json:"daily_usage_limit_usd,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the UserQuery when eager-loading is set.
 	Edges        UserEdges `json:"edges"`
@@ -73,11 +77,13 @@ type UserEdges struct {
 	PromoCodeUsages []*PromoCodeUsage `json:"promo_code_usages,omitempty"`
 	// PaymentOrders holds the value of the payment_orders edge.
 	PaymentOrders []*PaymentOrder `json:"payment_orders,omitempty"`
+	// UsageLimitRules holds the value of the usage_limit_rules edge.
+	UsageLimitRules []*UserUsageLimitRule `json:"usage_limit_rules,omitempty"`
 	// UserAllowedGroups holds the value of the user_allowed_groups edge.
 	UserAllowedGroups []*UserAllowedGroup `json:"user_allowed_groups,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [11]bool
+	loadedTypes [12]bool
 }
 
 // APIKeysOrErr returns the APIKeys value or an error if the edge
@@ -170,10 +176,19 @@ func (e UserEdges) PaymentOrdersOrErr() ([]*PaymentOrder, error) {
 	return nil, &NotLoadedError{edge: "payment_orders"}
 }
 
+// UsageLimitRulesOrErr returns the UsageLimitRules value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) UsageLimitRulesOrErr() ([]*UserUsageLimitRule, error) {
+	if e.loadedTypes[10] {
+		return e.UsageLimitRules, nil
+	}
+	return nil, &NotLoadedError{edge: "usage_limit_rules"}
+}
+
 // UserAllowedGroupsOrErr returns the UserAllowedGroups value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) UserAllowedGroupsOrErr() ([]*UserAllowedGroup, error) {
-	if e.loadedTypes[10] {
+	if e.loadedTypes[11] {
 		return e.UserAllowedGroups, nil
 	}
 	return nil, &NotLoadedError{edge: "user_allowed_groups"}
@@ -184,9 +199,9 @@ func (*User) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
-		case user.FieldTotpEnabled:
+		case user.FieldTotpEnabled, user.FieldUsageLimitEnabled:
 			values[i] = new(sql.NullBool)
-		case user.FieldBalance:
+		case user.FieldBalance, user.FieldDailyUsageLimitUsd:
 			values[i] = new(sql.NullFloat64)
 		case user.FieldID, user.FieldConcurrency:
 			values[i] = new(sql.NullInt64)
@@ -302,6 +317,20 @@ func (_m *User) assignValues(columns []string, values []any) error {
 				_m.TotpEnabledAt = new(time.Time)
 				*_m.TotpEnabledAt = value.Time
 			}
+		case user.FieldUsageLimitEnabled:
+			if value, ok := values[i].(*sql.NullBool); !ok {
+				return fmt.Errorf("unexpected type %T for field usage_limit_enabled", values[i])
+			} else if value.Valid {
+				_m.UsageLimitEnabled = new(bool)
+				*_m.UsageLimitEnabled = value.Bool
+			}
+		case user.FieldDailyUsageLimitUsd:
+			if value, ok := values[i].(*sql.NullFloat64); !ok {
+				return fmt.Errorf("unexpected type %T for field daily_usage_limit_usd", values[i])
+			} else if value.Valid {
+				_m.DailyUsageLimitUsd = new(float64)
+				*_m.DailyUsageLimitUsd = value.Float64
+			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
 		}
@@ -363,6 +392,11 @@ func (_m *User) QueryPromoCodeUsages() *PromoCodeUsageQuery {
 // QueryPaymentOrders queries the "payment_orders" edge of the User entity.
 func (_m *User) QueryPaymentOrders() *PaymentOrderQuery {
 	return NewUserClient(_m.config).QueryPaymentOrders(_m)
+}
+
+// QueryUsageLimitRules queries the "usage_limit_rules" edge of the User entity.
+func (_m *User) QueryUsageLimitRules() *UserUsageLimitRuleQuery {
+	return NewUserClient(_m.config).QueryUsageLimitRules(_m)
 }
 
 // QueryUserAllowedGroups queries the "user_allowed_groups" edge of the User entity.
@@ -439,6 +473,16 @@ func (_m *User) String() string {
 	if v := _m.TotpEnabledAt; v != nil {
 		builder.WriteString("totp_enabled_at=")
 		builder.WriteString(v.Format(time.ANSIC))
+	}
+	builder.WriteString(", ")
+	if v := _m.UsageLimitEnabled; v != nil {
+		builder.WriteString("usage_limit_enabled=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.DailyUsageLimitUsd; v != nil {
+		builder.WriteString("daily_usage_limit_usd=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteByte(')')
 	return builder.String()
