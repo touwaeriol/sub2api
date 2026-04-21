@@ -59,7 +59,12 @@
         <datalist :id="pathListId">
           <option v-for="preset in pathPresets" :key="preset" :value="preset" />
         </datalist>
-        <p v-if="warnings.reservedPathError" class="mt-1 text-[11px] text-red-500">
+        <p
+          v-if="warnings.reservedPathError"
+          class="mt-1 text-[11px] text-red-500"
+          role="alert"
+          aria-live="polite"
+        >
           {{ warnings.reservedPathError }}
         </p>
       </div>
@@ -79,20 +84,40 @@
         <p v-if="isValueDisabled" class="mt-1 text-[11px] text-gray-400">
           {{ t('admin.channels.form.paramOverride.valueDisabledHint') }}
         </p>
-        <p v-else-if="jsonError" class="mt-1 text-[11px] text-red-500">
+        <p
+          v-else-if="jsonError"
+          class="mt-1 text-[11px] text-red-500"
+          role="alert"
+          aria-live="polite"
+        >
           {{ t('admin.channels.form.paramOverride.invalidJson') }}
         </p>
-        <p v-else-if="warnings.nullValueWarning" class="mt-1 text-[11px] text-red-500">
+        <p
+          v-else-if="warnings.nullValueWarning"
+          class="mt-1 text-[11px] text-red-500"
+          role="alert"
+          aria-live="polite"
+        >
           {{ warnings.nullValueWarning }}
         </p>
       </div>
     </div>
 
     <!-- Incompatible combo warnings (action/target) -->
-    <p v-if="warnings.mergeHeaderWarning" class="mt-2 text-[11px] text-red-500">
+    <p
+      v-if="warnings.mergeHeaderWarning"
+      class="mt-2 text-[11px] text-red-500"
+      role="alert"
+      aria-live="polite"
+    >
       {{ warnings.mergeHeaderWarning }}
     </p>
-    <p v-else-if="warnings.appendBodyWarning" class="mt-2 text-[11px] text-red-500">
+    <p
+      v-else-if="warnings.appendBodyWarning"
+      class="mt-2 text-[11px] text-red-500"
+      role="alert"
+      aria-live="polite"
+    >
       {{ warnings.appendBodyWarning }}
     </p>
 
