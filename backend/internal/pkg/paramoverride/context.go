@@ -28,22 +28,19 @@ type HeaderPayload struct {
 	AppendKeys map[string]struct{}
 }
 
-// WithHeaders returns a copy of ctx carrying the given override headers as a
-// payload where every name is treated as Set (overwrite-on-apply). Exists
-// for callers that only need the simple overwrite semantics — notably unit
-// tests that construct headers by hand. Passing an empty/nil header set
-// returns ctx unchanged.
-func WithHeaders(ctx context.Context, h http.Header) context.Context {
-	if ctx == nil || len(h) == 0 {
-		return ctx
-	}
-	return context.WithValue(ctx, contextKey{}, HeaderPayload{Headers: h})
-}
-
-// WithHeaderPayload is the richer counterpart of WithHeaders that also
-// records which canonical header names were built from Append rules, so
-// ApplyContextHeadersToRequest can merge them with whatever the upstream
-// builder already set rather than overwriting.
+// WithHeaderPayload returns a copy of ctx carrying the override-header
+// payload (headers + append-key metadata). Passing ctx=nil or an empty
+// payload returns the input ctx unchanged, so callers don't need to guard
+// the zero case at each call site.
+//
+// Callers who only need the simple overwrite semantics (e.g. unit tests
+// that construct headers by hand) construct
+//
+//	paramoverride.WithHeaderPayload(ctx, paramoverride.HeaderPayload{Headers: h})
+//
+// and let AppendKeys default to nil — ApplyContextHeadersToRequest treats
+// keys outside AppendKeys as Set/Remove-derived, which is the historical
+// overwrite behaviour.
 func WithHeaderPayload(ctx context.Context, payload HeaderPayload) context.Context {
 	if ctx == nil || len(payload.Headers) == 0 {
 		return ctx

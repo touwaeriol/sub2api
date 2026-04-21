@@ -176,3 +176,58 @@ func TestApplyToHeadersWithMetadata_NilWhenNoAppend(t *testing.T) {
 		t.Fatalf("expected nil append-key map when no append rules, got %+v", keys)
 	}
 }
+
+// TestApplyToHeadersWithMetadata_AppendThenSetClearsAppendKey guards the
+// edge case where a rule sequence on the same header goes Append then Set:
+// the final semantics must be "overwrite" (upstream builder values erased),
+// so the append marker has to be cleared — otherwise ApplyContextHeadersToRequest
+// would merge the Set value with the builder's pre-existing defaults.
+func TestApplyToHeadersWithMetadata_AppendThenSetClearsAppendKey(t *testing.T) {
+	h := http.Header{}
+	rules := mustCompileHeaders(t, []Rule{
+		{Enabled: true, Target: TargetHeader, Action: ActionAppend, Path: "Anthropic-Beta", Value: json.RawMessage(`"feature-x"`)},
+		{Enabled: true, Target: TargetHeader, Action: ActionSet, Path: "Anthropic-Beta", Value: json.RawMessage(`"only-this"`)},
+	})
+	keys := ApplyToHeadersWithMetadata(h, rules)
+	if _, ok := keys["Anthropic-Beta"]; ok {
+		t.Fatalf("Anthropic-Beta was later Set; append key should have been cleared, got %+v", keys)
+	}
+	if got := h.Get("Anthropic-Beta"); got != "only-this" {
+		t.Fatalf("expected only-this from final Set, got %q", got)
+	}
+}
+
+// TestApplyToHeadersWithMetadata_AppendThenRemoveClearsAppendKey covers the
+// Append→Remove variant: the final intent is "absent", so the append marker
+// must go too — otherwise a stale marker could regrow the header when the
+// upstream builder later writes its default.
+func TestApplyToHeadersWithMetadata_AppendThenRemoveClearsAppendKey(t *testing.T) {
+	h := http.Header{}
+	rules := mustCompileHeaders(t, []Rule{
+		{Enabled: true, Target: TargetHeader, Action: ActionAppend, Path: "Anthropic-Beta", Value: json.RawMessage(`"feature-x"`)},
+		{Enabled: true, Target: TargetHeader, Action: ActionRemove, Path: "Anthropic-Beta"},
+	})
+	keys := ApplyToHeadersWithMetadata(h, rules)
+	if _, ok := keys["Anthropic-Beta"]; ok {
+		t.Fatalf("Anthropic-Beta was later Removed; append key should have been cleared, got %+v", keys)
+	}
+	if got := h.Get("Anthropic-Beta"); got != "" {
+		t.Fatalf("expected header removed, got %q", got)
+	}
+}
+
+// TestApplyToHeadersWithMetadata_RemoveThenAppendRemarksAppendKey confirms
+// the symmetric ordering works: a Remove followed by Append leaves the
+// append marker set so downstream merge applies to whatever the builder
+// writes next.
+func TestApplyToHeadersWithMetadata_RemoveThenAppendRemarksAppendKey(t *testing.T) {
+	h := http.Header{}
+	rules := mustCompileHeaders(t, []Rule{
+		{Enabled: true, Target: TargetHeader, Action: ActionRemove, Path: "Anthropic-Beta"},
+		{Enabled: true, Target: TargetHeader, Action: ActionAppend, Path: "Anthropic-Beta", Value: json.RawMessage(`"feature-x"`)},
+	})
+	keys := ApplyToHeadersWithMetadata(h, rules)
+	if _, ok := keys["Anthropic-Beta"]; !ok {
+		t.Fatalf("Anthropic-Beta was Appended after Remove; append key should be present, got %+v", keys)
+	}
+}

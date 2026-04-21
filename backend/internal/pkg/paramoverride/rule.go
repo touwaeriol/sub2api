@@ -102,5 +102,4 @@ const (
 	valueKindPrimitive
 	valueKindObject
 	valueKindArray
-	valueKindNull
 )

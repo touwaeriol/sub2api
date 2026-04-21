@@ -152,7 +152,11 @@ func classifyValue(action string, value json.RawMessage) (valueKind, error) {
 	case '[':
 		return valueKindArray, nil
 	case 'n':
-		return valueKindNull, nil
+		// JSON null is a write-with-null for set, which is never the caller's
+		// intent — the remove action is the only legal way to delete a field.
+		// Reject at compile time so the library itself is the single source of
+		// truth, even when callers bypass the admin handler's preflight.
+		return valueKindUnknown, ErrValueNullForbidden
 	default:
 		return valueKindPrimitive, nil
 	}

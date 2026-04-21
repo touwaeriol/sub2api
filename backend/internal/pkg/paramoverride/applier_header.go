@@ -36,13 +36,20 @@ func ApplyToHeadersWithMetadata(h http.Header, rules []CompiledRule) map[string]
 			continue
 		}
 		applyHeaderRule(h, rule)
-		if rule.Action != ActionAppend {
-			continue
+		canonical := http.CanonicalHeaderKey(rule.Path)
+		switch rule.Action {
+		case ActionAppend:
+			if appendKeys == nil {
+				appendKeys = make(map[string]struct{})
+			}
+			appendKeys[canonical] = struct{}{}
+		case ActionSet, ActionRemove:
+			// A later Set/Remove clears the append marker: the user wants
+			// the final value to overwrite, not be merged with whatever the
+			// upstream builder wrote. Without this, ApplyContextHeadersToRequest
+			// would still take the merge branch for this key.
+			delete(appendKeys, canonical)
 		}
-		if appendKeys == nil {
-			appendKeys = make(map[string]struct{})
-		}
-		appendKeys[http.CanonicalHeaderKey(rule.Path)] = struct{}{}
 	}
 	return appendKeys
 }

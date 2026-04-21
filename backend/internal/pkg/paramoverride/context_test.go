@@ -12,7 +12,7 @@ import (
 func TestWithHeaders_RoundTrip(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Test", "value")
-	ctx := WithHeaders(context.Background(), h)
+	ctx := WithHeaderPayload(context.Background(), HeaderPayload{Headers: h})
 	got := HeadersFromContext(ctx)
 	if got == nil {
 		t.Fatalf("expected non-nil headers from context")
@@ -24,11 +24,11 @@ func TestWithHeaders_RoundTrip(t *testing.T) {
 
 func TestWithHeaders_EmptyReturnsContextUnchanged(t *testing.T) {
 	ctx := context.Background()
-	got := WithHeaders(ctx, http.Header{})
+	got := WithHeaderPayload(ctx, HeaderPayload{Headers: http.Header{}})
 	if got != ctx {
 		t.Fatalf("expected context unchanged for empty headers")
 	}
-	got = WithHeaders(ctx, nil)
+	got = WithHeaderPayload(ctx, HeaderPayload{Headers: nil})
 	if got != ctx {
 		t.Fatalf("expected context unchanged for nil headers")
 	}
@@ -37,7 +37,7 @@ func TestWithHeaders_EmptyReturnsContextUnchanged(t *testing.T) {
 func TestWithHeaders_NilContext(t *testing.T) {
 	h := http.Header{}
 	h.Set("X-Test", "value")
-	if WithHeaders(nil, h) != nil { //nolint:staticcheck // intentional nil ctx test
+	if WithHeaderPayload(nil, HeaderPayload{Headers: h}) != nil { //nolint:staticcheck // intentional nil ctx test
 		t.Fatalf("expected nil ctx returned unchanged")
 	}
 }
@@ -56,7 +56,7 @@ func TestApplyContextHeadersToRequest_OverridesExisting(t *testing.T) {
 	overrides.Set("X-Api-Version", "2024-10")
 	overrides.Set("Anthropic-Beta", "feature-a,feature-b")
 
-	ctx := WithHeaders(context.Background(), overrides)
+	ctx := WithHeaderPayload(context.Background(), HeaderPayload{Headers: overrides})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/upstream", nil)
 	req.Header.Set("X-Api-Version", "previous")
 	req.Header.Set("Other", "untouched")

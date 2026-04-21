@@ -141,15 +141,18 @@ func TestApplyToBodyBytes_EmptyRuleSlice(t *testing.T) {
 	}
 }
 
-func TestApplyToBodyBytes_SetNull(t *testing.T) {
-	body := []byte(`{"thinking":{"budget_tokens":1024}}`)
-	rules := mustCompile(t, []Rule{{
+// TestApplyToBodyBytes_SetNullRejectedAtCompile documents that Set with a
+// null payload is rejected at Compile time — users who want to delete a
+// field must declare an Action=Remove rule instead. Keeps the applier's
+// contract narrow: it never has to decide "is null an intentional write or
+// a user mistake?".
+func TestApplyToBodyBytes_SetNullRejectedAtCompile(t *testing.T) {
+	_, err := Compile(map[string][]Rule{"anthropic": {{
 		Enabled: true, Target: TargetBody, Action: ActionSet,
 		Path: "thinking", Value: json.RawMessage(`null`),
-	}})
-	out := ApplyToBodyBytes(body, rules)
-	if gjson.GetBytes(out, "thinking").Type != gjson.Null {
-		t.Fatalf("expected null, got %s", gjson.GetBytes(out, "thinking").Raw)
+	}}})
+	if err == nil {
+		t.Fatalf("expected compile to reject Set+null, got nil")
 	}
 }
 

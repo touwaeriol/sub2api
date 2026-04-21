@@ -238,7 +238,6 @@ func TestCompile_ValueKindClassification(t *testing.T) {
 	}{
 		{json.RawMessage(`{"a":1}`), valueKindObject},
 		{json.RawMessage(`[1,2]`), valueKindArray},
-		{json.RawMessage(`null`), valueKindNull},
 		{json.RawMessage(`42`), valueKindPrimitive},
 		{json.RawMessage(`"hello"`), valueKindPrimitive},
 		{json.RawMessage(`true`), valueKindPrimitive},
@@ -261,5 +260,51 @@ func TestCompile_ValueKindClassification(t *testing.T) {
 		if matched[0].valueKind != tc.want {
 			t.Fatalf("value=%s: want kind=%d got=%d", string(tc.value), tc.want, matched[0].valueKind)
 		}
+	}
+}
+
+// TestCompile_RejectsNullForNonRemove pins the library contract that null is
+// not a legal value for set/merge/append — remove is the only way to delete a
+// field. Accepting null silently would persist a literal JSON null into the
+// request body, which is never what the user means.
+func TestCompile_RejectsNullForNonRemove(t *testing.T) {
+	for _, action := range []string{ActionSet, ActionMerge, ActionAppend} {
+		target := TargetBody
+		if action == ActionAppend {
+			target = TargetHeader
+		}
+		rules := map[string][]Rule{
+			"anthropic": {{
+				Enabled: true,
+				Target:  target,
+				Action:  action,
+				Path:    "x",
+				Value:   json.RawMessage(`null`),
+			}},
+		}
+		_, err := Compile(rules)
+		if err == nil {
+			t.Fatalf("expected compile to reject null for %s, got nil", action)
+		}
+		if !errors.Is(err, ErrValueNullForbidden) {
+			t.Fatalf("expected ErrValueNullForbidden for %s, got %v", action, err)
+		}
+	}
+}
+
+// TestCompile_AcceptsNullRemoveIsNoopOnValue confirms remove rules never look
+// at the value slot — the user can leave it nil, and compile must succeed.
+func TestCompile_AcceptsNullRemoveIsNoopOnValue(t *testing.T) {
+	rules := map[string][]Rule{
+		"anthropic": {{
+			Enabled: true,
+			Target:  TargetBody,
+			Action:  ActionRemove,
+			Path:    "x",
+			Value:   json.RawMessage(`null`),
+		}},
+	}
+	if _, err := Compile(rules); err != nil {
+		t.Fatalf("expected remove+null to compile cleanly, got %v", err)
 	}
 }
