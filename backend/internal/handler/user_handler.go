@@ -15,16 +15,13 @@ type UserHandler struct {
 	quotaService service.QuotaService // 可为 nil（quota 功能未启用时）
 }
 
-// NewUserHandler creates a new UserHandler
-func NewUserHandler(userService *service.UserService) *UserHandler {
+// NewUserHandler creates a new UserHandler.
+// quotaService 可为 nil；传 nil 时 GetMyQuotaStatus 等配额端点会降级返回 null。
+func NewUserHandler(userService *service.UserService, quotaService service.QuotaService) *UserHandler {
 	return &UserHandler{
-		userService: userService,
+		userService:  userService,
+		quotaService: quotaService,
 	}
-}
-
-// SetQuotaService 注入配额服务（feature issue #1750）
-func (h *UserHandler) SetQuotaService(qs service.QuotaService) {
-	h.quotaService = qs
 }
 
 // ChangePasswordRequest represents the change password request payload

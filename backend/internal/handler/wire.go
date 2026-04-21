@@ -68,15 +68,6 @@ func ProvideAdminHandlers(
 	}
 }
 
-// ProvideUserHandler 在构造后调用 SetQuotaService 注入 quota 依赖（feature issue #1750）。
-func ProvideUserHandler(userService *service.UserService, quotaService service.QuotaService) *UserHandler {
-	h := NewUserHandler(userService)
-	if quotaService != nil {
-		h.SetQuotaService(quotaService)
-	}
-	return h
-}
-
 // ProvideSystemHandler creates admin.SystemHandler with UpdateService
 func ProvideSystemHandler(updateService *service.UpdateService, lockService *service.SystemOperationLockService) *admin.SystemHandler {
 	return admin.NewSystemHandler(updateService, lockService)
@@ -128,7 +119,7 @@ func ProvideHandlers(
 var ProviderSet = wire.NewSet(
 	// Top-level handlers
 	NewAuthHandler,
-	ProvideUserHandler,
+	NewUserHandler,
 	NewAPIKeyHandler,
 	NewUsageHandler,
 	NewRedeemHandler,

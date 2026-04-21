@@ -80,7 +80,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	authHandler := handler.NewAuthHandler(configConfig, authService, userService, settingService, promoService, redeemService, totpService)
 	userUsageLimitRuleRepository := repository.NewUserUsageLimitRuleRepository(client)
 	quotaService := service.ProvideQuotaService(userUsageLimitRuleRepository, userRepository, groupRepository, settingService, billingCache, billingCacheService)
-	userHandler := handler.ProvideUserHandler(userService, quotaService)
+	userHandler := handler.NewUserHandler(userService, quotaService)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageLogRepository := repository.NewUsageLogRepository(client, db)
 	usageService := service.NewUsageService(usageLogRepository, userRepository, client, apiKeyAuthCacheInvalidator)
