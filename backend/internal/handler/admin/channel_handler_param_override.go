@@ -2,7 +2,6 @@ package admin
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 
@@ -30,47 +29,6 @@ const (
 	paramOverrideReasonCompileFailed        = "compile_failed"
 )
 
-// paramOverrideLiteralNull is the JSON literal for `null`. A Set/Merge/Append
-// rule with this value has no runtime effect distinct from "delete the
-// field", and is almost always a user mistake (they forgot to switch the
-// action to Remove). Reject it at admin time to force the explicit
-// semantics.
-var paramOverrideLiteralNull = []byte("null")
-
-// paramOverrideReservedBodyPath is the body path callers are forbidden from
-// overriding: rewriting `model` at the paramoverride layer would desync the
-// billing record and the actual upstream model. Matches the frontend
-// RESERVED_BODY_PATHS constant.
-const paramOverrideReservedBodyPath = "model"
-
-// paramOverrideRuleRequest mirrors service.ChannelParamOverrideRule for inbound
-// admin API payloads. Validation is performed explicitly (see
-// validateParamOverrideRules) because cross-field constraints (append only for
-// header, value required unless action=remove) are not expressible with the
-// struct tag validator.
-type paramOverrideRuleRequest struct {
-	Enabled     *bool           `json:"enabled"`
-	ModelGlob   string          `json:"model_glob"`
-	Target      string          `json:"target"`
-	Action      string          `json:"action"`
-	Path        string          `json:"path"`
-	Value       json.RawMessage `json:"value,omitempty"`
-	Description string          `json:"description,omitempty"`
-}
-
-// paramOverrideRuleResponse is the outbound counterpart. Enabled is returned
-// as a concrete bool (not a pointer) because clients should always see the
-// effective state.
-type paramOverrideRuleResponse struct {
-	Enabled     bool            `json:"enabled"`
-	ModelGlob   string          `json:"model_glob"`
-	Target      string          `json:"target"`
-	Action      string          `json:"action"`
-	Path        string          `json:"path"`
-	Value       json.RawMessage `json:"value,omitempty"`
-	Description string          `json:"description,omitempty"`
-}
-
 // paramOverridesRequestToService converts the admin-API request map into the
 // service-layer representation. The second return value carries a structured
 // error when a rule fails validation; callers must surface it before the
@@ -81,23 +39,9 @@ func paramOverridesRequestToService(req map[string][]paramOverrideRuleRequest) (
 	}
 	out := make(service.ChannelParamOverrides, len(req))
 	for platform, rules := range req {
-		if len(rules) > service.ParamOverrideMaxRulesPerPlatform {
-			return nil, infraerrors.BadRequest("PARAM_OVERRIDE_INVALID",
-				"too many rules for platform").
-				WithMetadata(map[string]string{
-					"platform": platform,
-					"count":    strconv.Itoa(len(rules)),
-					"max":      strconv.Itoa(service.ParamOverrideMaxRulesPerPlatform),
-					"reason":   paramOverrideReasonTooManyRules,
-				})
-		}
-		converted := make([]service.ChannelParamOverrideRule, 0, len(rules))
-		for idx, r := range rules {
-			svcRule, err := paramOverrideRuleRequestToService(platform, idx, r)
-			if err != nil {
-				return nil, err
-			}
-			converted = append(converted, svcRule)
+		converted, err := convertPlatformRules(platform, rules)
+		if err != nil {
+			return nil, err
 		}
 		out[platform] = converted
 	}
@@ -108,6 +52,32 @@ func paramOverridesRequestToService(req map[string][]paramOverrideRuleRequest) (
 		return nil, err
 	}
 	return out, nil
+}
+
+// convertPlatformRules converts the rules for a single platform, enforcing
+// the per-platform max count before falling through to per-rule validation.
+// Extracted from paramOverridesRequestToService so the top-level function
+// stays under the 30-line soft cap.
+func convertPlatformRules(platform string, rules []paramOverrideRuleRequest) ([]service.ChannelParamOverrideRule, error) {
+	if len(rules) > paramoverride.MaxRulesPerPlatform {
+		return nil, infraerrors.BadRequest("PARAM_OVERRIDE_INVALID",
+			"too many rules for platform").
+			WithMetadata(map[string]string{
+				"platform": platform,
+				"count":    strconv.Itoa(len(rules)),
+				"max":      strconv.Itoa(paramoverride.MaxRulesPerPlatform),
+				"reason":   paramOverrideReasonTooManyRules,
+			})
+	}
+	converted := make([]service.ChannelParamOverrideRule, 0, len(rules))
+	for idx, r := range rules {
+		svcRule, err := paramOverrideRuleRequestToService(platform, idx, r)
+		if err != nil {
+			return nil, err
+		}
+		converted = append(converted, svcRule)
+	}
+	return converted, nil
 }
 
 // preflightCompileParamOverrides runs paramoverride.Compile once per platform
@@ -156,49 +126,85 @@ func paramOverrideRuleRequestToService(platform string, idx int, r paramOverride
 
 // validateParamOverrideRule checks the static shape of a single rule and
 // returns an empty string when valid, or a short reason code otherwise.
-// The reason is meant for the error details metadata; the full message is
-// built by paramOverrideRuleError.
+// Delegates to per-dimension checks so each stays focused and under the
+// 30-line cap; order matches the user's mental model (target → action →
+// path → value).
 func validateParamOverrideRule(r service.ChannelParamOverrideRule) string {
+	if reason := validateRuleTargetAction(r); reason != "" {
+		return reason
+	}
+	if reason := validateRulePath(r); reason != "" {
+		return reason
+	}
+	if reason := validateRuleGlob(r); reason != "" {
+		return reason
+	}
+	return validateRuleValue(r)
+}
+
+// validateRuleTargetAction covers the target / action enum checks plus the
+// two action×target combos that have no defined semantics.
+func validateRuleTargetAction(r service.ChannelParamOverrideRule) string {
 	switch r.Target {
-	case service.ParamOverrideTargetBody, service.ParamOverrideTargetHeader:
+	case paramoverride.TargetBody, paramoverride.TargetHeader:
 	default:
 		return paramOverrideReasonInvalidTarget
 	}
 	switch r.Action {
-	case service.ParamOverrideActionSet, service.ParamOverrideActionMerge,
-		service.ParamOverrideActionRemove, service.ParamOverrideActionAppend:
+	case paramoverride.ActionSet, paramoverride.ActionMerge,
+		paramoverride.ActionRemove, paramoverride.ActionAppend:
 	default:
 		return paramOverrideReasonInvalidAction
 	}
-	if r.Action == service.ParamOverrideActionAppend && r.Target != service.ParamOverrideTargetHeader {
+	if r.Action == paramoverride.ActionAppend && r.Target != paramoverride.TargetHeader {
 		return paramOverrideReasonAppendRequiresHeader
 	}
-	if r.Action == service.ParamOverrideActionMerge && r.Target == service.ParamOverrideTargetHeader {
+	if r.Action == paramoverride.ActionMerge && r.Target == paramoverride.TargetHeader {
 		return paramOverrideReasonMergeNotSupported
 	}
+	return ""
+}
+
+// validateRulePath covers the path-required / too-long / reserved-name
+// checks. Reserved-path is body-only because header names can't collide with
+// the model-routing key.
+func validateRulePath(r service.ChannelParamOverrideRule) string {
 	if r.Path == "" {
 		return paramOverrideReasonPathRequired
 	}
-	if len(r.Path) > service.ParamOverrideMaxPathLength {
+	if len(r.Path) > paramoverride.MaxPathLength {
 		return paramOverrideReasonPathTooLong
 	}
-	if r.Target == service.ParamOverrideTargetBody && r.Path == paramOverrideReservedBodyPath {
+	if r.Target == paramoverride.TargetBody && r.Path == paramOverrideReservedBodyPath {
 		return paramOverrideReasonPathModelReserved
 	}
-	if len(r.ModelGlob) > service.ParamOverrideMaxModelGlobLength {
+	return ""
+}
+
+// validateRuleGlob enforces the model_glob length cap. Empty glob is
+// permitted (treated as "match all" by the compiler).
+func validateRuleGlob(r service.ChannelParamOverrideRule) string {
+	if len(r.ModelGlob) > paramoverride.MaxModelGlobLength {
 		return paramOverrideReasonGlobTooLong
 	}
-	if r.Action != service.ParamOverrideActionRemove {
-		if len(r.Value) == 0 {
-			return paramOverrideReasonValueRequired
-		}
-		// Reject literal JSON null for non-remove actions. Set/Merge/Append
-		// with null is almost always a mistake: the user meant to delete
-		// the field and should use the Remove action instead. Matching
-		// after TrimSpace so `  null  ` is also rejected.
-		if bytes.Equal(bytes.TrimSpace(r.Value), paramOverrideLiteralNull) {
-			return paramOverrideReasonValueNullUseRemove
-		}
+	return ""
+}
+
+// validateRuleValue enforces the "value is required unless Remove, and is
+// never literal null" contract. Remove rules ignore the value slot entirely.
+func validateRuleValue(r service.ChannelParamOverrideRule) string {
+	if r.Action == paramoverride.ActionRemove {
+		return ""
+	}
+	if len(r.Value) == 0 {
+		return paramOverrideReasonValueRequired
+	}
+	// Reject literal JSON null for non-remove actions. Set/Merge/Append
+	// with null is almost always a mistake: the user meant to delete
+	// the field and should use the Remove action instead. Matching
+	// after TrimSpace so `  null  ` is also rejected.
+	if bytes.Equal(bytes.TrimSpace(r.Value), paramOverrideLiteralNull) {
+		return paramOverrideReasonValueNullUseRemove
 	}
 	return ""
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
@@ -17,27 +18,27 @@ func TestValidateParamOverrideRule_AcceptsWellFormed(t *testing.T) {
 		rule service.ChannelParamOverrideRule
 	}{
 		{"body_set", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetBody, Action: service.ParamOverrideActionSet,
+			Target: paramoverride.TargetBody, Action: paramoverride.ActionSet,
 			Path: "thinking.budget_tokens", Value: json.RawMessage(`2048`),
 		}},
 		{"body_merge", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetBody, Action: service.ParamOverrideActionMerge,
+			Target: paramoverride.TargetBody, Action: paramoverride.ActionMerge,
 			Path: "thinking", Value: json.RawMessage(`{"budget_tokens":2048}`),
 		}},
 		{"body_remove", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetBody, Action: service.ParamOverrideActionRemove,
+			Target: paramoverride.TargetBody, Action: paramoverride.ActionRemove,
 			Path: "thinking",
 		}},
 		{"header_set", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetHeader, Action: service.ParamOverrideActionSet,
+			Target: paramoverride.TargetHeader, Action: paramoverride.ActionSet,
 			Path: "X-Api-Version", Value: json.RawMessage(`"2024-10"`),
 		}},
 		{"header_append", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetHeader, Action: service.ParamOverrideActionAppend,
+			Target: paramoverride.TargetHeader, Action: paramoverride.ActionAppend,
 			Path: "Anthropic-Beta", Value: json.RawMessage(`"feature"`),
 		}},
 		{"header_remove", service.ChannelParamOverrideRule{
-			Target: service.ParamOverrideTargetHeader, Action: service.ParamOverrideActionRemove,
+			Target: paramoverride.TargetHeader, Action: paramoverride.ActionRemove,
 			Path: "X-Extra",
 		}},
 	}
@@ -52,8 +53,8 @@ func TestValidateParamOverrideRule_AcceptsWellFormed(t *testing.T) {
 
 func TestValidateParamOverrideRule_RejectsMergeHeader(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetHeader,
-		Action: service.ParamOverrideActionMerge,
+		Target: paramoverride.TargetHeader,
+		Action: paramoverride.ActionMerge,
 		Path:   "X-Foo",
 		Value:  json.RawMessage(`{"x":1}`),
 	}
@@ -65,8 +66,8 @@ func TestValidateParamOverrideRule_RejectsMergeHeader(t *testing.T) {
 
 func TestValidateParamOverrideRule_RejectsAppendBody(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionAppend,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionAppend,
 		Path:   "foo",
 		Value:  json.RawMessage(`"bar"`),
 	}
@@ -78,8 +79,8 @@ func TestValidateParamOverrideRule_RejectsAppendBody(t *testing.T) {
 
 func TestValidateParamOverrideRule_ReservedModelPath(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionSet,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionSet,
 		Path:   "model",
 		Value:  json.RawMessage(`"claude-x"`),
 	}
@@ -91,8 +92,8 @@ func TestValidateParamOverrideRule_ReservedModelPath(t *testing.T) {
 
 func TestValidateParamOverrideRule_RejectsNullValueForSet(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionSet,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionSet,
 		Path:   "thinking.budget_tokens",
 		Value:  json.RawMessage(`null`),
 	}
@@ -104,8 +105,8 @@ func TestValidateParamOverrideRule_RejectsNullValueForSet(t *testing.T) {
 
 func TestValidateParamOverrideRule_RejectsNullValueForMerge(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionMerge,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionMerge,
 		Path:   "thinking",
 		Value:  json.RawMessage(`null`),
 	}
@@ -117,8 +118,8 @@ func TestValidateParamOverrideRule_RejectsNullValueForMerge(t *testing.T) {
 
 func TestValidateParamOverrideRule_RejectsNullValueForAppend(t *testing.T) {
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetHeader,
-		Action: service.ParamOverrideActionAppend,
+		Target: paramoverride.TargetHeader,
+		Action: paramoverride.ActionAppend,
 		Path:   "Anthropic-Beta",
 		Value:  json.RawMessage(`null`),
 	}
@@ -131,8 +132,8 @@ func TestValidateParamOverrideRule_RejectsNullValueForAppend(t *testing.T) {
 func TestValidateParamOverrideRule_RejectsNullValueWithWhitespace(t *testing.T) {
 	// `  null  ` (surrounding whitespace) should also trip the guard.
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionSet,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionSet,
 		Path:   "thinking.budget_tokens",
 		Value:  json.RawMessage(`  null  `),
 	}
@@ -145,8 +146,8 @@ func TestValidateParamOverrideRule_RejectsNullValueWithWhitespace(t *testing.T) 
 func TestValidateParamOverrideRule_AllowsNullValueForRemove(t *testing.T) {
 	// Remove actions ignore Value entirely, so null/empty/whatever all pass.
 	rule := service.ChannelParamOverrideRule{
-		Target: service.ParamOverrideTargetBody,
-		Action: service.ParamOverrideActionRemove,
+		Target: paramoverride.TargetBody,
+		Action: paramoverride.ActionRemove,
 		Path:   "thinking",
 		Value:  json.RawMessage(`null`),
 	}
@@ -159,8 +160,8 @@ func TestParamOverridesRequestToService_BubblesNullValueAsStructuredError(t *tes
 	req := map[string][]paramOverrideRuleRequest{
 		"openai": {
 			{
-				Target: service.ParamOverrideTargetBody,
-				Action: service.ParamOverrideActionSet,
+				Target: paramoverride.TargetBody,
+				Action: paramoverride.ActionSet,
 				Path:   "reasoning.effort",
 				Value:  json.RawMessage(`null`),
 			},
@@ -183,8 +184,8 @@ func TestParamOverridesRequestToService_BubblesMergeHeaderAsStructuredError(t *t
 	req := map[string][]paramOverrideRuleRequest{
 		"anthropic": {
 			{
-				Target: service.ParamOverrideTargetHeader,
-				Action: service.ParamOverrideActionMerge,
+				Target: paramoverride.TargetHeader,
+				Action: paramoverride.ActionMerge,
 				Path:   "X-Foo",
 				Value:  json.RawMessage(`{"x":1}`),
 			},
@@ -228,8 +229,8 @@ func TestParamOverridesRequestToService_RejectsInvalidValueJsonOnCompile(t *test
 	req := map[string][]paramOverrideRuleRequest{
 		"openai": {
 			{
-				Target: service.ParamOverrideTargetBody,
-				Action: service.ParamOverrideActionSet,
+				Target: paramoverride.TargetBody,
+				Action: paramoverride.ActionSet,
 				Path:   "reasoning.effort",
 				// {not json — passes the "len(Value)==0" static check but
 				// classifyValue's json.Unmarshal will fail.
@@ -267,8 +268,8 @@ func TestParamOverridesRequestToService_CompilesCleanRules(t *testing.T) {
 		"anthropic": {
 			{
 				ModelGlob: "claude-*",
-				Target:    service.ParamOverrideTargetBody,
-				Action:    service.ParamOverrideActionSet,
+				Target:    paramoverride.TargetBody,
+				Action:    paramoverride.ActionSet,
 				Path:      "thinking.budget_tokens",
 				Value:     json.RawMessage(`2048`),
 			},
