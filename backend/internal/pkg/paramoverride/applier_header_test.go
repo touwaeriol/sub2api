@@ -139,3 +139,40 @@ func TestApplyToHeaders_EmptyRuleSlice(t *testing.T) {
 		t.Fatalf("expected unchanged, got %q", got)
 	}
 }
+
+// TestApplyToHeadersWithMetadata_ReportsAppendKeys verifies the
+// PR-7 contract that drives append-vs-set semantics in
+// ApplyContextHeadersToRequest: the returned map must contain every
+// canonical header name whose final entry came from an ActionAppend rule,
+// and must NOT contain keys that only saw Set / Remove.
+func TestApplyToHeadersWithMetadata_ReportsAppendKeys(t *testing.T) {
+	h := http.Header{}
+	rules := mustCompileHeaders(t, []Rule{
+		{Enabled: true, Target: TargetHeader, Action: ActionSet, Path: "X-Api-Version", Value: json.RawMessage(`"2024-10"`)},
+		{Enabled: true, Target: TargetHeader, Action: ActionAppend, Path: "Anthropic-Beta", Value: json.RawMessage(`"feature-x"`)},
+		{Enabled: true, Target: TargetHeader, Action: ActionRemove, Path: "X-Legacy"},
+	})
+	keys := ApplyToHeadersWithMetadata(h, rules)
+	if _, ok := keys["Anthropic-Beta"]; !ok {
+		t.Fatalf("expected Anthropic-Beta marked as append, got %+v", keys)
+	}
+	if _, ok := keys["X-Api-Version"]; ok {
+		t.Fatalf("X-Api-Version came from Set, should not be marked as append")
+	}
+	if _, ok := keys["X-Legacy"]; ok {
+		t.Fatalf("X-Legacy came from Remove, should not be marked as append")
+	}
+}
+
+// TestApplyToHeadersWithMetadata_NilWhenNoAppend keeps the zero-allocation
+// fast path honest: callers lean on `len(keys)==0` to skip the merge code,
+// and that shortcut depends on nil returns when no append rules fired.
+func TestApplyToHeadersWithMetadata_NilWhenNoAppend(t *testing.T) {
+	h := http.Header{}
+	rules := mustCompileHeaders(t, []Rule{
+		{Enabled: true, Target: TargetHeader, Action: ActionSet, Path: "X-Api-Version", Value: json.RawMessage(`"2024-10"`)},
+	})
+	if keys := ApplyToHeadersWithMetadata(h, rules); keys != nil {
+		t.Fatalf("expected nil append-key map when no append rules, got %+v", keys)
+	}
+}

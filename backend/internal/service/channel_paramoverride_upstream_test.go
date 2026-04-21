@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/paramoverride"
@@ -102,13 +103,15 @@ func TestApplyParamOverrides_OpenAIBodyAndHeaderReachUpstream(t *testing.T) {
 	upstream.Header.Set("OpenAI-Beta", "existing-feature")
 	paramoverride.ApplyContextHeadersToRequest(upstream)
 
-	if got := upstream.Header.Get("OpenAI-Beta"); got != "responses=experimental" {
-		// ApplyToHeaders Append + ApplyContextHeadersToRequest overwrite:
-		// the published header map already contains the appended value
-		// under the header name, so the upstream request ends with the
-		// published value (overwrites "existing-feature"). This is the
-		// intended behaviour: overrides are final.
-		t.Fatalf("expected override OpenAI-Beta on upstream request, got %q", got)
+	// Since PR-7, ActionAppend overrides merge with existing values on the
+	// upstream request (e.g. Beta-policy / fingerprint defaults) instead of
+	// overwriting them. Both tokens must be present.
+	got := upstream.Header.Get("OpenAI-Beta")
+	if !strings.Contains(got, "existing-feature") {
+		t.Fatalf("expected existing OpenAI-Beta token preserved, got %q", got)
+	}
+	if !strings.Contains(got, "responses=experimental") {
+		t.Fatalf("expected appended OpenAI-Beta token present, got %q", got)
 	}
 }
 
@@ -144,6 +147,68 @@ func TestApplyParamOverrides_AntigravityHeaderReachesUpstream(t *testing.T) {
 	// Existing hard-coded headers must remain.
 	if got := upstream.Header.Get("Content-Type"); got != "application/json" {
 		t.Fatalf("expected Content-Type preserved, got %q", got)
+	}
+}
+
+// TestApplyParamOverrides_AppendPreservesBetaPolicyDefault is the headline
+// regression test for PR-7 Commit A: a user append rule on anthropic-beta
+// must not wipe the token that Beta-policy / buildUpstreamRequest wrote for
+// the same header. Runs the full path: ApplyParamOverrides publishes the
+// payload, then ApplyContextHeadersToRequest applies it to a request that
+// already has a Beta-policy token set.
+func TestApplyParamOverrides_AppendPreservesBetaPolicyDefault(t *testing.T) {
+	overrides := ChannelParamOverrides{
+		"anthropic": {
+			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionAppend,
+				"Anthropic-Beta", json.RawMessage(`"interleaved-thinking-2025-05-14"`)),
+		},
+	}
+	svc, c := newAnthropicUpstreamTestContext(t, overrides, "anthropic")
+
+	body := []byte(`{"model":"claude-3-opus"}`)
+	gid := int64(1)
+	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
+
+	// Simulate buildUpstreamRequest's Beta-policy defaults already being set
+	// on the upstream request before the paramoverride hook fires.
+	upstream, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+	upstream.Header.Set("Anthropic-Beta", "context-1m-2025-08-07")
+
+	paramoverride.ApplyContextHeadersToRequest(upstream)
+
+	got := upstream.Header.Get("Anthropic-Beta")
+	if !strings.Contains(got, "context-1m-2025-08-07") {
+		t.Fatalf("expected Beta-policy token preserved, got %q", got)
+	}
+	if !strings.Contains(got, "interleaved-thinking-2025-05-14") {
+		t.Fatalf("expected appended token present, got %q", got)
+	}
+}
+
+// TestApplyParamOverrides_SetStillOverwritesBetaPolicyDefault pins the
+// counterexample: Set rules (not Append) still replace the existing header.
+// This is the user's "I want exactly this value" escape hatch — if they
+// pick Set, they opted out of merging.
+func TestApplyParamOverrides_SetStillOverwritesBetaPolicyDefault(t *testing.T) {
+	overrides := ChannelParamOverrides{
+		"anthropic": {
+			makeParamOverrideRule(ParamOverrideTargetHeader, ParamOverrideActionSet,
+				"Anthropic-Beta", json.RawMessage(`"my-exact-value"`)),
+		},
+	}
+	svc, c := newAnthropicUpstreamTestContext(t, overrides, "anthropic")
+
+	body := []byte(`{"model":"claude-3-opus"}`)
+	gid := int64(1)
+	_ = svc.ApplyParamOverrides(c, &gid, "anthropic", "claude-3-opus", body)
+
+	upstream, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, "https://api.anthropic.com/v1/messages", bytes.NewReader(body))
+	upstream.Header.Set("Anthropic-Beta", "context-1m-2025-08-07")
+
+	paramoverride.ApplyContextHeadersToRequest(upstream)
+
+	if got := upstream.Header.Get("Anthropic-Beta"); got != "my-exact-value" {
+		t.Fatalf("expected Set to overwrite, got %q", got)
 	}
 }
 

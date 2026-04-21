@@ -15,16 +15,36 @@ import (
 // ignored (for remove). Non-string payloads for set/append trigger a
 // structured warning and the rule is skipped.
 func ApplyToHeaders(h http.Header, rules []CompiledRule) {
+	_ = ApplyToHeadersWithMetadata(h, rules)
+}
+
+// ApplyToHeadersWithMetadata is ApplyToHeaders plus a set of canonical
+// header names whose final entries originated from an ActionAppend rule.
+// That metadata lets ApplyContextHeadersToRequest merge those entries with
+// whatever the upstream builder already wrote, instead of overwriting.
+//
+// Returns nil when no append rules fired so callers can use the
+// `len(...)==0` short-circuit without worrying about allocation.
+func ApplyToHeadersWithMetadata(h http.Header, rules []CompiledRule) map[string]struct{} {
 	if h == nil || len(rules) == 0 {
-		return
+		return nil
 	}
+	var appendKeys map[string]struct{}
 	for i := range rules {
 		rule := &rules[i]
 		if rule.Target != TargetHeader {
 			continue
 		}
 		applyHeaderRule(h, rule)
+		if rule.Action != ActionAppend {
+			continue
+		}
+		if appendKeys == nil {
+			appendKeys = make(map[string]struct{})
+		}
+		appendKeys[http.CanonicalHeaderKey(rule.Path)] = struct{}{}
 	}
+	return appendKeys
 }
 
 // applyHeaderRule dispatches on the rule action for a single header.

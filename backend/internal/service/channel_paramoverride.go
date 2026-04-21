@@ -65,20 +65,26 @@ func requestContext(c *gin.Context) context.Context {
 }
 
 // publishHeaderOverrides applies header rules into a fresh http.Header and
-// stores it on both the request context and the gin store so that upstream
-// builders (Anthropic / OpenAI / Antigravity) can re-apply them past their
-// own header allow-lists.
+// stores the resulting payload (headers + append-key metadata) on both the
+// request context and the gin store so that upstream builders (Anthropic /
+// OpenAI / Antigravity) can re-apply them past their own header allow-lists.
+//
+// The append-key metadata is what lets ApplyContextHeadersToRequest preserve
+// Beta-policy / fingerprint defaults when merging — without it, a user
+// append rule on anthropic-beta would wipe the "context-1m-2025-08-07"
+// token the Beta policy had just set.
 func publishHeaderOverrides(c *gin.Context, rules []paramoverride.CompiledRule) {
 	if c == nil || c.Request == nil {
 		return
 	}
 	headers := http.Header{}
-	paramoverride.ApplyToHeaders(headers, rules)
+	appendKeys := paramoverride.ApplyToHeadersWithMetadata(headers, rules)
 	if len(headers) == 0 {
 		return
 	}
+	payload := paramoverride.HeaderPayload{Headers: headers, AppendKeys: appendKeys}
 	c.Set(ParamOverrideHeadersGinKey, headers)
-	c.Request = c.Request.WithContext(paramoverride.WithHeaders(c.Request.Context(), headers))
+	c.Request = c.Request.WithContext(paramoverride.WithHeaderPayload(c.Request.Context(), payload))
 }
 
 // getCompiledParamOverrides returns the compiled override snapshot for the
