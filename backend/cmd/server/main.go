@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -21,6 +22,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	pluginmount "github.com/Wei-Shaw/sub2api/internal/plugin/mount"
 	_ "github.com/Wei-Shaw/sub2api/internal/plugins/demo"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/setup"
@@ -154,6 +156,12 @@ func runMainServer() {
 	}
 	defer app.Cleanup()
 
+	// 插件子系统启动：核心 schema 已在 ProvideEventBus 注册；这里
+	// 1) 启动事件总线后台分发；2) 重放数据库里 enabled 状态的插件；
+	// 3) 把插件声明的 Routes / Subscribes 挂到主路由和事件总线。
+	// 任何步骤失败都只记录日志、不阻断主服务启动。
+	bootstrapPlugins(app)
+
 	// 启动服务器
 	go func() {
 		if err := app.Server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -173,9 +181,49 @@ func runMainServer() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// 在关闭 HTTP / 基础设施之前，先优雅停掉 enabled 插件，确保
+	// 插件 Shutdown 钩子能调到 Redis / DB。
+	shutdownPlugins(ctx, app)
+
 	if err := app.Server.Shutdown(ctx); err != nil {
 		log.Fatalf("Server forced to shutdown: %v", err)
 	}
 
 	log.Println("Server exited")
+}
+
+// bootstrapPlugins runs the plugin lifecycle replay + resource mounting
+// after the main application has been wired but before HTTP starts.
+// All failures are non-fatal — the host must keep serving traffic even if
+// every plugin is broken.
+func bootstrapPlugins(app *Application) {
+	bootstrapCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if err := app.EventBus.Start(bootstrapCtx); err != nil {
+		slog.Error("plugin event bus start failed", "error", err)
+	}
+	if err := app.PluginLoader.BootstrapAll(bootstrapCtx); err != nil {
+		slog.Error("plugin bootstrap failed", "error", err)
+	}
+	authMW := pluginmount.AuthMiddlewares{
+		User:  gin.HandlerFunc(app.JWTAuth),
+		Admin: gin.HandlerFunc(app.AdminAuth),
+	}
+	if err := pluginmount.MountRoutes(bootstrapCtx, app.Router, app.PluginLoader, authMW, slog.Default()); err != nil {
+		slog.Error("plugin route mount failed", "error", err)
+	}
+	if err := pluginmount.MountSubscriptions(bootstrapCtx, app.EventBus, app.PluginLoader, slog.Default()); err != nil {
+		slog.Error("plugin subscription mount failed", "error", err)
+	}
+}
+
+// shutdownPlugins disables every running plugin and stops the event bus.
+// Called from the shutdown path so plugin teardown happens while DB /
+// Redis are still alive.
+func shutdownPlugins(ctx context.Context, app *Application) {
+	app.PluginLoader.DisableAll(ctx)
+	if err := app.EventBus.Stop(ctx); err != nil {
+		slog.Error("plugin event bus stop failed", "error", err)
+	}
 }

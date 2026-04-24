@@ -299,6 +299,27 @@ func (l *Loader) bootstrapOne(ctx context.Context, p plugin.Plugin) error {
 	}
 }
 
+// DisableAll iterates every plugin currently in state=enabled and invokes
+// Disable. Used by main.go during graceful shutdown so plugin Shutdown
+// hooks run before infra resources (Redis, ent client) are closed.
+// Errors are logged per-plugin and do not abort the sweep.
+func (l *Loader) DisableAll(ctx context.Context) {
+	states, err := l.ListStates(ctx)
+	if err != nil {
+		l.log.Error("plugin loader: list states for shutdown failed", "error", err)
+		return
+	}
+	for _, st := range states {
+		if st.State != repository.PluginStateEnabled {
+			continue
+		}
+		if err := l.Disable(ctx, st.ID); err != nil {
+			l.log.Error("plugin loader: disable during shutdown failed",
+				"plugin", st.ID, "error", err)
+		}
+	}
+}
+
 // validateTables ensures every declared table name obeys the
 // plugin_<id>_ prefix rule.
 func validateTables(pluginID string, tables []string) error {

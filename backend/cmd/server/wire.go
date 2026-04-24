@@ -22,15 +22,19 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
+	"github.com/gin-gonic/gin"
 	"github.com/google/wire"
 	"github.com/redis/go-redis/v9"
 )
 
 type Application struct {
 	Server       *http.Server
+	Router       *gin.Engine
 	Cleanup      func()
 	PluginLoader *loader.Loader
 	EventBus     *eventbus.Bus
+	JWTAuth      middleware.JWTAuthMiddleware
+	AdminAuth    middleware.AdminAuthMiddleware
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -61,7 +65,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "Cleanup", "PluginLoader", "EventBus"),
+		wire.Struct(new(Application), "Server", "Router", "Cleanup", "PluginLoader", "EventBus", "JWTAuth", "AdminAuth"),
 	)
 	return nil, nil
 }

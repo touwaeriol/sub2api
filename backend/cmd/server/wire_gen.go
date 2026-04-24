@@ -22,6 +22,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
+	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 	"log"
 	"net/http"
@@ -291,9 +292,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService)
 	application := &Application{
 		Server:       httpServer,
+		Router:       engine,
 		Cleanup:      v,
 		PluginLoader: pluginLoaderInstance,
 		EventBus:     pluginEventBus,
+		JWTAuth:      jwtAuthMiddleware,
+		AdminAuth:    adminAuthMiddleware,
 	}
 	return application, nil
 }
@@ -302,9 +306,12 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 
 type Application struct {
 	Server       *http.Server
+	Router       *gin.Engine
 	Cleanup      func()
 	PluginLoader *loader.Loader
 	EventBus     *eventbus.Bus
+	JWTAuth      middleware.JWTAuthMiddleware
+	AdminAuth    middleware.AdminAuthMiddleware
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

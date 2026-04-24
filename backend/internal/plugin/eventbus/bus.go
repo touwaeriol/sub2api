@@ -65,6 +65,28 @@ func (b *Bus) AsyncDispatcher() *AsyncDispatcher { return b.async }
 // NotifyDispatcher exposes the notify dispatcher.
 func (b *Bus) NotifyDispatcher() *NotifyDispatcher { return b.notify }
 
+// Start brings up background workers (currently only the async
+// dispatcher's queue handler). Safe to call multiple times; the async
+// dispatcher itself guards against double registration. Returns an error
+// when async wiring is present but the queue rejects the handler —
+// callers typically log and proceed because sync/notify still work.
+func (b *Bus) Start(ctx context.Context) error {
+	if b.async == nil {
+		return nil
+	}
+	return b.async.Start(ctx)
+}
+
+// Stop is the symmetric teardown hook. The underlying in-memory job queue
+// owns worker lifecycle so this is intentionally a no-op today; kept for
+// forward compatibility with a SQL-backed queue.
+func (b *Bus) Stop(ctx context.Context) error {
+	if b.async == nil {
+		return nil
+	}
+	return b.async.Stop(ctx)
+}
+
 // Publish routes to the dispatcher matching the topic's Kind.
 func (b *Bus) Publish(ctx context.Context, topic string, payload any) error {
 	schema, ok := b.registry.Get(topic)
