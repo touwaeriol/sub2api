@@ -73,6 +73,13 @@ func NewPluginRepository(client *ent.Client) PluginRepository {
 }
 
 // Upsert implements PluginRepository.
+//
+// NOTE: We intentionally avoid ent's OnConflict upsert path here. The
+// generated PluginUpsert.Set bypasses the field.TypeJSON encoder for
+// declared_tables and forwards the raw []string to the pq driver, which
+// fails with "unsupported type []string". Find + Create/UpdateOne both
+// route through _spec.SetField(..., field.TypeJSON, ...) so the JSON
+// marshal happens before binding. See plugin_create.go for the divergence.
 func (r *entPluginRepository) Upsert(ctx context.Context, record *PluginRecord) error {
 	if record == nil || record.ID == "" {
 		return fmt.Errorf("plugin repository: upsert requires non-empty record id")
@@ -85,12 +92,28 @@ func (r *entPluginRepository) Upsert(ctx context.Context, record *PluginRecord) 
 	if tables == nil {
 		tables = []string{}
 	}
-	meta := record.MetaSnapshot
+
+	existing, err := r.client.Plugin.Query().Where(entplugin.IDEQ(record.ID)).Only(ctx)
+	if err != nil && !ent.IsNotFound(err) {
+		return fmt.Errorf("plugin repository: upsert lookup %q: %w", record.ID, err)
+	}
+	if ent.IsNotFound(err) {
+		return r.createRecord(ctx, record, state, tables)
+	}
+	return r.updateRecord(ctx, existing, record, state, tables)
+}
+
+// createRecord inserts a new plugins row.
+func (r *entPluginRepository) createRecord(
+	ctx context.Context,
+	record *PluginRecord,
+	state entplugin.State,
+	tables []string,
+) error {
 	installedAt := record.InstalledAt
 	if installedAt.IsZero() {
 		installedAt = time.Now()
 	}
-
 	create := r.client.Plugin.Create().
 		SetID(record.ID).
 		SetVersion(record.Version).
@@ -98,21 +121,38 @@ func (r *entPluginRepository) Upsert(ctx context.Context, record *PluginRecord) 
 		SetState(state).
 		SetInstalledAt(installedAt).
 		SetDeclaredTables(tables).
-		SetMetaSnapshot(meta)
+		SetMetaSnapshot(record.MetaSnapshot)
 	if !record.LastEnabledAt.IsZero() {
 		create = create.SetLastEnabledAt(record.LastEnabledAt)
 	}
-	return create.OnConflictColumns(entplugin.FieldID).
-		Update(func(u *ent.PluginUpsert) {
-			u.SetVersion(record.Version)
-			u.SetAPIVersion(record.APIVersion)
-			u.SetState(state)
-			u.SetDeclaredTables(tables)
-			u.SetMetaSnapshot(meta)
-			if !record.LastEnabledAt.IsZero() {
-				u.SetLastEnabledAt(record.LastEnabledAt)
-			}
-		}).Exec(ctx)
+	if err := create.Exec(ctx); err != nil {
+		return fmt.Errorf("plugin repository: upsert create %q: %w", record.ID, err)
+	}
+	return nil
+}
+
+// updateRecord refreshes a pre-existing plugins row (installed_at stays
+// immutable by virtue of the schema annotation).
+func (r *entPluginRepository) updateRecord(
+	ctx context.Context,
+	existing *ent.Plugin,
+	record *PluginRecord,
+	state entplugin.State,
+	tables []string,
+) error {
+	update := existing.Update().
+		SetVersion(record.Version).
+		SetAPIVersion(record.APIVersion).
+		SetState(state).
+		SetDeclaredTables(tables).
+		SetMetaSnapshot(record.MetaSnapshot)
+	if !record.LastEnabledAt.IsZero() {
+		update = update.SetLastEnabledAt(record.LastEnabledAt)
+	}
+	if err := update.Exec(ctx); err != nil {
+		return fmt.Errorf("plugin repository: upsert update %q: %w", record.ID, err)
+	}
+	return nil
 }
 
 // Find implements PluginRepository.
