@@ -147,6 +147,7 @@ func ProvidePluginDependencies(
 	settingRepo service.SettingRepository,
 	logger *slog.Logger,
 	bus plugin.EventBus,
+	driver dialect.Driver,
 ) pluginapi.Dependencies {
 	return pluginapi.Dependencies{
 		AccountService:   accountSvc,
@@ -159,5 +160,6 @@ func ProvidePluginDependencies(
 		SettingRepo:      settingRepo,
 		BaseLogger:       logger,
 		EventBus:         bus,
+		EntDriver:        driver,
 	}
 }

@@ -124,8 +124,21 @@ func (l *Loader) Enable(ctx context.Context, id string) error {
 	return l.repo.UpdateState(ctx, id, repository.PluginStateEnabled)
 }
 
-// Disable calls Shutdown (with a deadline) and flips the state column.
+// Disable is the user-triggered transition: it shuts the plugin down AND
+// persists state=disabled so later boots stay disabled. For the
+// process-shutdown case (host restart) use stopPlugin via DisableAll so the
+// persisted state is preserved across restarts.
 func (l *Loader) Disable(ctx context.Context, id string) error {
+	if err := l.stopPlugin(ctx, id); err != nil {
+		return err
+	}
+	return l.repo.UpdateState(ctx, id, repository.PluginStateDisabled)
+}
+
+// stopPlugin runs the plugin Shutdown hook with a deadline but does NOT
+// change the persisted state. Shared by Disable (then persists disabled)
+// and DisableAll (leaves enabled rows enabled so the next boot re-Enables).
+func (l *Loader) stopPlugin(ctx context.Context, id string) error {
 	p, ok := plugin.Lookup(id)
 	if !ok {
 		return fmt.Errorf("%w: %s", plugin.ErrPluginNotFound, id)
@@ -134,9 +147,8 @@ func (l *Loader) Disable(ctx context.Context, id string) error {
 	defer cancel()
 	if err := p.Shutdown(shutdownCtx); err != nil {
 		l.log.Error("plugin shutdown failed", "plugin", id, "error", err)
-		// Still demote the state so the plugin is not re-entered.
 	}
-	return l.repo.UpdateState(ctx, id, repository.PluginStateDisabled)
+	return nil
 }
 
 // Uninstall takes the plugin offline. When purge=true the declared tables
@@ -299,10 +311,11 @@ func (l *Loader) bootstrapOne(ctx context.Context, p plugin.Plugin) error {
 	}
 }
 
-// DisableAll iterates every plugin currently in state=enabled and invokes
-// Disable. Used by main.go during graceful shutdown so plugin Shutdown
-// hooks run before infra resources (Redis, ent client) are closed.
-// Errors are logged per-plugin and do not abort the sweep.
+// DisableAll iterates every plugin currently in state=enabled and runs its
+// Shutdown hook WITHOUT flipping the persisted state. Used by main.go during
+// graceful shutdown so plugin teardown happens while Redis / DB are still
+// alive, but the next boot sees the same state=enabled and re-Enables the
+// plugin. Errors are logged per-plugin and do not abort the sweep.
 func (l *Loader) DisableAll(ctx context.Context) {
 	states, err := l.ListStates(ctx)
 	if err != nil {
@@ -313,8 +326,8 @@ func (l *Loader) DisableAll(ctx context.Context) {
 		if st.State != repository.PluginStateEnabled {
 			continue
 		}
-		if err := l.Disable(ctx, st.ID); err != nil {
-			l.log.Error("plugin loader: disable during shutdown failed",
+		if err := l.stopPlugin(ctx, st.ID); err != nil {
+			l.log.Error("plugin loader: stop during shutdown failed",
 				"plugin", st.ID, "error", err)
 		}
 	}

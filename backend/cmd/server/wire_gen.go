@@ -257,6 +257,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		settingRepository,
 		pluginLoaderLogger,
 		pluginEventBus,
+		pluginDialectDriver,
 	)
 	pluginCoreAPIFactory := pluginapi.NewCoreAPIFactory(pluginDependencies)
 	pluginLoaderInstance := loader.NewLoader(pluginEntRepo, pluginMigrator, pluginDialectDriver, pluginCoreAPIFactory)
