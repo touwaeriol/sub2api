@@ -1,0 +1,5 @@
+{
+  "plugins.demo.menu.notes": "Demo Notes",
+  "plugins.demo.settings.greeting.label": "Greeting",
+  "plugins.demo.settings.greeting.description": "Text returned by the public /hello endpoint."
+}

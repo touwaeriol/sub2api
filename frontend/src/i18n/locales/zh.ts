@@ -297,6 +297,11 @@ export default {
     contactSupport: '联系客服',
     add: '添加',
     invalidEmail: '请输入有效的邮箱地址',
+    invalidNumber: '请输入有效数字',
+    invalidJson: '无效的 JSON',
+    invalidFormat: '格式不正确',
+    hide: '隐藏',
+    show: '显示',
     optional: '可选',
     selectOption: '请选择',
     searchPlaceholder: '搜索...',
@@ -363,6 +368,7 @@ export default {
     paymentDashboard: '支付概览',
     paymentConfig: '支付配置',
     paymentPlans: '订阅套餐',
+    plugins: '插件',
   },
 
   // Auth
@@ -388,6 +394,11 @@ export default {
     passwordHint: '至少 6 个字符',
     emailRequired: '请输入邮箱',
     invalidEmail: '请输入有效的邮箱地址',
+    invalidNumber: '请输入有效数字',
+    invalidJson: '无效的 JSON',
+    invalidFormat: '格式不正确',
+    hide: '隐藏',
+    show: '显示',
     passwordRequired: '请输入密码',
     passwordMinLength: '密码至少需要 6 个字符',
     loginFailed: '登录失败，请检查您的凭据后重试。',
@@ -4970,6 +4981,37 @@ export default {
       loadFailed: '加载模板失败',
       saveFailed: '保存模板失败',
       deleteFailed: '删除模板失败'
+    },
+
+    // 插件管理（Phase 0）
+    plugins: {
+      title: '插件管理',
+      description: '安装、启用或停用平台插件',
+      empty: '尚未安装任何插件',
+      enable: '启用',
+      disable: '停用',
+      uninstall: '卸载',
+      uninstallPurge: '卸载并清除数据',
+      confirmPurgeTitle: '确认清除插件数据？',
+      confirmPurge: '卸载 "{name}" 并清除数据将删除其关联表及迁移记录，此操作不可逆。',
+      loadFailed: '加载插件失败',
+      enableFailed: '启用插件失败',
+      disableFailed: '停用插件失败',
+      uninstallFailed: '卸载插件失败',
+      columns: {
+        id: '标识',
+        name: '名称',
+        version: '版本',
+        state: '状态',
+        installedAt: '安装时间',
+        actions: '操作'
+      },
+      state: {
+        installed: '已安装',
+        enabled: '已启用',
+        disabled: '已停用',
+        uninstalled: '已卸载'
+      }
     }
   },
 

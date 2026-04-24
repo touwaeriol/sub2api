@@ -1,0 +1,5 @@
+{
+  "plugins.demo.menu.notes": "演示笔记",
+  "plugins.demo.settings.greeting.label": "问候语",
+  "plugins.demo.settings.greeting.description": "公开 /hello 接口返回的文本。"
+}

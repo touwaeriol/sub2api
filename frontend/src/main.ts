@@ -5,6 +5,7 @@ import router from './router'
 import i18n, { initI18n } from './i18n'
 import { useAppStore } from '@/stores/app'
 import './style.css'
+import { bootstrapFrontendPlugins } from '@/plugins/bootstrap'
 
 function initThemeClass() {
   const savedTheme = localStorage.getItem('theme')
@@ -36,6 +37,11 @@ async function bootstrap() {
 
   app.use(router)
   app.use(i18n)
+
+
+  // Bootstrap frontend plugins (Layer 2 UI modules) before mounting so
+  // dynamic routes are present on the first navigation.
+  await bootstrapFrontendPlugins(router, i18n, pinia)
 
   // 等待路由器完成初始导航后再挂载，避免竞态条件导致的空白渲染
   await router.isReady()

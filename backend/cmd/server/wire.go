@@ -14,6 +14,9 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	pluginwire "github.com/Wei-Shaw/sub2api/internal/plugin"
+	"github.com/Wei-Shaw/sub2api/internal/plugin/eventbus"
+	"github.com/Wei-Shaw/sub2api/internal/plugin/loader"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -24,8 +27,10 @@ import (
 )
 
 type Application struct {
-	Server  *http.Server
-	Cleanup func()
+	Server       *http.Server
+	Cleanup      func()
+	PluginLoader *loader.Loader
+	EventBus     *eventbus.Bus
 }
 
 func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
@@ -40,6 +45,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		middleware.ProviderSet,
 		handler.ProviderSet,
 
+		// Plugin subsystem (loader, eventbus, CoreAPI factory)
+		pluginwire.ProviderSet,
+
 		// Server layer ProviderSet
 		server.ProviderSet,
 
@@ -53,7 +61,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 		provideCleanup,
 
 		// Application struct
-		wire.Struct(new(Application), "Server", "Cleanup"),
+		wire.Struct(new(Application), "Server", "Cleanup", "PluginLoader", "EventBus"),
 	)
 	return nil, nil
 }

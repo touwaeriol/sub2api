@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/ent/plugin"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
@@ -678,6 +679,70 @@ func init() {
 	paymentproviderinstance.DefaultUpdatedAt = paymentproviderinstanceDescUpdatedAt.Default.(func() time.Time)
 	// paymentproviderinstance.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	paymentproviderinstance.UpdateDefaultUpdatedAt = paymentproviderinstanceDescUpdatedAt.UpdateDefault.(func() time.Time)
+	pluginFields := schema.Plugin{}.Fields()
+	_ = pluginFields
+	// pluginDescVersion is the schema descriptor for version field.
+	pluginDescVersion := pluginFields[1].Descriptor()
+	// plugin.VersionValidator is a validator for the "version" field. It is called by the builders before save.
+	plugin.VersionValidator = func() func(string) error {
+		validators := pluginDescVersion.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(version string) error {
+			for _, fn := range fns {
+				if err := fn(version); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// pluginDescAPIVersion is the schema descriptor for api_version field.
+	pluginDescAPIVersion := pluginFields[2].Descriptor()
+	// plugin.APIVersionValidator is a validator for the "api_version" field. It is called by the builders before save.
+	plugin.APIVersionValidator = func() func(string) error {
+		validators := pluginDescAPIVersion.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(api_version string) error {
+			for _, fn := range fns {
+				if err := fn(api_version); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// pluginDescInstalledAt is the schema descriptor for installed_at field.
+	pluginDescInstalledAt := pluginFields[4].Descriptor()
+	// plugin.DefaultInstalledAt holds the default value on creation for the installed_at field.
+	plugin.DefaultInstalledAt = pluginDescInstalledAt.Default.(func() time.Time)
+	// pluginDescDeclaredTables is the schema descriptor for declared_tables field.
+	pluginDescDeclaredTables := pluginFields[6].Descriptor()
+	// plugin.DefaultDeclaredTables holds the default value on creation for the declared_tables field.
+	plugin.DefaultDeclaredTables = pluginDescDeclaredTables.Default.([]string)
+	// pluginDescID is the schema descriptor for id field.
+	pluginDescID := pluginFields[0].Descriptor()
+	// plugin.IDValidator is a validator for the "id" field. It is called by the builders before save.
+	plugin.IDValidator = func() func(string) error {
+		validators := pluginDescID.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(id string) error {
+			for _, fn := range fns {
+				if err := fn(id); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
 	promocodeFields := schema.PromoCode{}.Fields()
 	_ = promocodeFields
 	// promocodeDescCode is the schema descriptor for code field.

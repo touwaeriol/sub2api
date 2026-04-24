@@ -3,6 +3,8 @@ package routes
 import (
 	"net/http"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -29,4 +31,14 @@ func RegisterCommonRoutes(r *gin.Engine) {
 			},
 		})
 	})
+}
+
+// RegisterPluginPublicRoutes 注册公共的插件清单路由
+// 向前端暴露当前启用的插件清单（菜单、表单 schema、UI bundle），
+// 不需要认证。仅返回 state=enabled 的插件，secret 字段的默认值会被屏蔽。
+func RegisterPluginPublicRoutes(v1 *gin.RouterGroup, h *handler.Handlers) {
+	if h == nil || h.PluginList == nil {
+		return
+	}
+	v1.GET("/plugins", h.PluginList.ListEnabledPlugins)
 }

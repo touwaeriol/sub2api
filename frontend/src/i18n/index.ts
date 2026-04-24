@@ -89,3 +89,30 @@ export const availableLocales = [
 ] as const
 
 export default i18n
+
+/**
+ * Plugin i18n merger.
+ *
+ * Plugin authors pass locale messages like:
+ *   { en: { settings: {...} }, zh: { settings: {...} } }
+ * and we prefix every entry with `plugins.<pluginId>.` so two plugins cannot
+ * clobber each other's keys. Safe to call multiple times — later merges
+ * override earlier ones for the same locale/key.
+ */
+export function mergePluginLocales(
+  pluginId: string,
+  locales: Record<string, Record<string, unknown>>
+): void {
+  if (!pluginId) {
+    throw new Error('mergePluginLocales: pluginId is required')
+  }
+  const globalI18n = i18n.global as unknown as {
+    mergeLocaleMessage: (locale: string, messages: Record<string, unknown>) => void
+  }
+  for (const [locale, messages] of Object.entries(locales)) {
+    const wrapped: Record<string, unknown> = {
+      plugins: { [pluginId]: messages }
+    }
+    globalI18n.mergeLocaleMessage(locale, wrapped)
+  }
+}

@@ -297,6 +297,11 @@ export default {
     contactSupport: 'Contact Support',
     add: 'Add',
     invalidEmail: 'Please enter a valid email address',
+    invalidNumber: 'Please enter a valid number',
+    invalidJson: 'Invalid JSON',
+    invalidFormat: 'Invalid format',
+    hide: 'Hide',
+    show: 'Show',
     optional: 'optional',
     selectOption: 'Select an option',
     searchPlaceholder: 'Search...',
@@ -363,6 +368,7 @@ export default {
     paymentDashboard: 'Payment Dashboard',
     paymentConfig: 'Payment Config',
     paymentPlans: 'Plans',
+    plugins: 'Plugins',
   },
 
   // Auth
@@ -388,6 +394,11 @@ export default {
     passwordHint: 'At least 6 characters',
     emailRequired: 'Email is required',
     invalidEmail: 'Please enter a valid email address',
+    invalidNumber: 'Please enter a valid number',
+    invalidJson: 'Invalid JSON',
+    invalidFormat: 'Invalid format',
+    hide: 'Hide',
+    show: 'Show',
     passwordRequired: 'Password is required',
     passwordMinLength: 'Password must be at least 6 characters',
     loginFailed: 'Login failed. Please check your credentials and try again.',
@@ -4799,6 +4810,37 @@ export default {
       loadFailed: 'Failed to load profiles',
       saveFailed: 'Failed to save profile',
       deleteFailed: 'Failed to delete profile'
+    },
+
+    // Plugins (Phase 0)
+    plugins: {
+      title: 'Plugin Management',
+      description: 'Install, enable, or disable platform plugins',
+      empty: 'No plugins installed',
+      enable: 'Enable',
+      disable: 'Disable',
+      uninstall: 'Uninstall',
+      uninstallPurge: 'Uninstall & Purge',
+      confirmPurgeTitle: 'Purge plugin data?',
+      confirmPurge: 'Uninstalling "{name}" with purge will drop its tables and clear its migration history. This action is irreversible.',
+      loadFailed: 'Failed to load plugins',
+      enableFailed: 'Failed to enable plugin',
+      disableFailed: 'Failed to disable plugin',
+      uninstallFailed: 'Failed to uninstall plugin',
+      columns: {
+        id: 'ID',
+        name: 'Name',
+        version: 'Version',
+        state: 'State',
+        installedAt: 'Installed At',
+        actions: 'Actions'
+      },
+      state: {
+        installed: 'Installed',
+        enabled: 'Enabled',
+        disabled: 'Disabled',
+        uninstalled: 'Uninstalled'
+      }
     }
   },
 

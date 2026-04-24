@@ -13,6 +13,11 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/handler"
 	"github.com/Wei-Shaw/sub2api/internal/handler/admin"
 	"github.com/Wei-Shaw/sub2api/internal/payment"
+	pluginwire "github.com/Wei-Shaw/sub2api/internal/plugin"
+	pluginapi "github.com/Wei-Shaw/sub2api/internal/plugin/api"
+	"github.com/Wei-Shaw/sub2api/internal/plugin/eventbus"
+	"github.com/Wei-Shaw/sub2api/internal/plugin/loader"
+	pluginrepository "github.com/Wei-Shaw/sub2api/internal/plugin/repository"
 	"github.com/Wei-Shaw/sub2api/internal/repository"
 	"github.com/Wei-Shaw/sub2api/internal/server"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
@@ -220,7 +225,42 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	settingHandler := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService)
 	paymentOrderExpiryService := service.ProvidePaymentOrderExpiryService(paymentService)
 	paymentHandler := admin.NewPaymentHandler(paymentService, paymentConfigService)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, paymentHandler)
+	// Plugin subsystem wiring (agent W, wave 2).
+	accountService := service.NewAccountService(accountRepository, groupRepository)
+	pluginLoaderLogger := pluginwire.ProvideLoaderLogger()
+	pluginDialectDriver, err := pluginwire.ProvideDialectDriver(client)
+	if err != nil {
+		return nil, err
+	}
+	pluginEntRepo := pluginrepository.NewPluginRepository(client)
+	pluginMigrationRepo, err := pluginwire.ProvideMigrationRepository(db)
+	if err != nil {
+		return nil, err
+	}
+	pluginMigrator := loader.NewMigrator(pluginMigrationRepo, db, pluginDialectDriver, pluginLoaderLogger)
+	pluginRegistry := eventbus.NewRegistry()
+	pluginJobQueue := pluginwire.ProvideInMemoryJobQueue()
+	pluginDeadLetterRepo := pluginwire.ProvideDeadLetterRepo(db)
+	pluginEventBus, err := pluginwire.ProvideEventBus(pluginRegistry, pluginJobQueue, pluginDeadLetterRepo)
+	if err != nil {
+		return nil, err
+	}
+	pluginDependencies := pluginwire.ProvidePluginDependencies(
+		accountService,
+		accountRepository,
+		billingService,
+		usageBillingRepository,
+		httpUpstream,
+		redisClient,
+		secretEncryptor,
+		settingRepository,
+		pluginLoaderLogger,
+		pluginEventBus,
+	)
+	pluginCoreAPIFactory := pluginapi.NewCoreAPIFactory(pluginDependencies)
+	pluginLoaderInstance := loader.NewLoader(pluginEntRepo, pluginMigrator, pluginDialectDriver, pluginCoreAPIFactory)
+	pluginAdminHandler := admin.NewPluginAdminHandler(pluginLoaderInstance, pluginEntRepo, pluginDeadLetterRepo, pluginEventBus, pluginLoaderLogger)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, openAIOAuthHandler, geminiOAuthHandler, antigravityOAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, channelHandler, paymentHandler, pluginAdminHandler)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
@@ -232,7 +272,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	paymentWebhookHandler := handler.NewPaymentWebhookHandler(paymentService, registry)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
-	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, idempotencyCoordinator, idempotencyCleanupService)
+	pluginListHandler := handler.NewPluginListHandler(pluginLoaderInstance, pluginLoaderLogger)
+	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, pluginListHandler, idempotencyCoordinator, idempotencyCleanupService)
 	jwtAuthMiddleware := middleware.NewJWTAuthMiddleware(authService, userService)
 	adminAuthMiddleware := middleware.NewAdminAuthMiddleware(authService, userService, settingService)
 	apiKeyAuthMiddleware := middleware.NewAPIKeyAuthMiddleware(apiKeyService, subscriptionService, configConfig)
@@ -249,8 +290,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
 	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, paymentOrderExpiryService)
 	application := &Application{
-		Server:  httpServer,
-		Cleanup: v,
+		Server:       httpServer,
+		Cleanup:      v,
+		PluginLoader: pluginLoaderInstance,
+		EventBus:     pluginEventBus,
 	}
 	return application, nil
 }
@@ -258,8 +301,10 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 // wire.go:
 
 type Application struct {
-	Server  *http.Server
-	Cleanup func()
+	Server       *http.Server
+	Cleanup      func()
+	PluginLoader *loader.Loader
+	EventBus     *eventbus.Bus
 }
 
 func providePrivacyClientFactory() service.PrivacyClientFactory {

@@ -88,6 +88,9 @@ func RegisterAdminRoutes(
 
 		// 渠道管理
 		registerChannelRoutes(admin, h)
+
+		// 插件管理
+		registerPluginAdminRoutes(admin, h)
 	}
 }
 
@@ -556,5 +559,30 @@ func registerChannelRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		channels.POST("", h.Admin.Channel.Create)
 		channels.PUT("/:id", h.Admin.Channel.Update)
 		channels.DELETE("/:id", h.Admin.Channel.Delete)
+	}
+}
+
+// registerPluginAdminRoutes 注册插件管理员路由（列表、详情、生命周期、死信）
+func registerPluginAdminRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h == nil || h.Admin == nil || h.Admin.PluginAdmin == nil {
+		return
+	}
+	pa := h.Admin.PluginAdmin
+	plugins := admin.Group("/plugins")
+	{
+		// 死信注册在 /:id 之前，避免 gin 把 "dead-letters" 当作 :id 参数
+		dl := plugins.Group("/dead-letters")
+		{
+			dl.GET("", pa.ListDeadLetters)
+			dl.POST("/:id/retry", pa.RetryDeadLetter)
+			dl.DELETE("/:id", pa.DeleteDeadLetter)
+		}
+
+		plugins.GET("", pa.ListPlugins)
+		plugins.GET("/:id", pa.GetPlugin)
+		plugins.POST("/:id/install", pa.InstallPlugin)
+		plugins.POST("/:id/enable", pa.EnablePlugin)
+		plugins.POST("/:id/disable", pa.DisablePlugin)
+		plugins.POST("/:id/uninstall", pa.UninstallPlugin)
 	}
 }

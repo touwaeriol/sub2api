@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/ent/plugin"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
@@ -109,6 +110,7 @@ func checkColumn(t, c string) error {
 			paymentauditlog.Table:         paymentauditlog.ValidColumn,
 			paymentorder.Table:            paymentorder.ValidColumn,
 			paymentproviderinstance.Table: paymentproviderinstance.ValidColumn,
+			plugin.Table:                  plugin.ValidColumn,
 			promocode.Table:               promocode.ValidColumn,
 			promocodeusage.Table:          promocodeusage.ValidColumn,
 			proxy.Table:                   proxy.ValidColumn,

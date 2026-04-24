@@ -23,6 +23,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/paymentauditlog"
 	"github.com/Wei-Shaw/sub2api/ent/paymentorder"
 	"github.com/Wei-Shaw/sub2api/ent/paymentproviderinstance"
+	"github.com/Wei-Shaw/sub2api/ent/plugin"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
@@ -62,6 +63,7 @@ const (
 	TypePaymentAuditLog         = "PaymentAuditLog"
 	TypePaymentOrder            = "PaymentOrder"
 	TypePaymentProviderInstance = "PaymentProviderInstance"
+	TypePlugin                  = "Plugin"
 	TypePromoCode               = "PromoCode"
 	TypePromoCodeUsage          = "PromoCodeUsage"
 	TypeProxy                   = "Proxy"
@@ -16539,6 +16541,719 @@ func (m *PaymentProviderInstanceMutation) ClearEdge(name string) error {
 // It returns an error if the edge is not defined in the schema.
 func (m *PaymentProviderInstanceMutation) ResetEdge(name string) error {
 	return fmt.Errorf("unknown PaymentProviderInstance edge %s", name)
+}
+
+// PluginMutation represents an operation that mutates the Plugin nodes in the graph.
+type PluginMutation struct {
+	config
+	op                    Op
+	typ                   string
+	id                    *string
+	version               *string
+	api_version           *string
+	state                 *plugin.State
+	installed_at          *time.Time
+	last_enabled_at       *time.Time
+	declared_tables       *[]string
+	appenddeclared_tables []string
+	meta_snapshot         *map[string]interface{}
+	clearedFields         map[string]struct{}
+	done                  bool
+	oldValue              func(context.Context) (*Plugin, error)
+	predicates            []predicate.Plugin
+}
+
+var _ ent.Mutation = (*PluginMutation)(nil)
+
+// pluginOption allows management of the mutation configuration using functional options.
+type pluginOption func(*PluginMutation)
+
+// newPluginMutation creates new mutation for the Plugin entity.
+func newPluginMutation(c config, op Op, opts ...pluginOption) *PluginMutation {
+	m := &PluginMutation{
+		config:        c,
+		op:            op,
+		typ:           TypePlugin,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withPluginID sets the ID field of the mutation.
+func withPluginID(id string) pluginOption {
+	return func(m *PluginMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *Plugin
+		)
+		m.oldValue = func(ctx context.Context) (*Plugin, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().Plugin.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withPlugin sets the old Plugin of the mutation.
+func withPlugin(node *Plugin) pluginOption {
+	return func(m *PluginMutation) {
+		m.oldValue = func(context.Context) (*Plugin, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m PluginMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m PluginMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of Plugin entities.
+func (m *PluginMutation) SetID(id string) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *PluginMutation) ID() (id string, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *PluginMutation) IDs(ctx context.Context) ([]string, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []string{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().Plugin.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetVersion sets the "version" field.
+func (m *PluginMutation) SetVersion(s string) {
+	m.version = &s
+}
+
+// Version returns the value of the "version" field in the mutation.
+func (m *PluginMutation) Version() (r string, exists bool) {
+	v := m.version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldVersion returns the old "version" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldVersion(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldVersion: %w", err)
+	}
+	return oldValue.Version, nil
+}
+
+// ResetVersion resets all changes to the "version" field.
+func (m *PluginMutation) ResetVersion() {
+	m.version = nil
+}
+
+// SetAPIVersion sets the "api_version" field.
+func (m *PluginMutation) SetAPIVersion(s string) {
+	m.api_version = &s
+}
+
+// APIVersion returns the value of the "api_version" field in the mutation.
+func (m *PluginMutation) APIVersion() (r string, exists bool) {
+	v := m.api_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAPIVersion returns the old "api_version" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldAPIVersion(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAPIVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAPIVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAPIVersion: %w", err)
+	}
+	return oldValue.APIVersion, nil
+}
+
+// ResetAPIVersion resets all changes to the "api_version" field.
+func (m *PluginMutation) ResetAPIVersion() {
+	m.api_version = nil
+}
+
+// SetState sets the "state" field.
+func (m *PluginMutation) SetState(pl plugin.State) {
+	m.state = &pl
+}
+
+// State returns the value of the "state" field in the mutation.
+func (m *PluginMutation) State() (r plugin.State, exists bool) {
+	v := m.state
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldState returns the old "state" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldState(ctx context.Context) (v plugin.State, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldState is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldState requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldState: %w", err)
+	}
+	return oldValue.State, nil
+}
+
+// ResetState resets all changes to the "state" field.
+func (m *PluginMutation) ResetState() {
+	m.state = nil
+}
+
+// SetInstalledAt sets the "installed_at" field.
+func (m *PluginMutation) SetInstalledAt(t time.Time) {
+	m.installed_at = &t
+}
+
+// InstalledAt returns the value of the "installed_at" field in the mutation.
+func (m *PluginMutation) InstalledAt() (r time.Time, exists bool) {
+	v := m.installed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldInstalledAt returns the old "installed_at" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldInstalledAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldInstalledAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldInstalledAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldInstalledAt: %w", err)
+	}
+	return oldValue.InstalledAt, nil
+}
+
+// ResetInstalledAt resets all changes to the "installed_at" field.
+func (m *PluginMutation) ResetInstalledAt() {
+	m.installed_at = nil
+}
+
+// SetLastEnabledAt sets the "last_enabled_at" field.
+func (m *PluginMutation) SetLastEnabledAt(t time.Time) {
+	m.last_enabled_at = &t
+}
+
+// LastEnabledAt returns the value of the "last_enabled_at" field in the mutation.
+func (m *PluginMutation) LastEnabledAt() (r time.Time, exists bool) {
+	v := m.last_enabled_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastEnabledAt returns the old "last_enabled_at" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldLastEnabledAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastEnabledAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastEnabledAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastEnabledAt: %w", err)
+	}
+	return oldValue.LastEnabledAt, nil
+}
+
+// ClearLastEnabledAt clears the value of the "last_enabled_at" field.
+func (m *PluginMutation) ClearLastEnabledAt() {
+	m.last_enabled_at = nil
+	m.clearedFields[plugin.FieldLastEnabledAt] = struct{}{}
+}
+
+// LastEnabledAtCleared returns if the "last_enabled_at" field was cleared in this mutation.
+func (m *PluginMutation) LastEnabledAtCleared() bool {
+	_, ok := m.clearedFields[plugin.FieldLastEnabledAt]
+	return ok
+}
+
+// ResetLastEnabledAt resets all changes to the "last_enabled_at" field.
+func (m *PluginMutation) ResetLastEnabledAt() {
+	m.last_enabled_at = nil
+	delete(m.clearedFields, plugin.FieldLastEnabledAt)
+}
+
+// SetDeclaredTables sets the "declared_tables" field.
+func (m *PluginMutation) SetDeclaredTables(s []string) {
+	m.declared_tables = &s
+	m.appenddeclared_tables = nil
+}
+
+// DeclaredTables returns the value of the "declared_tables" field in the mutation.
+func (m *PluginMutation) DeclaredTables() (r []string, exists bool) {
+	v := m.declared_tables
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDeclaredTables returns the old "declared_tables" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldDeclaredTables(ctx context.Context) (v []string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDeclaredTables is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDeclaredTables requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDeclaredTables: %w", err)
+	}
+	return oldValue.DeclaredTables, nil
+}
+
+// AppendDeclaredTables adds s to the "declared_tables" field.
+func (m *PluginMutation) AppendDeclaredTables(s []string) {
+	m.appenddeclared_tables = append(m.appenddeclared_tables, s...)
+}
+
+// AppendedDeclaredTables returns the list of values that were appended to the "declared_tables" field in this mutation.
+func (m *PluginMutation) AppendedDeclaredTables() ([]string, bool) {
+	if len(m.appenddeclared_tables) == 0 {
+		return nil, false
+	}
+	return m.appenddeclared_tables, true
+}
+
+// ResetDeclaredTables resets all changes to the "declared_tables" field.
+func (m *PluginMutation) ResetDeclaredTables() {
+	m.declared_tables = nil
+	m.appenddeclared_tables = nil
+}
+
+// SetMetaSnapshot sets the "meta_snapshot" field.
+func (m *PluginMutation) SetMetaSnapshot(value map[string]interface{}) {
+	m.meta_snapshot = &value
+}
+
+// MetaSnapshot returns the value of the "meta_snapshot" field in the mutation.
+func (m *PluginMutation) MetaSnapshot() (r map[string]interface{}, exists bool) {
+	v := m.meta_snapshot
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldMetaSnapshot returns the old "meta_snapshot" field's value of the Plugin entity.
+// If the Plugin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *PluginMutation) OldMetaSnapshot(ctx context.Context) (v map[string]interface{}, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldMetaSnapshot is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldMetaSnapshot requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldMetaSnapshot: %w", err)
+	}
+	return oldValue.MetaSnapshot, nil
+}
+
+// ClearMetaSnapshot clears the value of the "meta_snapshot" field.
+func (m *PluginMutation) ClearMetaSnapshot() {
+	m.meta_snapshot = nil
+	m.clearedFields[plugin.FieldMetaSnapshot] = struct{}{}
+}
+
+// MetaSnapshotCleared returns if the "meta_snapshot" field was cleared in this mutation.
+func (m *PluginMutation) MetaSnapshotCleared() bool {
+	_, ok := m.clearedFields[plugin.FieldMetaSnapshot]
+	return ok
+}
+
+// ResetMetaSnapshot resets all changes to the "meta_snapshot" field.
+func (m *PluginMutation) ResetMetaSnapshot() {
+	m.meta_snapshot = nil
+	delete(m.clearedFields, plugin.FieldMetaSnapshot)
+}
+
+// Where appends a list predicates to the PluginMutation builder.
+func (m *PluginMutation) Where(ps ...predicate.Plugin) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the PluginMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *PluginMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.Plugin, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *PluginMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *PluginMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (Plugin).
+func (m *PluginMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *PluginMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.version != nil {
+		fields = append(fields, plugin.FieldVersion)
+	}
+	if m.api_version != nil {
+		fields = append(fields, plugin.FieldAPIVersion)
+	}
+	if m.state != nil {
+		fields = append(fields, plugin.FieldState)
+	}
+	if m.installed_at != nil {
+		fields = append(fields, plugin.FieldInstalledAt)
+	}
+	if m.last_enabled_at != nil {
+		fields = append(fields, plugin.FieldLastEnabledAt)
+	}
+	if m.declared_tables != nil {
+		fields = append(fields, plugin.FieldDeclaredTables)
+	}
+	if m.meta_snapshot != nil {
+		fields = append(fields, plugin.FieldMetaSnapshot)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *PluginMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case plugin.FieldVersion:
+		return m.Version()
+	case plugin.FieldAPIVersion:
+		return m.APIVersion()
+	case plugin.FieldState:
+		return m.State()
+	case plugin.FieldInstalledAt:
+		return m.InstalledAt()
+	case plugin.FieldLastEnabledAt:
+		return m.LastEnabledAt()
+	case plugin.FieldDeclaredTables:
+		return m.DeclaredTables()
+	case plugin.FieldMetaSnapshot:
+		return m.MetaSnapshot()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *PluginMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case plugin.FieldVersion:
+		return m.OldVersion(ctx)
+	case plugin.FieldAPIVersion:
+		return m.OldAPIVersion(ctx)
+	case plugin.FieldState:
+		return m.OldState(ctx)
+	case plugin.FieldInstalledAt:
+		return m.OldInstalledAt(ctx)
+	case plugin.FieldLastEnabledAt:
+		return m.OldLastEnabledAt(ctx)
+	case plugin.FieldDeclaredTables:
+		return m.OldDeclaredTables(ctx)
+	case plugin.FieldMetaSnapshot:
+		return m.OldMetaSnapshot(ctx)
+	}
+	return nil, fmt.Errorf("unknown Plugin field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *PluginMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case plugin.FieldVersion:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetVersion(v)
+		return nil
+	case plugin.FieldAPIVersion:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAPIVersion(v)
+		return nil
+	case plugin.FieldState:
+		v, ok := value.(plugin.State)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetState(v)
+		return nil
+	case plugin.FieldInstalledAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetInstalledAt(v)
+		return nil
+	case plugin.FieldLastEnabledAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastEnabledAt(v)
+		return nil
+	case plugin.FieldDeclaredTables:
+		v, ok := value.([]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDeclaredTables(v)
+		return nil
+	case plugin.FieldMetaSnapshot:
+		v, ok := value.(map[string]interface{})
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetMetaSnapshot(v)
+		return nil
+	}
+	return fmt.Errorf("unknown Plugin field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *PluginMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *PluginMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *PluginMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown Plugin numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *PluginMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(plugin.FieldLastEnabledAt) {
+		fields = append(fields, plugin.FieldLastEnabledAt)
+	}
+	if m.FieldCleared(plugin.FieldMetaSnapshot) {
+		fields = append(fields, plugin.FieldMetaSnapshot)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *PluginMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *PluginMutation) ClearField(name string) error {
+	switch name {
+	case plugin.FieldLastEnabledAt:
+		m.ClearLastEnabledAt()
+		return nil
+	case plugin.FieldMetaSnapshot:
+		m.ClearMetaSnapshot()
+		return nil
+	}
+	return fmt.Errorf("unknown Plugin nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *PluginMutation) ResetField(name string) error {
+	switch name {
+	case plugin.FieldVersion:
+		m.ResetVersion()
+		return nil
+	case plugin.FieldAPIVersion:
+		m.ResetAPIVersion()
+		return nil
+	case plugin.FieldState:
+		m.ResetState()
+		return nil
+	case plugin.FieldInstalledAt:
+		m.ResetInstalledAt()
+		return nil
+	case plugin.FieldLastEnabledAt:
+		m.ResetLastEnabledAt()
+		return nil
+	case plugin.FieldDeclaredTables:
+		m.ResetDeclaredTables()
+		return nil
+	case plugin.FieldMetaSnapshot:
+		m.ResetMetaSnapshot()
+		return nil
+	}
+	return fmt.Errorf("unknown Plugin field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *PluginMutation) AddedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *PluginMutation) AddedIDs(name string) []ent.Value {
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *PluginMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *PluginMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *PluginMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 0)
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *PluginMutation) EdgeCleared(name string) bool {
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *PluginMutation) ClearEdge(name string) error {
+	return fmt.Errorf("unknown Plugin unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *PluginMutation) ResetEdge(name string) error {
+	return fmt.Errorf("unknown Plugin edge %s", name)
 }
 
 // PromoCodeMutation represents an operation that mutates the PromoCode nodes in the graph.
