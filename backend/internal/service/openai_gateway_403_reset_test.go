@@ -36,9 +36,12 @@ func TestOpenAIGatewayServiceRecordUsage_ResetsOpenAI403CounterOnZeroUsage(t *te
 	svc.rateLimitService = rateLimitSvc
 
 	err := svc.RecordUsage(context.Background(), &OpenAIRecordUsageInput{
-		Result:  &OpenAIForwardResult{RequestID: "resp_zero_usage_403"},
-		APIKey:  &APIKey{ID: 1},
-		User:    &User{ID: 2},
+		Result: &OpenAIForwardResult{
+			RequestID: "resp_zero_usage_reset_403",
+			Model:     "gpt-5.1",
+		},
+		APIKey:  &APIKey{ID: 1001, Group: &Group{RateMultiplier: 1}},
+		User:    &User{ID: 2001},
 		Account: &Account{ID: 777, Platform: PlatformOpenAI},
 	})
 

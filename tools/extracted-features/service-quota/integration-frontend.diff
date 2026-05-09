@@ -1,0 +1,2680 @@
+diff --git a/frontend/src/api/admin/settings.ts b/frontend/src/api/admin/settings.ts
+index defbab43..13f64dc0 100644
+--- a/frontend/src/api/admin/settings.ts
++++ b/frontend/src/api/admin/settings.ts
+@@ -482,6 +482,9 @@ export interface SystemSettings {
+   // Available Channels feature switch
+   available_channels_enabled: boolean;
+ 
++  // Service Quota feature switch
++  service_quota_enabled: boolean;
++
+   // Affiliate (邀请返利) feature switch
+   affiliate_enabled: boolean;
+ }
+@@ -646,6 +649,9 @@ export interface UpdateSettingsRequest {
+   // Available Channels feature switch
+   available_channels_enabled?: boolean;
+ 
++  // Service Quota feature switch
++  service_quota_enabled?: boolean;
++
+   // Affiliate (邀请返利) feature switch
+   affiliate_enabled?: boolean;
+ }
+@@ -847,6 +853,8 @@ export interface RectifierSettings {
+   thinking_budget_enabled: boolean;
+   apikey_signature_enabled: boolean;
+   apikey_signature_patterns: string[];
++  advisor_tool_enabled: boolean;
++  advisor_tool_patterns: string[];
+ }
+ 
+ /**
+diff --git a/frontend/src/components/admin/LimiterEditor.vue b/frontend/src/components/admin/LimiterEditor.vue
+new file mode 100644
+index 00000000..2acfbaaa
+--- /dev/null
++++ b/frontend/src/components/admin/LimiterEditor.vue
+@@ -0,0 +1,319 @@
++<template>
++  <div class="space-y-3">
++    <!-- 数组空时占位提示。父组件提交校验后若 errors 命中 path='limiters' 切换为红色边框 + 红字
++         （让 user 看到"至少配置一个限流器"是必填错误，不只是占位） -->
++    <div
++      v-if="modelValue.length === 0"
++      :class="[
++        'rounded-lg border border-dashed px-4 py-3 text-center text-sm',
++        errorFor('limiters')
++          ? 'border-red-400 bg-red-50 text-red-600 dark:border-red-500 dark:bg-red-900/10 dark:text-red-400'
++          : 'border-gray-300 text-gray-500 dark:border-dark-600 dark:text-gray-400',
++      ]"
++    >
++      <span v-if="errorFor('limiters')">
++        {{ t('admin.serviceQuota.errors.' + errorFor('limiters')) }} · {{ t('admin.serviceQuota.limiterEditor.empty') }}
++      </span>
++      <span v-else>{{ t('admin.serviceQuota.limiterEditor.empty') }}</span>
++    </div>
++    <div
++      v-for="(item, index) in modelValue"
++      :key="item.uid ?? index"
++      class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
++    >
++      <div class="grid grid-cols-1 items-end gap-3 sm:grid-cols-[160px_1fr_140px_auto]">
++        <label class="form-field">
++          <RequiredLabel :label="t('admin.serviceQuota.columns.type')" required />
++          <select
++            :value="item.limiter_type"
++            :class="['input', { 'border-red-400 focus:ring-red-500': !!errorFor(`limiters[${index}].limiter_type`) }]"
++            @change="updateField(index, 'limiter_type', ($event.target as HTMLSelectElement).value)"
++          >
++            <option v-for="opt in availableTypes(item.limiter_type)" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
++          </select>
++          <span
++            v-if="errorFor(`limiters[${index}].limiter_type`)"
++            class="text-xs text-red-500"
++          >
++            {{ t('admin.serviceQuota.errors.' + errorFor(`limiters[${index}].limiter_type`)) }}
++          </span>
++        </label>
++        <label class="form-field">
++          <RequiredLabel :label="t('admin.serviceQuota.columns.limit')" required />
++          <NumericInput
++            :model-value="item.limit_value ?? null"
++            :min="0"
++            :step="getLimitStep(item.limiter_type)"
++            :integer="!isDailyUsd(item.limiter_type)"
++            :has-error="!!errorFor(`limiters[${index}].limit_value`)"
++            @update:model-value="updateField(index, 'limit_value', $event as number)"
++          />
++          <span
++            v-if="errorFor(`limiters[${index}].limit_value`)"
++            class="text-xs text-red-500"
++          >
++            {{ t('admin.serviceQuota.errors.' + errorFor(`limiters[${index}].limit_value`)) }}
++          </span>
++        </label>
++        <label v-if="item.limiter_type !== 'concurrency'" class="form-field">
++          <RequiredLabel :label="t('admin.serviceQuota.columns.window')" required />
++          <select
++            :value="item.window_mode"
++            :class="['input', { 'border-red-400 focus:ring-red-500': !!errorFor(`limiters[${index}].window_mode`) }]"
++            @change="updateField(index, 'window_mode', ($event.target as HTMLSelectElement).value)"
++          >
++            <option value="fixed">{{ t('admin.serviceQuota.windows.fixed') }}</option>
++            <option value="rolling">{{ t('admin.serviceQuota.windows.rolling') }}</option>
++          </select>
++          <span
++            v-if="errorFor(`limiters[${index}].window_mode`)"
++            class="text-xs text-red-500"
++          >
++            {{ t('admin.serviceQuota.errors.' + errorFor(`limiters[${index}].window_mode`)) }}
++          </span>
++        </label>
++        <div v-else class="text-xs text-gray-500 dark:text-gray-400">{{ t('admin.serviceQuota.windows.none') }}</div>
++        <button
++          type="button"
++          class="rounded-lg p-2 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
++          :title="t('common.delete')"
++          @click="remove(index)"
++        >
++          <Icon name="trash" size="sm" />
++        </button>
++      </div>
++
++      <!-- TPM/TPD 才显示 token components 选择；其他类型隐藏。
++           至少 1 项校验：未勾选时显示红字提示，提交侧由父组件统一阻断。 -->
++      <div v-if="usesTokenComponents(item.limiter_type)" class="mt-3 border-t border-gray-100 pt-3 dark:border-dark-700">
++        <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
++          <span class="text-xs font-medium text-gray-600 dark:text-gray-300">
++            {{ t('admin.serviceQuota.tokenComponents.title') }}
++          </span>
++          <label
++            v-for="comp in TOKEN_COMPONENTS_ALL"
++            :key="comp"
++            class="inline-flex items-center gap-1.5 text-xs text-gray-700 dark:text-gray-200 cursor-pointer"
++          >
++            <input
++              type="checkbox"
++              class="h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
++              :checked="(item.token_components ?? TOKEN_COMPONENTS_DEFAULT).includes(comp)"
++              @change="toggleTokenComponent(index, comp, ($event.target as HTMLInputElement).checked)"
++            />
++            <span>{{ t('admin.serviceQuota.tokenComponents.' + comp) }}</span>
++          </label>
++        </div>
++        <div
++          v-if="errorFor(`limiters[${index}].token_components`) || (item.token_components ?? TOKEN_COMPONENTS_DEFAULT).length === 0"
++          class="mt-1 text-xs text-red-500"
++        >
++          {{ t('admin.serviceQuota.tokenComponents.minOneRequired') }}
++        </div>
++      </div>
++
++      <!-- 仅 RPM 显示"请求到达即计入" toggle；默认 false（仅成功请求计入）。 -->
++      <div v-if="usesCountOnArrival(item.limiter_type)" class="mt-3 border-t border-gray-100 pt-3 dark:border-dark-700">
++        <label class="inline-flex items-start gap-2 text-xs text-gray-700 dark:text-gray-200 cursor-pointer">
++          <input
++            type="checkbox"
++            class="mt-0.5 h-3.5 w-3.5 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
++            :checked="item.count_on_arrival === true"
++            @change="updateField(index, 'count_on_arrival', ($event.target as HTMLInputElement).checked)"
++          />
++          <span class="flex flex-col gap-0.5">
++            <span class="font-medium">{{ t('admin.serviceQuota.limiters.rpmCountOnArrival.label') }}</span>
++            <span class="text-[11px] text-gray-500 dark:text-gray-400">
++              {{ t('admin.serviceQuota.limiters.rpmCountOnArrival.help') }}
++            </span>
++          </span>
++        </label>
++      </div>
++    </div>
++    <button
++      type="button"
++      class="btn btn-secondary"
++      :disabled="!canAdd"
++      @click="add"
++    >
++      <Icon name="plus" size="sm" class="mr-2" />
++      {{ t('admin.serviceQuota.limiterEditor.add') }}
++    </button>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { computed } from 'vue'
++import { useI18n } from 'vue-i18n'
++import Icon from '@/components/icons/Icon.vue'
++import NumericInput from '@/components/common/NumericInput.vue'
++import RequiredLabel from '@/components/common/RequiredLabel.vue'
++import {
++  type ServiceQuotaLimiterInput,
++  type TokenComponent,
++  TOKEN_COMPONENTS_ALL,
++  TOKEN_COMPONENTS_DEFAULT,
++  limiterUsesTokenComponents,
++} from '@/api/admin/serviceQuota'
++import type { ValidationError } from '@/utils/validateServiceQuota'
++
++const { t } = useI18n()
++
++const props = withDefaults(
++  defineProps<{
++    modelValue: ServiceQuotaLimiterInput[]
++    /** 父组件传入的校验错误（路径与 validateServiceQuotaRule 输出对齐） */
++    errors?: ValidationError[]
++  }>(),
++  { errors: () => [] },
++)
++
++const emit = defineEmits<{
++  (e: 'update:modelValue', value: ServiceQuotaLimiterInput[]): void
++}>()
++
++// errorFor(path) 返回该字段第一条 error.code，没有则空字符串
++function errorFor(path: string): string {
++  return props.errors.find((e) => e.path === path)?.code || ''
++}
++
++// daily_usd 是金额（小数）；其他都是整数（rpm/tpm/tpd/concurrency）
++function getLimitStep(limiterType: string): number {
++  return isDailyUsd(limiterType) ? 0.01 : 1
++}
++
++// daily_usd 单独走小数；其他类型业务上必须整数（避免 IEEE754 浮点累积误差）
++function isDailyUsd(limiterType: string): boolean {
++  return limiterType === 'daily_usd'
++}
++
++const allTypes = computed(() => [
++  { value: 'rpm', label: t('admin.serviceQuota.limiters.rpm') },
++  { value: 'tpm', label: t('admin.serviceQuota.limiters.tpm') },
++  { value: 'tpd', label: t('admin.serviceQuota.limiters.tpd') },
++  { value: 'daily_usd', label: t('admin.serviceQuota.limiters.dailyUsd') },
++  { value: 'concurrency', label: t('admin.serviceQuota.limiters.concurrency') },
++])
++
++const usedTypes = computed(() => new Set(props.modelValue.map((l) => l.limiter_type)))
++
++const canAdd = computed(() => usedTypes.value.size < allTypes.value.length)
++
++function availableTypes(currentType: string) {
++  return allTypes.value.filter((opt) => opt.value === currentType || !usedTypes.value.has(opt.value))
++}
++
++function usesTokenComponents(limiterType: string): boolean {
++  return limiterUsesTokenComponents(limiterType)
++}
++
++// count_on_arrival 仅对 RPM 有意义；切到其他 limiter 类型时会被 strip 掉。
++function usesCountOnArrival(limiterType: string): boolean {
++  return limiterType === 'rpm'
++}
++
++function defaultLimitFor(type: string): number {
++  switch (type) {
++    case 'rpm': return 60
++    case 'tpm': return 100000
++    case 'tpd': return 1000000
++    case 'daily_usd': return 50
++    case 'concurrency': return 5
++    default: return 1
++  }
++}
++
++function pickFirstAvailableType(): string {
++  const used = usedTypes.value
++  const next = allTypes.value.find((opt) => !used.has(opt.value))
++  return next?.value || 'rpm'
++}
++
++function blankLimiter(limiter_type: string): ServiceQuotaLimiterInput {
++  const out: ServiceQuotaLimiterInput = {
++    uid: crypto.randomUUID(),
++    limiter_type,
++    window_mode: 'fixed',
++    limit_value: defaultLimitFor(limiter_type),
++  }
++  if (limiterUsesTokenComponents(limiter_type)) {
++    out.token_components = [...TOKEN_COMPONENTS_DEFAULT]
++  }
++  if (limiter_type === 'rpm') {
++    out.count_on_arrival = false
++  }
++  return out
++}
++
++function add() {
++  const limiter_type = pickFirstAvailableType()
++  const newList: ServiceQuotaLimiterInput[] = [
++    ...props.modelValue,
++    blankLimiter(limiter_type),
++  ]
++  emit('update:modelValue', newList)
++}
++
++function remove(index: number) {
++  const newList = props.modelValue.slice()
++  newList.splice(index, 1)
++  emit('update:modelValue', newList)
++}
++
++function updateField<K extends keyof ServiceQuotaLimiterInput>(index: number, key: K, value: ServiceQuotaLimiterInput[K]) {
++  const newList = props.modelValue.slice()
++  const next: ServiceQuotaLimiterInput = { ...newList[index], [key]: value }
++  if (key === 'limiter_type' && value === 'concurrency') {
++    next.window_mode = 'fixed'
++  }
++  // limiter_type 切换时同步 token_components：
++  //   - 切到 TPM/TPD 且没有 token_components → 填默认（input/output/cache_creation）
++  //   - 切到非 TPM/TPD → 删字段，避免提交垃圾数据（后端会清洗，前端也清干净）
++  if (key === 'limiter_type') {
++    const newType = value as string
++    if (limiterUsesTokenComponents(newType)) {
++      if (!next.token_components || next.token_components.length === 0) {
++        next.token_components = [...TOKEN_COMPONENTS_DEFAULT]
++      }
++    } else {
++      delete next.token_components
++    }
++    // count_on_arrival 同理：仅 RPM 保留；切到其他类型 strip 掉
++    if (newType === 'rpm') {
++      if (next.count_on_arrival === undefined) {
++        next.count_on_arrival = false
++      }
++    } else {
++      delete next.count_on_arrival
++    }
++    // 切到整数型时归位非整数老值（如老数据 999999.999997 切到 tpm 时 → 1000000）
++    if (!isDailyUsd(newType) && typeof next.limit_value === 'number' && !Number.isInteger(next.limit_value)) {
++      next.limit_value = Math.round(next.limit_value)
++    }
++  }
++  newList[index] = next
++  emit('update:modelValue', newList)
++}
++
++// toggleTokenComponent 单个勾选/取消，按 TOKEN_COMPONENTS_ALL 顺序去重，
++// 允许暂时为空（让 UI 显示红字提示），父组件提交侧统一拦截。
++function toggleTokenComponent(index: number, comp: TokenComponent, checked: boolean) {
++  const newList = props.modelValue.slice()
++  const current = new Set(newList[index].token_components ?? TOKEN_COMPONENTS_DEFAULT)
++  if (checked) {
++    current.add(comp)
++  } else {
++    current.delete(comp)
++  }
++  // 按 TOKEN_COMPONENTS_ALL 固定顺序输出，便于 diff 与展示稳定
++  const ordered = TOKEN_COMPONENTS_ALL.filter((c) => current.has(c))
++  newList[index] = { ...newList[index], token_components: ordered }
++  emit('update:modelValue', newList)
++}
++</script>
++
++<style scoped>
++.form-field {
++  @apply space-y-1.5;
++}
++</style>
+\ No newline at end of file
+diff --git a/frontend/src/components/admin/PathEditor.vue b/frontend/src/components/admin/PathEditor.vue
+new file mode 100644
+index 00000000..bd48094b
+--- /dev/null
++++ b/frontend/src/components/admin/PathEditor.vue
+@@ -0,0 +1,284 @@
++<template>
++  <div class="space-y-3">
++    <!-- 数组空时占位。errors.path='paths' 切红色 -->
++    <div
++      v-if="modelValue.length === 0"
++      :class="[
++        'rounded-lg border border-dashed px-4 py-3 text-center text-sm',
++        errorFor('paths')
++          ? 'border-red-400 bg-red-50 text-red-600 dark:border-red-500 dark:bg-red-900/10 dark:text-red-400'
++          : 'border-gray-300 text-gray-500 dark:border-dark-600 dark:text-gray-400',
++      ]"
++    >
++      <span v-if="errorFor('paths')">
++        {{ t('admin.serviceQuota.errors.' + errorFor('paths')) }} · {{ t('admin.serviceQuota.pathEditor.empty') }}
++      </span>
++      <span v-else>{{ t('admin.serviceQuota.pathEditor.empty') }}</span>
++    </div>
++    <div
++      v-for="(item, index) in modelValue"
++      :key="item.uid ?? index"
++      class="rounded-lg border border-gray-200 p-3 dark:border-dark-700"
++    >
++      <div class="mb-3 flex items-center justify-between">
++        <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
++          {{ t('admin.serviceQuota.pathEditor.pathIndex', { index: index + 1 }) }}
++        </span>
++        <button
++          type="button"
++          class="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20"
++          :title="t('common.delete')"
++          @click="remove(index)"
++        >
++          <Icon name="trash" size="sm" />
++        </button>
++      </div>
++      <div class="space-y-3">
++        <div>
++          <RequiredLabel :label="t('admin.serviceQuota.form.platform')" required class="mb-2 block" />
++          <PlatformPicker
++            :model-value="item.platform"
++            @update:model-value="updateField(index, 'platform', $event)"
++          />
++          <span
++            v-if="errorFor(`paths[${index}].platform`)"
++            class="mt-1 block text-xs text-red-500"
++          >
++            {{ t('admin.serviceQuota.errors.' + errorFor(`paths[${index}].platform`)) }}
++          </span>
++        </div>
++        <div class="grid gap-3 md:grid-cols-2">
++          <label class="form-field">
++            <span class="input-label">{{ t('admin.serviceQuota.form.channelId') }}</span>
++            <EntitySearchSelect
++              :model-value="item.channel_id"
++              :placeholder="t('common.optional')"
++              :search="(kw, signal) => searchChannels(kw, signal, item.platform)"
++              :resolve-label="resolveChannelLabel"
++              :reset-token="item.platform ?? ''"
++              @update:model-value="updateField(index, 'channel_id', $event)"
++            />
++          </label>
++          <label class="form-field">
++            <span class="input-label">{{ t('admin.serviceQuota.form.groupId') }}</span>
++            <EntitySearchSelect
++              :model-value="item.group_id"
++              :placeholder="t('common.optional')"
++              :search="(kw, signal) => searchGroups(kw, signal, item.platform)"
++              :resolve-label="resolveGroupLabel"
++              :reset-token="`${item.platform ?? ''}:${item.channel_id ?? ''}`"
++              @update:model-value="updateField(index, 'group_id', $event)"
++            />
++          </label>
++          <label class="form-field">
++            <span class="input-label">{{ t('admin.serviceQuota.form.accountId') }}</span>
++            <EntitySearchSelect
++              :model-value="item.account_id"
++              :placeholder="t('common.optional')"
++              :search="(kw, signal) => searchAccounts(kw, signal, item.platform, item.group_id)"
++              :resolve-label="resolveAccountLabel"
++              :reset-token="`${item.platform ?? ''}:${item.channel_id ?? ''}:${item.group_id ?? ''}`"
++              @update:model-value="updateField(index, 'account_id', $event)"
++            />
++          </label>
++          <label class="form-field">
++            <span class="input-label">{{ t('admin.serviceQuota.form.modelPattern') }}</span>
++            <input
++              :value="item.model_pattern || ''"
++              :placeholder="t('admin.serviceQuota.form.modelPatternPlaceholder')"
++              :list="`model-options-${item.uid ?? index}`"
++              class="input"
++              @input="updateField(index, 'model_pattern', ($event.target as HTMLInputElement).value || null)"
++            />
++            <datalist :id="`model-options-${item.uid ?? index}`">
++              <option
++                v-for="m in modelOptionsFor(item)"
++                :key="m"
++                :value="m"
++              />
++            </datalist>
++            <span class="text-[11px] text-gray-500 dark:text-gray-400">
++              {{ t('admin.serviceQuota.form.modelPatternHint') }}
++            </span>
++          </label>
++        </div>
++      </div>
++    </div>
++    <button type="button" class="btn btn-secondary" @click="add">
++      <Icon name="plus" size="sm" class="mr-2" />
++      {{ t('admin.serviceQuota.pathEditor.add') }}
++    </button>
++  </div>
++</template>
++
++<script setup lang="ts">
++import { reactive } from 'vue'
++import { useI18n } from 'vue-i18n'
++import Icon from '@/components/icons/Icon.vue'
++import EntitySearchSelect, { type EntitySearchItem } from '@/components/common/EntitySearchSelect.vue'
++import PlatformPicker from '@/components/common/PlatformPicker.vue'
++import RequiredLabel from '@/components/common/RequiredLabel.vue'
++import adminAPI from '@/api/admin'
++import type { Channel } from '@/api/admin/channels'
++import type { GroupPlatform } from '@/types'
++import type { ServiceQuotaPathInput } from '@/api/admin/serviceQuota'
++import type { ValidationError } from '@/utils/validateServiceQuota'
++
++const { t } = useI18n()
++
++const props = withDefaults(
++  defineProps<{
++    modelValue: ServiceQuotaPathInput[]
++    /** 父组件传入的校验错误（路径与 validateServiceQuotaRule 输出对齐） */
++    errors?: ValidationError[]
++  }>(),
++  { errors: () => [] },
++)
++
++const emit = defineEmits<{
++  (e: 'update:modelValue', value: ServiceQuotaPathInput[]): void
++}>()
++
++function errorFor(path: string): string {
++  return props.errors.find((e) => e.path === path)?.code || ''
++}
++
++// channel cache：搜索 / resolveLabel 都会写入；
++// modelOptionsFor 只在 cache 命中时返回模型 datalist，避免组件内额外网络请求。
++// 用 reactive 保证 cache 变更后 datalist 自动重渲染。
++const channelCache = reactive(new Map<number, Channel>()) as Map<number, Channel>
++
++// admin channels list 不支持 platform 过滤，这里走客户端过滤；
++// page_size=200 已能覆盖绝大多数生产环境（>200 渠道很少见，超出时
++// 提示用户用关键字精确搜索即可）。
++const CHANNEL_FETCH_PAGE_SIZE = 200
++
++function blankPath(): ServiceQuotaPathInput {
++  return {
++    uid: crypto.randomUUID(),
++    platform: null,
++    channel_id: null,
++    group_id: null,
++    account_id: null,
++    model_pattern: null,
++  }
++}
++
++function add() {
++  emit('update:modelValue', [...props.modelValue, blankPath()])
++}
++
++function remove(index: number) {
++  const next = props.modelValue.slice()
++  next.splice(index, 1)
++  emit('update:modelValue', next)
++}
++
++function updateField<K extends keyof ServiceQuotaPathInput>(index: number, key: K, value: ServiceQuotaPathInput[K]) {
++  const next = props.modelValue.slice()
++  const updated: ServiceQuotaPathInput = { ...next[index], [key]: value }
++  // 改平台时清空下游字段（渠道/分组/账号/模型）
++  if (key === 'platform') {
++    updated.channel_id = null
++    updated.group_id = null
++    updated.account_id = null
++    updated.model_pattern = null
++  } else if (key === 'channel_id') {
++    // 切换渠道时同样清掉模型 pattern，避免 datalist 候选与上一个 channel 错位
++    updated.group_id = null
++    updated.account_id = null
++    updated.model_pattern = null
++  } else if (key === 'group_id') {
++    updated.account_id = null
++  }
++  next[index] = updated
++  emit('update:modelValue', next)
++}
++
++function channelMatchesPlatform(channel: Channel, platform: string | null | undefined): boolean {
++  if (!platform) return true
++  return channel.model_pricing.some((mp) => mp.platform === platform)
++}
++
++async function searchChannels(
++  keyword: string,
++  signal: AbortSignal,
++  platform: string | null | undefined,
++): Promise<EntitySearchItem[]> {
++  const filters: { search?: string } = {}
++  if (keyword) filters.search = keyword
++  const res = await adminAPI.channels.list(1, CHANNEL_FETCH_PAGE_SIZE, filters, { signal })
++  for (const ch of res.items) channelCache.set(ch.id, ch)
++  return res.items
++    .filter((ch) => channelMatchesPlatform(ch, platform))
++    .map((ch) => ({ id: ch.id, label: ch.name, sub: ch.status || '' }))
++}
++
++async function resolveChannelLabel(id: number): Promise<EntitySearchItem | null> {
++  try {
++    const res = await adminAPI.channels.getById(id)
++    channelCache.set(res.id, res)
++    return { id: res.id, label: res.name }
++  } catch {
++    return null
++  }
++}
++
++// 仅当 cache 已有该 channel 时返回模型 datalist 候选；
++// platform 不限定时合并所有 platform 下的 models（去重）。
++function modelOptionsFor(item: ServiceQuotaPathInput): string[] {
++  if (!item.channel_id) return []
++  const channel = channelCache.get(item.channel_id)
++  if (!channel) return []
++  const target = item.platform || ''
++  const set = new Set<string>()
++  for (const mp of channel.model_pricing) {
++    if (target && mp.platform !== target) continue
++    for (const m of mp.models || []) {
++      if (m) set.add(m)
++    }
++  }
++  return Array.from(set).sort()
++}
++
++async function searchGroups(keyword: string, signal: AbortSignal, platform: string | null | undefined): Promise<EntitySearchItem[]> {
++  const filters: { search?: string; platform?: GroupPlatform } = {}
++  if (keyword) filters.search = keyword
++  if (platform) filters.platform = platform as GroupPlatform
++  const res = await adminAPI.groups.list(1, 20, filters, { signal })
++  return res.items.map((g) => ({ id: g.id, label: g.name, sub: g.platform || '' }))
++}
++
++async function resolveGroupLabel(id: number): Promise<EntitySearchItem | null> {
++  try {
++    const res = await adminAPI.groups.getById(id)
++    return { id: res.id, label: res.name, sub: res.platform || '' }
++  } catch {
++    return null
++  }
++}
++
++async function searchAccounts(keyword: string, signal: AbortSignal, platform: string | null | undefined, groupId: number | null | undefined): Promise<EntitySearchItem[]> {
++  const filters: Record<string, string> = {}
++  if (keyword) filters.search = keyword
++  if (platform) filters.platform = platform
++  if (groupId) filters.group = String(groupId)
++  const res = await adminAPI.accounts.list(1, 20, filters, { signal })
++  return res.items.map((a) => ({ id: a.id, label: a.name, sub: a.platform || '' }))
++}
++
++async function resolveAccountLabel(id: number): Promise<EntitySearchItem | null> {
++  try {
++    const res = await adminAPI.accounts.getById(id)
++    return { id: res.id, label: res.name, sub: res.platform || '' }
++  } catch {
++    return null
++  }
++}
++</script>
++
++<style scoped>
++.form-field {
++  @apply space-y-1.5;
++}
++</style>
+\ No newline at end of file
+diff --git a/frontend/src/components/layout/AppSidebar.vue b/frontend/src/components/layout/AppSidebar.vue
+index d8e2794e..77d8dea0 100644
+--- a/frontend/src/components/layout/AppSidebar.vue
++++ b/frontend/src/components/layout/AppSidebar.vue
+@@ -628,16 +628,83 @@ const ChevronDownIcon = {
+     )
+ }
+ 
++const ChartPieIcon = {
++  render: () =>
++    h(
++      'svg',
++      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
++      [
++        h('path', {
++          'stroke-linecap': 'round',
++          'stroke-linejoin': 'round',
++          d: 'M10.5 6a7.5 7.5 0 1 0 7.5 7.5h-7.5V6Z'
++        }),
++        h('path', {
++          'stroke-linecap': 'round',
++          'stroke-linejoin': 'round',
++          d: 'M13.5 10.5H21A7.5 7.5 0 0 0 13.5 3v7.5Z'
++        })
++      ]
++    )
++}
++
++const ScaleIcon = {
++  render: () =>
++    h(
++      'svg',
++      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
++      [
++        h('path', {
++          'stroke-linecap': 'round',
++          'stroke-linejoin': 'round',
++          d: 'M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z'
++        })
++      ]
++    )
++}
++
++const ChartBarSquareIcon = {
++  render: () =>
++    h(
++      'svg',
++      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
++      [
++        h('path', {
++          'stroke-linecap': 'round',
++          'stroke-linejoin': 'round',
++          d: 'M7.5 14.25v2.25m3-4.5v4.5m3-6.75v6.75m3-9v9M6 20.25h12A2.25 2.25 0 0 0 20.25 18V6A2.25 2.25 0 0 0 18 3.75H6A2.25 2.25 0 0 0 3.75 6v12A2.25 2.25 0 0 0 6 20.25Z'
++        })
++      ]
++    )
++}
++
++const AdjustmentsHorizontalIcon = {
++  render: () =>
++    h(
++      'svg',
++      { fill: 'none', viewBox: '0 0 24 24', stroke: 'currentColor', 'stroke-width': '1.5' },
++      [
++        h('path', {
++          'stroke-linecap': 'round',
++          'stroke-linejoin': 'round',
++          d: 'M10.5 6h9.75M10.5 6a1.5 1.5 0 1 1-3 0m3 0a1.5 1.5 0 1 0-3 0M3.75 6H7.5m3 12h9.75m-9.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-3.75 0H7.5m9-6h3.75m-3.75 0a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m-9.75 0h9.75'
++        })
++      ]
++    )
++}
++
+ // Public-settings flags go through the registry in utils/featureFlags.ts,
+ // which handles the opt-in vs opt-out fallback when settings haven't loaded
+ // yet. Admin-only flags (not in public settings) stay inline below.
+ const flagChannelMonitor = makeSidebarFlag(FeatureFlags.channelMonitor)
+ const flagPayment = makeSidebarFlag(FeatureFlags.payment)
+ const flagAvailableChannels = makeSidebarFlag(FeatureFlags.availableChannels)
++const flagServiceQuota = makeSidebarFlag(FeatureFlags.serviceQuota)
+ const flagAffiliate = makeSidebarFlag(FeatureFlags.affiliate)
+ const flagOpsMonitoring = () => adminSettingsStore.opsMonitoringEnabled
+ const flagAdminPayment = () => adminSettingsStore.paymentEnabled
+ 
++
+ // buildSelfNavItems 构造用户自己的导航项（用户端主菜单和管理员的"我的账户"子菜单共享这组声明）。
+ // withDashboard=true 时包含仪表盘（用户端），false 时不含（管理员的个人区已经有独立仪表盘入口）。
+ //
+@@ -651,6 +718,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
+   items.push(
+     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
++    { path: '/quota-monitor', label: t('nav.myQuota'), icon: ChartPieIcon, hideInSimpleMode: true, featureFlag: flagServiceQuota },
+     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
+     { path: '/monitor', label: t('nav.channelStatus'), icon: SignalIcon, featureFlag: flagChannelMonitor },
+     { path: '/subscriptions', label: t('nav.mySubscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
+@@ -716,6 +784,18 @@ const adminNavItems = computed((): NavItem[] => {
+       ],
+     },
+     { path: '/admin/subscriptions', label: t('nav.subscriptions'), icon: CreditCardIcon, hideInSimpleMode: true },
++    {
++      path: '/admin/service-quotas',
++      label: t('nav.serviceQuota'),
++      icon: ScaleIcon,
++      hideInSimpleMode: true,
++      featureFlag: flagServiceQuota,
++      expandOnly: true,
++      children: [
++        { path: '/admin/service-quotas/monitor', label: t('nav.serviceQuotaMonitor'), icon: ChartBarSquareIcon },
++        { path: '/admin/service-quotas/config', label: t('nav.serviceQuotaConfig'), icon: AdjustmentsHorizontalIcon },
++      ],
++    },
+     { path: '/admin/accounts', label: t('nav.accounts'), icon: GlobeIcon },
+     { path: '/admin/announcements', label: t('nav.announcements'), icon: BellIcon },
+     { path: '/admin/proxies', label: t('nav.proxies'), icon: ServerIcon },
+diff --git a/frontend/src/i18n/locales/en.ts b/frontend/src/i18n/locales/en.ts
+index 6f445986..12b868cf 100644
+--- a/frontend/src/i18n/locales/en.ts
++++ b/frontend/src/i18n/locales/en.ts
+@@ -246,6 +246,18 @@ export default {
+   common: {
+     loading: 'Loading...',
+     submitting: 'Submitting...',
++    userSearch: {
++      typeToSearch: 'Type an email to search',
++      noMatches: 'No matching users'
++    },
++    entitySearch: {
++      typeToSearch: 'Type to search',
++      typeOrFocus: 'Type a keyword or focus to browse',
++      noMatches: 'No matches found'
++    },
++    tagInput: {
++      enterToAdd: 'Press Enter to add'
++    },
+     justNow: 'just now',
+     save: 'Save',
+     saved: 'Saved successfully',
+@@ -272,6 +284,7 @@ export default {
+     yes: 'Yes',
+     no: 'No',
+     all: 'All',
++    global: 'Global',
+     none: 'None',
+     selectAll: 'Select all',
+     noData: 'No data',
+@@ -336,6 +349,77 @@ export default {
+         minutes: '{m}m',
+         withSuffix: '{time} to lift'
+       }
++    },
++    // Common error code → label mapping (aligned with backend pkgerrors.Reason):
++    // admin/user views share these keys; handler returns reason and frontend
++    // looks up the localized label here.
++    errors: {
++      INVALID_REQUEST_BODY: 'Invalid request body',
++      INVALID_ID: 'Invalid resource ID',
++      SERVICE_QUOTA_UNAVAILABLE: 'Service quota feature unavailable',
++      // Account
++      INVALID_ACCOUNT_ID: 'Invalid account ID',
++      ACCOUNT_NOT_FOUND: 'Account not found',
++      ACCOUNT_DUPLICATE: 'Account already exists',
++      // User
++      INVALID_USER_ID: 'Invalid user ID',
++      USER_NOT_FOUND: 'User not found',
++      EMAIL_INVALID: 'Invalid email format',
++      BALANCE_INVALID: 'Invalid balance value',
++      // Group
++      INVALID_GROUP_ID: 'Invalid group ID',
++      GROUP_NOT_FOUND: 'Group not found',
++      GROUP_DUPLICATE: 'Group name already exists',
++      INVALID_GROUP_FILTER: 'Invalid group filter',
++      // Setting
++      INVALID_SETTING_KEY: 'Invalid setting key',
++      SETTING_REQUIRED: 'Setting required',
++      TURNSTILE_SITE_KEY_REQUIRED: 'Turnstile Site Key required',
++      TURNSTILE_SECRET_REQUIRED: 'Turnstile Secret required',
++      // Account additions (audit 8: backend uses these reasons but frontend missed translation)
++      INVALID_RATE_MULTIPLIER: 'Invalid rate multiplier',
++      ACCOUNT_IDS_REQUIRED: 'Account IDs required',
++      INVALID_EXTRA_FIELD: 'Invalid extra field',
++      NO_UPDATES_PROVIDED: 'No updates provided',
++      PRIVACY_UNSUPPORTED: 'Privacy setting unsupported',
++      MISSING_ACCESS_TOKEN: 'Missing access token',
++      TIER_REFRESH_UNSUPPORTED: 'Tier refresh unsupported',
++      TOTP_ENCRYPTION_KEY_MISSING: 'TOTP encryption key missing',
++      // Service quota (handler & service-layer reasons -> user-facing text)
++      SERVICE_QUOTA_MONITOR_UNAVAILABLE: 'Quota monitor unavailable',
++      SERVICE_QUOTA_INVALID_RULE: 'Invalid service quota rule',
++      SERVICE_QUOTA_INVALID_COUNTER_MODE: 'Invalid counter mode',
++      SERVICE_QUOTA_INVALID_LIMITERS: 'At least one limiter is required',
++      SERVICE_QUOTA_INVALID_LIMITER_TYPE: 'Invalid limiter type',
++      SERVICE_QUOTA_INVALID_LIMIT_VALUE: 'Invalid limit value',
++      SERVICE_QUOTA_INVALID_WINDOW_MODE: 'Invalid window mode',
++      SERVICE_QUOTA_DUPLICATE_LIMITER: 'Duplicate limiter configuration',
++      SERVICE_QUOTA_INVALID_TOKEN_COMPONENT: 'Invalid token component',
++      SERVICE_QUOTA_INVALID_PATHS: 'At least one path is required',
++      SERVICE_QUOTA_SCOPE_ACCOUNT_NOT_FOUND: 'Account not found',
++      SERVICE_QUOTA_SCOPE_GROUP_NOT_FOUND: 'Group not found',
++      SERVICE_QUOTA_SCOPE_CHANNEL_NOT_FOUND: 'Channel not found',
++      SERVICE_QUOTA_SCOPE_MISMATCH: 'Scope mismatch',
++      SERVICE_QUOTA_INVALID_RESET_TARGET: 'Invalid reset target',
++      // Auth & monitor common
++      UNAUTHENTICATED: 'Please sign in first',
++      SNAPSHOT_FAILED: 'Failed to load runtime data, please retry',
++      INVALID_QUERY_PARAM: 'Invalid query parameter'
++    }
++  },
++
++  // Generic field-level validation error codes → i18n labels.
++  // Dialogs go through fieldErrorI18nKeys(code, moduleNamespace): module-specific
++  // namespace (e.g. admin.serviceQuota.errors.*) is tried first, then this generic
++  // namespace as a fallback.
++  validation: {
++    fieldErrors: {
++      REQUIRED: 'Required',
++      MIN: 'Value too small',
++      MAX: 'Value too large',
++      ONEOF: 'Value not allowed',
++      MUST_BE_POSITIVE: 'Must be positive',
++      INVALID_VALUE: 'Invalid value'
+     }
+   },
+ 
+@@ -378,6 +462,10 @@ export default {
+     channelPricing: 'Channel Pricing',
+     channelMonitor: 'Channel Monitor',
+     channelStatus: 'Channel Status',
++    serviceQuota: 'Service Quota',
++    serviceQuotaMonitor: 'Quota Monitor',
++    serviceQuotaConfig: 'Quota Rules',
++    myQuota: 'My Quotas',
+   },
+ 
+   // Auth
+@@ -842,6 +930,9 @@ export default {
+     imageUnitPrice: 'Per-image price',
+     cacheRead: 'Read',
+     cacheWrite: 'Write',
++    cacheHit: 'Cache read',
++    cacheCreate: 'Cache write',
++    cacheHitRate: 'Cache hit rate',
+     serviceTier: 'Service tier',
+     serviceTierPriority: 'Fast',
+     serviceTierFlex: 'Flex',
+@@ -1726,8 +1817,6 @@ export default {
+       failedToLoadApiKeys: 'Failed to load user API keys',
+       emailRequired: 'Please enter email',
+       concurrencyMin: 'Concurrency must be at least 1',
+-      soraStorageQuota: 'Sora Storage Quota',
+-      soraStorageQuotaHint: 'In GB, 0 means use group or system default quota',
+       amountRequired: 'Please enter a valid amount',
+       insufficientBalance: 'Insufficient balance',
+       deleteConfirm: "Are you sure you want to delete '{email}'? This action cannot be undone.",
+@@ -2073,14 +2162,6 @@ export default {
+         enabled: 'Enabled',
+         disabled: 'Disabled'
+       },
+-      claudeMaxSimulation: {
+-        title: 'Claude Max Usage Simulation',
+-        tooltip:
+-          'When enabled, for Claude models without upstream cache-write usage, the system deterministically maps tokens to a small input plus 1h cache creation while keeping total tokens unchanged.',
+-        enabled: 'Enabled (simulate 1h cache)',
+-        disabled: 'Disabled',
+-        hint: 'Only token categories in usage billing logs are adjusted. No per-request mapping state is persisted.'
+-      },
+       supportedScopes: {
+         title: 'Supported Model Families',
+         tooltip: 'Select the model families this group supports. Unchecked families will not be routed to this group.',
+@@ -2714,7 +2795,7 @@ export default {
+       resetQuota: 'Reset Quota',
+       quotaLimit: 'Quota Limit',
+       quotaLimitPlaceholder: '0 means unlimited',
+-      quotaLimitHint: 'Set daily/weekly/total spending limits (USD). Anthropic API key accounts can also configure client affinity. Changing limits won\'t reset usage.',
++      quotaLimitHint: 'Set daily/weekly/total spending limits (USD). Changing limits won\'t reset usage.',
+       quotaLimitToggle: 'Enable Quota Limit',
+       quotaLimitToggleHint: 'When enabled, account will be paused when usage reaches the set limit',
+       quotaDailyLimit: 'Daily Limit',
+@@ -2934,7 +3015,7 @@ export default {
+       // Quota control (Anthropic OAuth/SetupToken only)
+       quotaControl: {
+         title: 'Quota Control',
+-        hint: 'Configure cost window, session limits, client affinity and other scheduling controls.',
++        hint: 'Configure cost windows, session limits and other scheduling controls.',
+         windowCost: {
+           label: '5h Window Cost Limit',
+           hint: 'Limit account cost usage within the 5-hour window',
+@@ -2980,7 +3061,7 @@ export default {
+           label: 'TLS Fingerprint Simulation',
+           hint: 'Simulate Node.js/Claude Code client TLS fingerprint',
+           defaultProfile: 'Built-in Default',
+-          randomProfile: 'Random'
++          randomProfile: 'Random',
+         },
+         sessionIdMasking: {
+           label: 'Session ID Masking',
+@@ -2997,25 +3078,7 @@ export default {
+           hint: 'Forward requests to a custom relay service. Proxy URL will be passed as a query parameter.',
+           urlHint: 'Relay service URL (e.g., https://relay.example.com)',
+         },
+-        clientAffinity: {
+-          label: 'Client Affinity Scheduling',
+-          hint: 'When enabled, new sessions prefer accounts previously used by this client to reduce account switching'
+-        }
+       },
+-      affinityNoClients: 'No affinity clients',
+-      affinityClients: '{count} affinity clients:',
+-      affinitySection: 'Client Affinity',
+-      affinitySectionHint: 'Control how clients are distributed across accounts. Configure zone thresholds to balance load.',
+-      affinityToggle: 'Enable Client Affinity',
+-      affinityToggleHint: 'New sessions prefer accounts previously used by this client',
+-      affinityBase: 'Base Limit (Green Zone)',
+-      affinityBasePlaceholder: 'Empty = no limit',
+-      affinityBaseHint: 'Max clients in green zone (full priority scheduling)',
+-      affinityBaseOffHint: 'No green zone limit. All clients receive full priority scheduling.',
+-      affinityBuffer: 'Buffer (Yellow Zone)',
+-      affinityBufferPlaceholder: 'e.g. 3',
+-      affinityBufferHint: 'Additional clients allowed in the yellow zone (degraded priority)',
+-      affinityBufferInfinite: 'Unlimited',
+       expired: 'Expired',
+       proxy: 'Proxy',
+       noProxy: 'No Proxy',
+@@ -3897,6 +3960,183 @@ export default {
+       failedToLoadUsages: 'Failed to load usage records'
+     },
+ 
++
++    serviceQuota: {
++      title: 'Service Quota',
++      description: 'Manage layered RPM, TPM, TPD, daily USD spend, and concurrent request rules.',
++      createRule: 'Create Rule',
++      editRule: 'Edit Service Quota Rule',
++      deleteRule: 'Delete Service Quota Rule',
++      emptyTitle: 'No service quota rules yet',
++      emptyDescription: 'Create the first rule to add checks on top of the existing limits.',
++      userId: 'User ID: {id}',
++      unnamedRule: 'Unnamed rule #{id}',
++      loadError: 'Failed to load service quota rules',
++      saveSuccess: 'Service quota rule saved',
++      saveError: 'Failed to save service quota rule',
++      deleteSuccess: 'Service quota rule deleted',
++      deleteError: 'Failed to delete service quota rule',
++      toggleSuccess: 'Status updated',
++      toggleError: 'Failed to update status',
++      counterResetOnToggle: 'Counter reset for this rule',
++      deleteConfirm: 'Delete rule {name}? It will stop taking effect immediately.',
++      filters: {
++        allCounterModes: 'All Counter Modes',
++        allFallback: 'All Default States',
++        allStatus: 'All Status'
++      },
++      columns: {
++        status: 'Status',
++        name: 'Name',
++        limiters: 'Limiters',
++        paths: 'Paths',
++        counterMode: 'Counter Mode',
++        targetUsers: 'Bound Users',
++        fallback: 'Is Default',
++        type: 'Type',
++        window: 'Window',
++        limit: 'Limit',
++        actions: 'Actions'
++      },
++      targetUsersOverflow: '+{count} more',
++      scopeDetails: {
++        platform: 'Platform: {value}',
++        channel: 'Channel: {value}',
++        group: 'Group: {value}',
++        account: 'Account: {value}',
++        model: 'Model: {value}',
++        channelCount: 'Channels x{count}',
++        groupCount: 'Groups x{count}',
++        accountCount: 'Accounts x{count}',
++        allRequests: 'All requests'
++      },
++      limiters: {
++        rpm: 'RPM',
++        tpm: 'TPM',
++        tpd: 'TPD',
++        dailyUsd: 'Daily USD Spend',
++        concurrency: 'Concurrent Requests',
++        rpmCountOnArrival: {
++          label: 'Count on request arrival',
++          help: 'Off by default; only successful requests count toward RPM. When enabled, RPM increments as soon as the request is routed.'
++        }
++      },
++      counterModes: {
++        user: 'Specific Users',
++        perUser: 'All Users',
++        shared: 'Shared Global'
++      },
++      counterModeHints: {
++        user: 'Applies only to the listed users; each user has an independent counter',
++        perUser: 'Applies to all users in scope; one counter per user_id',
++        shared: 'Applies to all users in scope; everyone shares the same counter'
++      },
++      fallback: {
++        label: 'Default Rule',
++        hint: 'Limiters are dropped when another non-default rule covers the same limiter type',
++        yes: 'Default',
++        no: 'Regular'
++      },
++      windows: {
++        fixed: 'Fixed Window',
++        rolling: 'Rolling Window',
++        none: 'No Window'
++      },
++      form: {
++        name: 'Rule Name',
++        namePlaceholder: 'Optional label for this rule',
++        counterMode: 'Counter Mode',
++        fallback: 'Default Rule',
++        targetUserIds: 'Bound User IDs',
++        targetUserIdsPlaceholder: 'Comma-separated user IDs, e.g. 1,2,3',
++        targetUserIdsRequired: 'Required when counter mode is "Specific Users"',
++        limitersTitle: 'Limiters (a single rule can carry multiple)',
++        limitersHint: 'Each limiter type can appear once; concurrency has no window',
++        pathsTitle: 'Match Paths (rule fires when ANY path matches)',
++        pathsHint: 'Each path drills Platform → Channel → Group → Account → Model. Empty = no restriction on that dimension.',
++        platform: 'Platform',
++        platformPlaceholder: 'e.g. anthropic / openai / gemini',
++        channelId: 'Channel',
++        groupId: 'Group',
++        accountId: 'Account',
++        modelPattern: 'Model Pattern',
++        modelPatternPlaceholder: 'e.g. claude-opus-* or an exact model name',
++        modelPatternHint: 'Wildcard * supported, e.g. claude-* matches all claude models on this platform',
++        required: 'Required'
++      },
++      limiterEditor: {
++        empty: 'No limiter added yet. Click below to add one.',
++        add: 'Add Limiter'
++      },
++      tokenComponents: {
++        title: 'Counted Tokens',
++        input: 'Input',
++        output: 'Output',
++        cache_creation: 'Cache Write',
++        cache_read: 'Cache Read',
++        minOneRequired: 'Select at least 1 item'
++      },
++      pathEditor: {
++        empty: 'No path added yet. Click below to add one.',
++        add: 'Add Path',
++        pathIndex: 'Path #{index}'
++      },
++      errors: {
++        limitValueMustBePositive: 'Limit value must be greater than 0',
++        formInvalid: 'The form contains errors, please fix them before saving',
++        REQUIRED: 'Required',
++        INVALID_VALUE: 'Invalid value',
++        MUST_BE_POSITIVE: 'Must be greater than 0',
++        TARGET_USERS_REQUIRED: 'Select at least 1 user',
++        TOKEN_COMPONENTS_REQUIRED: 'Select at least 1 item',
++        PLATFORM_REQUIRED: 'Platform is required'
++      }
++    },
++
++    serviceQuotaMonitor: {
++      title: 'Quota Monitor',
++      description: 'Real-time view of current usage and load of all service limiters',
++      disabled: 'Service quota is disabled. Please enable it in Settings -> Features',
++      empty: 'No active service limiters',
++      truncated: 'Showing first {count} entries (truncated)',
++      loadError: 'Failed to load quota monitor',
++      notActive: 'Idle',
++      fallbackTag: 'Default',
++      resetIn: 'Resets in {seconds}s',
++      scopeHintNoUser: 'No user selected: showing per-user-targeted rules and shared rules; pick a user to also see per_user live counters',
++      scopeHintWithUser: 'User selected: showing rules targeting this user, shared rules, and this user\'s per_user counters',
++      asOf: 'Updated {seconds}s ago',
++      refresh: 'Refresh',
++      filters: {
++        rule: 'Rule',
++        user: 'User',
++        channel: 'Channel',
++        group: 'Group',
++        account: 'Account',
++        platform: 'Platform',
++        clear: 'Clear filters'
++      },
++      columns: {
++        rule: 'Rule',
++        path: 'Path',
++        limiter: 'Type',
++        window: 'Window',
++        usage: 'Usage',
++        counterMode: 'Limit Mode',
++        scopeUser: 'User',
++        isFallback: 'Is Default',
++        actions: 'Actions'
++      },
++      statusActive: 'Now',
++      refreshTitle: 'Refresh this limiter counter',
++      reset: 'Reset',
++      resetTitle: 'Clear this limiter counter',
++      resetConfirmTitle: 'Reset this limiter counter?',
++      resetConfirmMessage: 'This will clear the {limiter} counter for rule "{rule}". Exhausted quota becomes available immediately; concurrency slots are released (in-flight Release safely skips missing keys). This action cannot be undone.',
++      resetSuccess: 'Limiter counter reset',
++      resetError: 'Reset failed'
++    },
++
+     // Usage Records
+     usage: {
+       title: 'Usage Records',
+@@ -4785,6 +5025,13 @@ export default {
+           enabled: 'Enable Available Channels',
+           enabledHint: 'When off, the sidebar entry is hidden and the endpoint returns an empty list.',
+         },
++        serviceQuota: {
++          title: 'Service Quota',
++          description: 'When enabled, the Service Quota menu becomes visible and every request is additionally checked against RPM / TPM / TPD / Daily USD / Concurrency rules on top of the existing user quotas.',
++          configureLink: 'Go to service quota rule management',
++          enabled: 'Enable Service Quota',
++          enabledHint: 'When off, service quota rules are not evaluated.',
++        },
+         affiliate: {
+           title: 'Affiliate (Invite Rebate)',
+           description: 'Existing users invite new ones; the inviter earns a percentage rebate on the invitee’s recharges. Disabled by default.',
+@@ -5104,12 +5351,6 @@ export default {
+         integrationDoc: 'Payment Integration Docs',
+         integrationDocHint: 'Covers endpoint specs, idempotency semantics, and code samples'
+       },
+-      soraClient: {
+-        title: 'Sora Client',
+-        description: 'Control whether to show the Sora client entry in the sidebar',
+-        enabled: 'Enable Sora Client',
+-        enabledHint: 'When enabled, the Sora entry will be shown in the sidebar for users to access Sora features'
+-      },
+       customMenu: {
+         title: 'Custom Menu Pages',
+         description: 'Add custom iframe pages to the sidebar navigation. Each page can be visible to regular users or administrators.',
+@@ -5362,98 +5603,6 @@ export default {
+         securityWarning: 'Warning: This key provides full admin access. Keep it secure.',
+         usage: 'Usage: Add to request header - x-api-key: <your-admin-api-key>'
+       },
+-      soraS3: {
+-        title: 'Sora Storage',
+-        description: 'Manage Sora media storage profiles with S3 and Google Drive support',
+-        newProfile: 'New Profile',
+-        reloadProfiles: 'Reload Profiles',
+-        empty: 'No storage profiles yet, create one first',
+-        createTitle: 'Create Storage Profile',
+-        editTitle: 'Edit Storage Profile',
+-        selectProvider: 'Select Storage Type',
+-        providerS3Desc: 'S3-compatible object storage',
+-        providerGDriveDesc: 'Google Drive cloud storage',
+-        profileID: 'Profile ID',
+-        profileName: 'Profile Name',
+-        setActive: 'Set as active after creation',
+-        saveProfile: 'Save Profile',
+-        activateProfile: 'Activate',
+-        profileCreated: 'Storage profile created',
+-        profileSaved: 'Storage profile saved',
+-        profileDeleted: 'Storage profile deleted',
+-        profileActivated: 'Active storage profile switched',
+-        profileIDRequired: 'Profile ID is required',
+-        profileNameRequired: 'Profile name is required',
+-        profileSelectRequired: 'Please select a profile first',
+-        endpointRequired: 'S3 endpoint is required when enabled',
+-        bucketRequired: 'Bucket is required when enabled',
+-        accessKeyRequired: 'Access Key ID is required when enabled',
+-        deleteConfirm: 'Delete storage profile {profileID}?',
+-        columns: {
+-          profile: 'Profile',
+-          profileId: 'Profile ID',
+-          name: 'Name',
+-          provider: 'Type',
+-          active: 'Active',
+-          endpoint: 'Endpoint',
+-          bucket: 'Bucket',
+-          storagePath: 'Storage Path',
+-          capacityUsage: 'Capacity / Used',
+-          capacityUnlimited: 'Unlimited',
+-          videoCount: 'Videos',
+-          videoCompleted: 'completed',
+-          videoInProgress: 'in progress',
+-          quota: 'Default Quota',
+-          updatedAt: 'Updated At',
+-          actions: 'Actions',
+-          rootFolder: 'Root folder',
+-          testInTable: 'Test',
+-          testingInTable: 'Testing...',
+-          testTimeout: 'Test timed out (15s)'
+-        },
+-        enabled: 'Enable Storage',
+-        enabledHint: 'When enabled, Sora generated media files will be automatically uploaded',
+-        endpoint: 'S3 Endpoint',
+-        region: 'Region',
+-        bucket: 'Bucket',
+-        prefix: 'Object Prefix',
+-        accessKeyId: 'Access Key ID',
+-        secretAccessKey: 'Secret Access Key',
+-        secretConfigured: '(Configured, leave blank to keep)',
+-        cdnUrl: 'CDN URL',
+-        cdnUrlHint: 'Optional. When configured, files are accessed via CDN URL',
+-        forcePathStyle: 'Force Path Style',
+-        defaultQuota: 'Default Storage Quota',
+-        defaultQuotaHint: 'Default quota when not specified at user or group level. 0 means unlimited',
+-        testConnection: 'Test Connection',
+-        testing: 'Testing...',
+-        testSuccess: 'Connection test successful',
+-        testFailed: 'Connection test failed',
+-        saved: 'Storage settings saved successfully',
+-        saveFailed: 'Failed to save storage settings',
+-        gdrive: {
+-          authType: 'Authentication Method',
+-          serviceAccount: 'Service Account',
+-          clientId: 'Client ID',
+-          clientSecret: 'Client Secret',
+-          clientSecretConfigured: '(Configured, leave blank to keep)',
+-          refreshToken: 'Refresh Token',
+-          refreshTokenConfigured: '(Configured, leave blank to keep)',
+-          serviceAccountJson: 'Service Account JSON',
+-          serviceAccountConfigured: '(Configured, leave blank to keep)',
+-          folderId: 'Folder ID (optional)',
+-          authorize: 'Authorize Google Drive',
+-          authorizeHint: 'Get Refresh Token via OAuth2',
+-          oauthFieldsRequired: 'Please fill in Client ID and Client Secret first',
+-          oauthSuccess: 'Google Drive authorization successful',
+-          oauthFailed: 'Google Drive authorization failed',
+-          closeWindow: 'This window will close automatically',
+-          processing: 'Processing authorization...',
+-          testStorage: 'Test Storage',
+-          testSuccess: 'Google Drive storage test passed (upload, access, delete all OK)',
+-          testFailed: 'Google Drive storage test failed'
+-        }
+-      },
+       overloadCooldown: {
+         title: '529 Overload Cooldown',
+         description: 'Configure account scheduling pause strategy when upstream returns 529 (overloaded)',
+@@ -5488,6 +5637,7 @@ export default {
+       rectifier: {
+         title: 'Request Rectifier',
+         description: 'Automatically fix request parameters and retry when upstream returns specific errors',
++        passthroughNotice: "Note: When an account has \"Anthropic API Key Passthrough\" enabled, rectifiers do NOT take effect for that account — passthrough preserves the original request body as-is.",
+         enabled: 'Enable Request Rectifier',
+         enabledHint: 'Master switch - disabling turns off all rectification features',
+         thinkingSignature: 'Thinking Signature Rectifier',
+@@ -5501,6 +5651,13 @@ export default {
+         apikeyPatternsHint:
+           'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
+         apikeyPatternPlaceholder: 'e.g., thinking_error',
++        advisorTool: 'Advisor Tool Rectifier',
++        advisorToolHint:
++          'Automatically strip the advisor-tool-2026-03-01 beta header and the advisor tool definition, then retry, when upstream does not recognise this beta (built-in patterns always apply)',
++        advisorToolPatterns: 'Custom Match Patterns',
++        advisorToolPatternsHint:
++          'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
++        advisorToolPatternPlaceholder: 'e.g., advisor-tool',
+         addPattern: 'Add Pattern',
+         saved: 'Rectifier settings saved',
+         saveFailed: 'Failed to save rectifier settings'
+@@ -5861,6 +6018,30 @@ export default {
+     usageOf: '{used} of {limit}'
+   },
+ 
++  // User Quota Monitor (user-side, reuses admin RuntimeTable)
++  userQuotaMonitor: {
++    title: 'My Quotas',
++    description: 'Real-time view of service limiters affecting you',
++    disabled: 'Service quota is currently disabled',
++    empty: 'You are not subject to any service quota rules right now',
++    emptyAfterFilter: 'No limiters match the current filters',
++    truncated: 'Showing first {count} entries (truncated)',
++    loadError: 'Failed to load my quota',
++    refresh: 'Refresh',
++    filters: {
++      rule: 'Rule',
++      platform: 'Platform',
++      scope: 'Scope',
++      scopeGlobal: 'Global only',
++      scopeMine: 'Mine only',
++      limiterType: 'Limiter Type',
++      status: 'Status',
++      statusExceeded: 'Exceeded',
++      statusHealthy: 'Healthy',
++      reset: 'Reset filters'
++    }
++  },
++
+   // Onboarding Tour
+   onboarding: {
+     restartTour: 'Restart Onboarding Tour',
+@@ -6318,5 +6499,4 @@ export default {
+       },
+     },
+   },
+-
+ }
+diff --git a/frontend/src/i18n/locales/zh.ts b/frontend/src/i18n/locales/zh.ts
+index e399530b..60a4d8e4 100644
+--- a/frontend/src/i18n/locales/zh.ts
++++ b/frontend/src/i18n/locales/zh.ts
+@@ -246,6 +246,18 @@ export default {
+   common: {
+     loading: '加载中...',
+     submitting: '提交中...',
++    userSearch: {
++      typeToSearch: '输入邮箱开始搜索',
++      noMatches: '未找到匹配用户'
++    },
++    entitySearch: {
++      typeToSearch: '输入关键字搜索',
++      typeOrFocus: '输入关键字或聚焦查看默认列表',
++      noMatches: '无匹配结果'
++    },
++    tagInput: {
++      enterToAdd: '回车添加'
++    },
+     justNow: '刚刚',
+     save: '保存',
+     saved: '保存成功',
+@@ -272,6 +284,7 @@ export default {
+     yes: '是',
+     no: '否',
+     all: '全部',
++    global: '全',
+     none: '无',
+     selectAll: '全选',
+     noData: '暂无数据',
+@@ -336,6 +349,75 @@ export default {
+         minutes: '{m}m',
+         withSuffix: '{time} 后解除'
+       }
++    },
++    // 通用错误码 → 文案映射（与后端 pkgerrors.Reason 对齐）：admin/user 全站共用，
++    // handler 层统一返回 reason 后由前端按 reason 取该 key 渲染本地化提示。
++    errors: {
++      INVALID_REQUEST_BODY: '请求格式错误',
++      INVALID_ID: 'ID 无效',
++      SERVICE_QUOTA_UNAVAILABLE: '服务限额功能暂不可用',
++      // Account
++      INVALID_ACCOUNT_ID: '账号 ID 无效',
++      ACCOUNT_NOT_FOUND: '账号不存在',
++      ACCOUNT_DUPLICATE: '账号已存在',
++      // User
++      INVALID_USER_ID: '用户 ID 无效',
++      USER_NOT_FOUND: '用户不存在',
++      EMAIL_INVALID: '邮箱格式错误',
++      BALANCE_INVALID: '余额数值无效',
++      // Group
++      INVALID_GROUP_ID: '分组 ID 无效',
++      GROUP_NOT_FOUND: '分组不存在',
++      GROUP_DUPLICATE: '分组名已存在',
++      INVALID_GROUP_FILTER: '分组筛选参数无效',
++      // Setting
++      INVALID_SETTING_KEY: '设置项无效',
++      SETTING_REQUIRED: '设置项必填',
++      TURNSTILE_SITE_KEY_REQUIRED: 'Turnstile Site Key 必填',
++      TURNSTILE_SECRET_REQUIRED: 'Turnstile Secret 必填',
++      // Account 补充（audit 8 发现 backend 已用但前端未翻译）
++      INVALID_RATE_MULTIPLIER: '倍率参数无效',
++      ACCOUNT_IDS_REQUIRED: '账号 ID 列表必填',
++      INVALID_EXTRA_FIELD: '扩展字段无效',
++      NO_UPDATES_PROVIDED: '未提供更新内容',
++      PRIVACY_UNSUPPORTED: '该账号不支持隐私设置',
++      MISSING_ACCESS_TOKEN: '缺少 access token',
++      TIER_REFRESH_UNSUPPORTED: '该账号不支持等级刷新',
++      TOTP_ENCRYPTION_KEY_MISSING: 'TOTP 加密密钥未配置',
++      // Service quota（handler 与 service 层 reason → 用户文案）
++      SERVICE_QUOTA_MONITOR_UNAVAILABLE: '限额监控暂不可用',
++      SERVICE_QUOTA_INVALID_RULE: '限额规则配置无效',
++      SERVICE_QUOTA_INVALID_COUNTER_MODE: '计数模式无效',
++      SERVICE_QUOTA_INVALID_LIMITERS: '请至少配置一个限流器',
++      SERVICE_QUOTA_INVALID_LIMITER_TYPE: '限流器类型无效',
++      SERVICE_QUOTA_INVALID_LIMIT_VALUE: '限额数值无效',
++      SERVICE_QUOTA_INVALID_WINDOW_MODE: '时间窗口模式无效',
++      SERVICE_QUOTA_DUPLICATE_LIMITER: '限流器配置重复',
++      SERVICE_QUOTA_INVALID_TOKEN_COMPONENT: 'Token 计费项无效',
++      SERVICE_QUOTA_INVALID_PATHS: '请至少配置一个路径',
++      SERVICE_QUOTA_SCOPE_ACCOUNT_NOT_FOUND: '指定的账号不存在',
++      SERVICE_QUOTA_SCOPE_GROUP_NOT_FOUND: '指定的分组不存在',
++      SERVICE_QUOTA_SCOPE_CHANNEL_NOT_FOUND: '指定的渠道不存在',
++      SERVICE_QUOTA_SCOPE_MISMATCH: '限制范围与规则不匹配',
++      SERVICE_QUOTA_INVALID_RESET_TARGET: '重置目标参数无效',
++      // 通用鉴权 / 监控错误
++      UNAUTHENTICATED: '请先登录',
++      SNAPSHOT_FAILED: '加载实时数据失败，请稍后重试',
++      INVALID_QUERY_PARAM: '查询参数无效'
++    }
++  },
++
++  // 通用字段校验错误码 → i18n 文案。
++  // 任意 dialog 走 fieldErrorI18nKeys(code, moduleNamespace) 时，先查模块专属
++  // namespace（如 admin.serviceQuota.errors.*），未命中回退到本通用 namespace。
++  validation: {
++    fieldErrors: {
++      REQUIRED: '必填',
++      MIN: '值过小',
++      MAX: '值过大',
++      ONEOF: '取值不在允许范围',
++      MUST_BE_POSITIVE: '必须为正数',
++      INVALID_VALUE: '取值无效'
+     }
+   },
+ 
+@@ -378,6 +460,10 @@ export default {
+     channelPricing: '渠道定价',
+     channelMonitor: '渠道监控',
+     channelStatus: '渠道状态',
++    serviceQuota: '服务配额',
++    serviceQuotaMonitor: '限额监控',
++    serviceQuotaConfig: '限额配置',
++    myQuota: '我的限额',
+   },
+ 
+   // Auth
+@@ -846,6 +932,9 @@ export default {
+     imageUnitPrice: '单张价格',
+     cacheRead: '读取',
+     cacheWrite: '写入',
++    cacheHit: '缓存读取',
++    cacheCreate: '缓存写入',
++    cacheHitRate: '缓存命中率',
+     serviceTier: '服务档位',
+     serviceTierPriority: 'Fast',
+     serviceTierFlex: 'Flex',
+@@ -1788,8 +1877,6 @@ export default {
+       failedToAdjust: '调整失败',
+       emailRequired: '请输入邮箱',
+       concurrencyMin: '并发数不能小于1',
+-      soraStorageQuota: 'Sora 存储配额',
+-      soraStorageQuotaHint: '单位 GB，0 表示使用分组或系统默认配额',
+       amountRequired: '请输入有效金额',
+       insufficientBalance: '余额不足',
+       setAllowedGroups: '设置允许分组',
+@@ -3075,7 +3162,7 @@ export default {
+       // Quota control (Anthropic OAuth/SetupToken only)
+       quotaControl: {
+         title: '配额控制',
+-        hint: '配置费用窗口、会话限制、客户端亲和等调度控制。',
++        hint: '配置费用窗口、会话限制等调度控制。',
+         windowCost: {
+           label: '5h窗口费用控制',
+           hint: '限制账号在5小时窗口内的费用使用',
+@@ -3121,7 +3208,7 @@ export default {
+           label: 'TLS 指纹模拟',
+           hint: '模拟 Node.js/Claude Code 客户端的 TLS 指纹',
+           defaultProfile: '内置默认',
+-          randomProfile: '随机'
++          randomProfile: '随机',
+         },
+         sessionIdMasking: {
+           label: '会话 ID 伪装',
+@@ -3138,25 +3225,7 @@ export default {
+           hint: '启用后将请求转发到自定义中继服务，代理地址将作为 URL 参数传递给中继服务',
+           urlHint: '中继服务地址（如 https://relay.example.com）',
+         },
+-        clientAffinity: {
+-          label: '客户端亲和调度',
+-          hint: '启用后，新会话会优先调度到该客户端之前使用过的账号，避免频繁切换账号'
+-        }
+       },
+-      affinityNoClients: '无亲和客户端',
+-      affinityClients: '{count} 个亲和客户端：',
+-      affinitySection: '客户端亲和',
+-      affinitySectionHint: '控制客户端在账号间的分布。通过配置区域阈值来平衡负载。',
+-      affinityToggle: '启用客户端亲和',
+-      affinityToggleHint: '新会话优先调度到该客户端之前使用过的账号',
+-      affinityBase: '基础限额（绿区）',
+-      affinityBasePlaceholder: '留空表示不限制',
+-      affinityBaseHint: '绿区最大客户端数量（完整优先级调度）',
+-      affinityBaseOffHint: '未开启绿区限制，所有客户端均享受完整优先级调度',
+-      affinityBuffer: '缓冲区（黄区）',
+-      affinityBufferPlaceholder: '例如 3',
+-      affinityBufferHint: '黄区允许的额外客户端数量（降级优先级调度）',
+-      affinityBufferInfinite: '不限制',
+       expired: '已过期',
+       proxy: '代理',
+       noProxy: '无代理',
+@@ -4053,6 +4122,183 @@ export default {
+       failedToLoadUsages: '加载使用记录失败'
+     },
+ 
++
++    serviceQuota: {
++      title: '服务配额',
++      description: '在现有用户配额之上，额外管理 RPM、TPM、TPD、每日美元消费以及并发请求等规则。',
++      createRule: '新建规则',
++      editRule: '编辑服务配额规则',
++      deleteRule: '删除服务配额规则',
++      emptyTitle: '暂无服务配额规则',
++      emptyDescription: '创建第一条规则，在现有配额之上叠加限制。',
++      userId: '用户 ID：{id}',
++      unnamedRule: '未命名规则 #{id}',
++      loadError: '加载服务配额规则失败',
++      saveSuccess: '服务配额规则已保存',
++      saveError: '保存服务配额规则失败',
++      deleteSuccess: '服务配额规则已删除',
++      deleteError: '删除服务配额规则失败',
++      toggleSuccess: '状态更新成功',
++      toggleError: '状态更新失败',
++      counterResetOnToggle: '已重置该规则的限流计数',
++      deleteConfirm: '删除规则 {name}？删除后立即停止生效。',
++      filters: {
++        allCounterModes: '全部计数模式',
++        allFallback: '全部默认状态',
++        allStatus: '全部状态'
++      },
++      columns: {
++        status: '状态',
++        name: '名称',
++        limiters: '限流器',
++        paths: '路径',
++        counterMode: '计数模式',
++        targetUsers: '绑定用户',
++        fallback: '是否默认',
++        type: '类型',
++        window: '窗口',
++        limit: '限额',
++        actions: '操作'
++      },
++      targetUsersOverflow: '等 {count} 人',
++      scopeDetails: {
++        platform: '平台：{value}',
++        channel: '渠道：{value}',
++        group: '分组：{value}',
++        account: '账号：{value}',
++        model: '模型：{value}',
++        channelCount: '渠道 ×{count}',
++        groupCount: '分组 ×{count}',
++        accountCount: '账号 ×{count}',
++        allRequests: '所有请求'
++      },
++      limiters: {
++        rpm: 'RPM',
++        tpm: 'TPM',
++        tpd: 'TPD',
++        dailyUsd: '每日美元消费',
++        concurrency: '并发请求',
++        rpmCountOnArrival: {
++          label: '请求到达即计入',
++          help: '默认关闭，仅成功请求计入；开启后请求被路由到账号即 +1，避免高并发超额'
++        }
++      },
++      counterModes: {
++        user: '指定用户',
++        perUser: '所有用户',
++        shared: '全局共享'
++      },
++      counterModeHints: {
++        user: '只对指定的用户列表生效，每人独立计数',
++        perUser: '对 scope 内所有用户生效，按 user_id 分片计数',
++        shared: '对 scope 内所有用户生效，共享同一个计数器'
++      },
++      fallback: {
++        label: '默认规则',
++        hint: '仅在同一 limiter 类型没有其他非默认规则命中时生效（限流器粒度）',
++        yes: '默认',
++        no: '常规'
++      },
++      windows: {
++        fixed: '固定窗口',
++        rolling: '滑动窗口',
++        none: '不设窗口'
++      },
++      form: {
++        name: '规则名称',
++        namePlaceholder: '便于识别的备注，可留空',
++        counterMode: '计数模式',
++        fallback: '默认规则',
++        targetUserIds: '绑定用户 ID',
++        targetUserIdsPlaceholder: '逗号分隔的用户 ID，例如 1,2,3',
++        targetUserIdsRequired: '计数模式为"指定用户"时必填',
++        limitersTitle: '限流器（一条规则可同时配置多种）',
++        limitersHint: '同一类型只能配置一个；并发不支持窗口',
++        pathsTitle: '匹配路径（命中任意一条即生效）',
++        pathsHint: '每条路径按 平台 → 渠道 → 分组 → 账号 → 模型 单选；留空表示不限制该维度',
++        platform: '平台',
++        platformPlaceholder: '例如 anthropic / openai / gemini',
++        channelId: '渠道',
++        groupId: '分组',
++        accountId: '账号',
++        modelPattern: '模型通配符',
++        modelPatternPlaceholder: '例如 claude-opus-* 或精确模型名',
++        modelPatternHint: '支持通配符 *，例如 claude-* 匹配该平台下所有 claude 模型',
++        required: '必填'
++      },
++      limiterEditor: {
++        empty: '尚未添加限流器，点击下方按钮添加',
++        add: '添加限流器'
++      },
++      tokenComponents: {
++        title: '计入项',
++        input: '输入',
++        output: '输出',
++        cache_creation: '缓存写入',
++        cache_read: '缓存读取',
++        minOneRequired: '至少勾选 1 项'
++      },
++      pathEditor: {
++        empty: '尚未添加路径，点击下方按钮添加',
++        add: '添加路径',
++        pathIndex: '路径 #{index}'
++      },
++      errors: {
++        limitValueMustBePositive: '限额必须 > 0',
++        formInvalid: '表单存在错误，请修正后再保存',
++        REQUIRED: '必填',
++        INVALID_VALUE: '取值无效',
++        MUST_BE_POSITIVE: '必须 > 0',
++        TARGET_USERS_REQUIRED: '请至少选择 1 个用户',
++        TOKEN_COMPONENTS_REQUIRED: '至少勾选 1 项',
++        PLATFORM_REQUIRED: '平台必填'
++      }
++    },
++
++    serviceQuotaMonitor: {
++      title: '限额监控',
++      description: '实时查看所有服务限流器的当前用量与负载',
++      disabled: '服务限额未启用，请前往「设置 → 功能开关」开启',
++      empty: '当前没有活跃的服务限流器',
++      truncated: '超过 {count} 条已截断',
++      loadError: '加载限额监控失败',
++      notActive: '未活跃',
++      fallbackTag: '默认',
++      resetIn: '重置: {seconds}s 后',
++      scopeHintNoUser: '未选择用户：显示「指定用户」与「全局共享」规则；选择用户后还可看到「按用户独立」实时计数',
++      scopeHintWithUser: '已选用户：显示该用户被指定的规则、全局共享规则与该用户的独立计数',
++      asOf: '数据更新于 {seconds} 秒前',
++      refresh: '刷新',
++      filters: {
++        rule: '规则',
++        user: '用户',
++        channel: '渠道',
++        group: '分组',
++        account: '账号',
++        platform: '平台',
++        clear: '清空筛选'
++      },
++      columns: {
++        rule: '规则',
++        path: '路径',
++        limiter: '限流类型',
++        window: '窗口',
++        usage: '用量',
++        counterMode: '限制模式',
++        scopeUser: '用户',
++        isFallback: '是否默认',
++        actions: '操作'
++      },
++      statusActive: '现在',
++      refreshTitle: '刷新这个限流器的最新计数',
++      reset: '重置',
++      resetTitle: '清空这个限流器的当前计数',
++      resetConfirmTitle: '确认重置该限流器计数？',
++      resetConfirmMessage: '将清空规则「{rule}」的 {limiter} 当前计数。已用完的 quota 将立即恢复，已并发占用的槽位会被释放（在飞请求 Release 时自动跳过空 key）。该操作不可撤销。',
++      resetSuccess: '已重置该限流器计数',
++      resetError: '重置失败'
++    },
++
+     // Usage Records
+     usage: {
+       title: '使用记录',
+@@ -4948,6 +5194,13 @@ export default {
+           enabled: '启用可用渠道',
+           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
+         },
++        serviceQuota: {
++          title: '服务配额',
++          description: '开启后显示服务配额菜单，并在现有用户配额之上叠加检查 RPM / TPM / TPD / 每日美元 / 并发请求规则。',
++          configureLink: '进入服务配额规则管理',
++          enabled: '启用服务配额',
++          enabledHint: '关闭时不执行服务配额规则。',
++        },
+         affiliate: {
+           title: '邀请返利',
+           description: '老用户邀请新用户注册，新用户充值后老用户按比例获得返利额度。默认关闭。',
+@@ -5265,12 +5518,6 @@ export default {
+         integrationDoc: '支付集成文档',
+         integrationDocHint: '包含接口说明、幂等语义及示例代码'
+       },
+-      soraClient: {
+-        title: 'Sora 客户端',
+-        description: '控制是否在侧边栏展示 Sora 客户端入口',
+-        enabled: '启用 Sora 客户端',
+-        enabledHint: '开启后，侧边栏将显示 Sora 入口，用户可访问 Sora 功能'
+-      },
+       customMenu: {
+         title: '自定义菜单页面',
+         description: '添加自定义 iframe 页面到侧边栏导航。每个页面可以设置为普通用户或管理员可见。',
+@@ -5522,98 +5769,6 @@ export default {
+         securityWarning: '警告：此密钥拥有完整的管理员权限，请妥善保管。',
+         usage: '使用方法：在请求头中添加 x-api-key: <your-admin-api-key>'
+       },
+-      soraS3: {
+-        title: 'Sora 存储配置',
+-        description: '以多配置列表管理 Sora 媒体存储，支持 S3 和 Google Drive',
+-        newProfile: '新建配置',
+-        reloadProfiles: '刷新列表',
+-        empty: '暂无存储配置，请先创建',
+-        createTitle: '新建存储配置',
+-        editTitle: '编辑存储配置',
+-        selectProvider: '选择存储类型',
+-        providerS3Desc: 'S3 兼容对象存储',
+-        providerGDriveDesc: 'Google Drive 云盘',
+-        profileID: '配置 ID',
+-        profileName: '配置名称',
+-        setActive: '创建后设为生效',
+-        saveProfile: '保存配置',
+-        activateProfile: '设为生效',
+-        profileCreated: '存储配置创建成功',
+-        profileSaved: '存储配置保存成功',
+-        profileDeleted: '存储配置删除成功',
+-        profileActivated: '生效配置已切换',
+-        profileIDRequired: '请填写配置 ID',
+-        profileNameRequired: '请填写配置名称',
+-        profileSelectRequired: '请先选择配置',
+-        endpointRequired: '启用时必须填写 S3 端点',
+-        bucketRequired: '启用时必须填写存储桶',
+-        accessKeyRequired: '启用时必须填写 Access Key ID',
+-        deleteConfirm: '确定删除存储配置 {profileID} 吗？',
+-        columns: {
+-          profile: '配置',
+-          profileId: 'Profile ID',
+-          name: '名称',
+-          provider: '存储类型',
+-          active: '生效状态',
+-          endpoint: '端点',
+-          bucket: '存储桶',
+-          storagePath: '存储路径',
+-          capacityUsage: '容量 / 已用',
+-          capacityUnlimited: '无限制',
+-          videoCount: '视频数',
+-          videoCompleted: '完成',
+-          videoInProgress: '进行中',
+-          quota: '默认配额',
+-          updatedAt: '更新时间',
+-          actions: '操作',
+-          rootFolder: '根目录',
+-          testInTable: '测试',
+-          testingInTable: '测试中...',
+-          testTimeout: '测试超时（15秒）'
+-        },
+-        enabled: '启用存储',
+-        enabledHint: '启用后，Sora 生成的媒体文件将自动上传到存储',
+-        endpoint: 'S3 端点',
+-        region: '区域',
+-        bucket: '存储桶',
+-        prefix: '对象前缀',
+-        accessKeyId: 'Access Key ID',
+-        secretAccessKey: 'Secret Access Key',
+-        secretConfigured: '(已配置，留空保持不变)',
+-        cdnUrl: 'CDN URL',
+-        cdnUrlHint: '可选，配置后使用 CDN URL 访问文件',
+-        forcePathStyle: '强制路径风格（Path Style）',
+-        defaultQuota: '默认存储配额',
+-        defaultQuotaHint: '未在用户或分组级别指定配额时的默认值，0 表示无限制',
+-        testConnection: '测试连接',
+-        testing: '测试中...',
+-        testSuccess: '连接测试成功',
+-        testFailed: '连接测试失败',
+-        saved: '存储设置保存成功',
+-        saveFailed: '保存存储设置失败',
+-        gdrive: {
+-          authType: '认证方式',
+-          serviceAccount: '服务账号',
+-          clientId: 'Client ID',
+-          clientSecret: 'Client Secret',
+-          clientSecretConfigured: '(已配置，留空保持不变)',
+-          refreshToken: 'Refresh Token',
+-          refreshTokenConfigured: '(已配置，留空保持不变)',
+-          serviceAccountJson: '服务账号 JSON',
+-          serviceAccountConfigured: '(已配置，留空保持不变)',
+-          folderId: 'Folder ID（可选）',
+-          authorize: '授权 Google Drive',
+-          authorizeHint: '通过 OAuth2 获取 Refresh Token',
+-          oauthFieldsRequired: '请先填写 Client ID 和 Client Secret',
+-          oauthSuccess: 'Google Drive 授权成功',
+-          oauthFailed: 'Google Drive 授权失败',
+-          closeWindow: '此窗口将自动关闭',
+-          processing: '正在处理授权...',
+-          testStorage: '测试存储',
+-          testSuccess: 'Google Drive 存储测试成功（上传、访问、删除均正常）',
+-          testFailed: 'Google Drive 存储测试失败'
+-        }
+-      },
+       overloadCooldown: {
+         title: '529 过载冷却',
+         description: '配置上游返回 529（过载）时的账号调度暂停策略',
+@@ -5648,6 +5803,7 @@ export default {
+       rectifier: {
+         title: '请求整流器',
+         description: '当上游返回特定错误时，自动修正请求参数并重试，提高请求成功率',
++        passthroughNotice: '注意：账号级别开启「自动透传（仅替换认证）」后，整流器对该账号不生效——透传保留原始请求体不做改写。',
+         enabled: '启用请求整流器',
+         enabledHint: '总开关，关闭后所有整流功能均不生效',
+         thinkingSignature: 'Thinking 签名整流',
+@@ -5661,6 +5817,13 @@ export default {
+         apikeyPatternsHint:
+           '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
+         apikeyPatternPlaceholder: '例如：thinking_error 或 签名无效',
++        advisorTool: 'Advisor Tool 整流',
++        advisorToolHint:
++          '当上游不识别 advisor-tool-2026-03-01 beta header 时，自动剥离该 header 与 advisor 工具定义并重试（内置规则始终生效）',
++        advisorToolPatterns: '自定义匹配关键词',
++        advisorToolPatternsHint:
++          '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
++        advisorToolPatternPlaceholder: '例如：advisor-tool 或 not supported',
+         addPattern: '添加关键词',
+         saved: '整流器设置保存成功',
+         saveFailed: '保存整流器设置失败'
+@@ -6019,6 +6182,30 @@ export default {
+     usageOf: '已用 {used} / {limit}'
+   },
+ 
++  // 用户端"我的限额"页（复用 admin RuntimeTable 的子集列）
++  userQuotaMonitor: {
++    title: '我的限额',
++    description: '实时查看您命中的服务限流器与当前用量',
++    disabled: '服务限额功能未启用',
++    empty: '暂未命中任何服务限流规则',
++    emptyAfterFilter: '当前筛选条件下没有匹配的限流器',
++    truncated: '超过 {count} 条已截断',
++    loadError: '加载我的限额失败',
++    refresh: '手动刷新',
++    filters: {
++      rule: '规则',
++      platform: '平台',
++      scope: '限额范围',
++      scopeGlobal: '仅全局共享',
++      scopeMine: '仅我的独立',
++      limiterType: '限流类型',
++      status: '状态',
++      statusExceeded: '已超限',
++      statusHealthy: '健康',
++      reset: '重置筛选'
++    }
++  },
++
+   // Onboarding Tour
+   onboarding: {
+     restartTour: '重新查看新手引导',
+@@ -6502,5 +6689,4 @@ export default {
+       },
+     },
+   },
+-
+ }
+diff --git a/frontend/src/router/index.ts b/frontend/src/router/index.ts
+index 06f6b212..6c11440b 100644
+--- a/frontend/src/router/index.ts
++++ b/frontend/src/router/index.ts
+@@ -185,6 +185,18 @@ const routes: RouteRecordRaw[] = [
+       descriptionKey: 'usage.description'
+     }
+   },
++  {
++    path: '/quota-monitor',
++    name: 'UserQuotaMonitor',
++    component: () => import('@/views/user/QuotaMonitorView.vue'),
++    meta: {
++      requiresAuth: true,
++      requiresAdmin: false,
++      title: 'My Quotas',
++      titleKey: 'nav.myQuota',
++      descriptionKey: 'userQuotaMonitor.description'
++    }
++  },
+   {
+     path: '/redeem',
+     name: 'Redeem',
+@@ -433,6 +445,32 @@ const routes: RouteRecordRaw[] = [
+       descriptionKey: 'admin.subscriptions.description'
+     }
+   },
++  {
++    path: '/admin/service-quotas',
++    redirect: '/admin/service-quotas/monitor'
++  },
++  {
++    path: '/admin/service-quotas/monitor',
++    name: 'AdminServiceQuotaMonitor',
++    component: () => import('@/views/admin/serviceQuota/MonitorView.vue'),
++    meta: {
++      requiresAuth: true,
++      requiresAdmin: true,
++      title: 'Quota Monitor',
++      titleKey: 'nav.serviceQuotaMonitor'
++    }
++  },
++  {
++    path: '/admin/service-quotas/config',
++    name: 'AdminServiceQuotaConfig',
++    component: () => import('@/views/admin/serviceQuota/ConfigView.vue'),
++    meta: {
++      requiresAuth: true,
++      requiresAdmin: true,
++      title: 'Quota Rules',
++      titleKey: 'nav.serviceQuotaConfig'
++    }
++  },
+   {
+     path: '/admin/accounts',
+     name: 'AdminAccounts',
+diff --git a/frontend/src/stores/app.ts b/frontend/src/stores/app.ts
+index 876ab5c0..e3a39e2c 100644
+--- a/frontend/src/stores/app.ts
++++ b/frontend/src/stores/app.ts
+@@ -355,6 +355,7 @@ export const useAppStore = defineStore('app', () => {
+         channel_monitor_enabled: true,
+         channel_monitor_default_interval_seconds: 60,
+         available_channels_enabled: false,
++        service_quota_enabled: false,
+         affiliate_enabled: false,
+       }
+     }
+@@ -385,6 +386,12 @@ export const useAppStore = defineStore('app', () => {
+     cachedPublicSettings.value = null
+   }
+ 
++  function patchPublicSettings(patch: Partial<PublicSettings>): void {
++    const base = cachedPublicSettings.value || window.__APP_CONFIG__
++    if (!base) return
++    applySettings({ ...base, ...patch })
++  }
++
+   /**
+    * Initialize settings from injected config (window.__APP_CONFIG__)
+    * This is called synchronously before Vue app mounts to prevent flash
+@@ -453,6 +460,7 @@ export const useAppStore = defineStore('app', () => {
+ 
+     // Public settings actions
+     fetchPublicSettings,
++    patchPublicSettings,
+     clearPublicSettingsCache,
+     initFromInjectedConfig
+   }
+diff --git a/frontend/src/types/index.ts b/frontend/src/types/index.ts
+index 86078f8f..ad026ee7 100644
+--- a/frontend/src/types/index.ts
++++ b/frontend/src/types/index.ts
+@@ -216,6 +216,7 @@ export interface PublicSettings {
+   channel_monitor_enabled: boolean
+   channel_monitor_default_interval_seconds: number
+   available_channels_enabled: boolean
++  service_quota_enabled: boolean
+   affiliate_enabled: boolean
+ }
+ 
+@@ -1284,6 +1285,8 @@ export interface UsageStatsResponse {
+   total_input_tokens: number
+   total_output_tokens: number
+   total_cache_tokens: number
++  total_cache_read_tokens: number
++  total_cache_creation_tokens: number
+   total_tokens: number
+   total_cost: number // 标准计费
+   total_actual_cost: number // 实际扣除
+diff --git a/frontend/src/utils/__tests__/fieldErrors.spec.ts b/frontend/src/utils/__tests__/fieldErrors.spec.ts
+new file mode 100644
+index 00000000..95f7ae72
+--- /dev/null
++++ b/frontend/src/utils/__tests__/fieldErrors.spec.ts
+@@ -0,0 +1,125 @@
++import { describe, it, expect } from 'vitest'
++import { parseFieldErrors, fieldErrorI18nKeys, type FieldError } from '@/utils/fieldErrors'
++
++// 后端实际 envelope（pkgerrors.Metadata 是 map[string]string，字段错误数组
++// 必须 JSON 序列化进字符串值）：
++//   { reason, metadata: { fields: '[...]', count: 'N' } }
++// axios 拦截器（client.ts:97-103）扁平化为 { status, code:HTTP, reason, message, metadata }
++function envelope(reason: string, fields: FieldError[] | string): Record<string, unknown> {
++  return {
++    status: 400,
++    code: 400,
++    reason,
++    message: 'validation failed',
++    metadata: {
++      count: String(Array.isArray(fields) ? fields.length : 0),
++      fields: typeof fields === 'string' ? fields : JSON.stringify(fields),
++    },
++  }
++}
++
++describe('parseFieldErrors', () => {
++  it('合法 envelope 反序列化 metadata.fields 字符串', () => {
++    const err = envelope('SERVICE_QUOTA_VALIDATION_ERROR', [
++      { path: 'limiters[0].limit_value', code: 'MUST_BE_POSITIVE' },
++      { path: 'paths[1].platform', code: 'PLATFORM_REQUIRED' },
++    ])
++    expect(parseFieldErrors(err)).toEqual([
++      { path: 'limiters[0].limit_value', code: 'MUST_BE_POSITIVE' },
++      { path: 'paths[1].platform', code: 'PLATFORM_REQUIRED' },
++    ])
++  })
++
++  it('expectedReason 匹配时返回字段错误', () => {
++    const err = envelope('SERVICE_QUOTA_VALIDATION_ERROR', [{ path: 'a', code: 'X' }])
++    expect(parseFieldErrors(err, 'SERVICE_QUOTA_VALIDATION_ERROR')).toEqual([{ path: 'a', code: 'X' }])
++  })
++
++  it('expectedReason 不匹配返回 null（避免误吞别的模块错误）', () => {
++    const err = envelope('PAYMENT_VALIDATION_ERROR', [{ path: 'a', code: 'X' }])
++    expect(parseFieldErrors(err, 'SERVICE_QUOTA_VALIDATION_ERROR')).toBe(null)
++  })
++
++  it('reason 缺失返回 null', () => {
++    expect(parseFieldErrors({ metadata: { fields: '[]' } })).toBe(null)
++    expect(parseFieldErrors({ reason: '', metadata: { fields: '[]' } })).toBe(null)
++    // reason 类型必须是 string
++    expect(parseFieldErrors({ reason: 123, metadata: { fields: '[]' } })).toBe(null)
++  })
++
++  it('metadata 缺失或非对象返回 null', () => {
++    expect(parseFieldErrors({ reason: 'X' })).toBe(null)
++    expect(parseFieldErrors({ reason: 'X', metadata: 'oops' })).toBe(null)
++    expect(parseFieldErrors({ reason: 'X', metadata: null })).toBe(null)
++  })
++
++  it('metadata.fields 缺失或非字符串返回 null', () => {
++    expect(parseFieldErrors({ reason: 'X', metadata: {} })).toBe(null)
++    expect(parseFieldErrors({ reason: 'X', metadata: { fields: 123 } })).toBe(null)
++    expect(parseFieldErrors({ reason: 'X', metadata: { fields: ['a'] } })).toBe(null)
++  })
++
++  it('metadata.fields JSON 解析失败返回 null（破损报文兜底）', () => {
++    expect(parseFieldErrors(envelope('X', 'not-a-json{'))).toBe(null)
++    expect(parseFieldErrors(envelope('X', ''))).toBe(null)
++  })
++
++  it('metadata.fields 解析后非数组返回 null', () => {
++    expect(parseFieldErrors(envelope('X', '{"path":"a","code":"X"}'))).toBe(null)
++    expect(parseFieldErrors(envelope('X', 'null'))).toBe(null)
++    expect(parseFieldErrors(envelope('X', '"string"'))).toBe(null)
++  })
++
++  it('null / undefined / 字符串 / 数字 等非对象输入返回 null', () => {
++    expect(parseFieldErrors(null)).toBe(null)
++    expect(parseFieldErrors(undefined)).toBe(null)
++    expect(parseFieldErrors('error')).toBe(null)
++    expect(parseFieldErrors(42)).toBe(null)
++    expect(parseFieldErrors(new Error('boom'))).toBe(null) // Error 实例无 reason 字段
++  })
++
++  it('单条 field 缺 path 或 code 时跳过；保留合法的', () => {
++    const err = {
++      reason: 'X',
++      metadata: {
++        fields: JSON.stringify([
++          { path: 'a', code: 'OK' },
++          { path: 'b' }, // 缺 code
++          { code: 'Y' }, // 缺 path
++          null, // 非对象
++          { path: 1, code: 'X' }, // path 类型错
++          { path: 'c', code: 2 }, // code 类型错
++          { path: 'valid', code: 'GOOD' },
++        ]),
++      },
++    }
++    expect(parseFieldErrors(err)).toEqual([
++      { path: 'a', code: 'OK' },
++      { path: 'valid', code: 'GOOD' },
++    ])
++  })
++
++  it('空数组合法返回空数组（不是 null）', () => {
++    expect(parseFieldErrors(envelope('X', []))).toEqual([])
++  })
++})
++
++describe('fieldErrorI18nKeys', () => {
++  it('未传 moduleNamespace 时只返回通用 namespace key', () => {
++    expect(fieldErrorI18nKeys('REQUIRED')).toEqual(['validation.fieldErrors.REQUIRED'])
++  })
++
++  it('传 moduleNamespace 时模块优先 + 通用兜底，按顺序返回', () => {
++    expect(fieldErrorI18nKeys('REQUIRED', 'admin.serviceQuota.errors')).toEqual([
++      'admin.serviceQuota.errors.REQUIRED',
++      'validation.fieldErrors.REQUIRED',
++    ])
++  })
++
++  it('保持 code 原样（不大小写转换）', () => {
++    expect(fieldErrorI18nKeys('mustBePositive', 'ns')).toEqual([
++      'ns.mustBePositive',
++      'validation.fieldErrors.mustBePositive',
++    ])
++  })
++})
+diff --git a/frontend/src/utils/featureFlags.ts b/frontend/src/utils/featureFlags.ts
+index e0668694..00708992 100644
+--- a/frontend/src/utils/featureFlags.ts
++++ b/frontend/src/utils/featureFlags.ts
+@@ -109,6 +109,11 @@ export const FeatureFlags = {
+     mode: 'opt-out',
+     label: 'Payment',
+   }),
++  serviceQuota: defineFlag({
++    key: 'service_quota_enabled',
++    mode: 'opt-in',
++    label: 'Service Quota',
++  }),
+   affiliate: defineFlag({
+     key: 'affiliate_enabled',
+     mode: 'opt-in',
+diff --git a/frontend/src/utils/fieldErrors.ts b/frontend/src/utils/fieldErrors.ts
+new file mode 100644
+index 00000000..71308777
+--- /dev/null
++++ b/frontend/src/utils/fieldErrors.ts
+@@ -0,0 +1,88 @@
++/**
++ * fieldErrors — 通用字段级校验错误解析器。
++ *
++ * 后端约定：当请求触发字段级校验失败时，返回 ApplicationError 形如
++ *   { reason: "<MODULE>_VALIDATION_ERROR", metadata: { fields: '[{path, code}, ...]', count: 'N' } }
++ * 由于 pkgerrors.Metadata 是 map[string]string，字段错误数组必须 JSON 序列化进字符串值。
++ *
++ * axios 拦截器（frontend/src/api/client.ts:97-103）把响应体扁平化为 {status, code, reason, message, metadata}。
++ *
++ * 本模块负责把这层 envelope 还原为 FieldError[]。所有调用方（service quota /
++ * 未来其他模块）共用同一份解析逻辑，避免每个模块抄一遍 JSON.parse + 数组校验。
++ */
++
++/** 单个字段错误：path 是 JSON 路径（如 'limiters[0].limit_value'），code 是机器可读的错误码常量 */
++export interface FieldError {
++  path: string
++  code: string
++}
++
++/**
++ * 解析 axios 拦截器抛出的 API 错误对象，提取 metadata.fields 字段错误数组。
++ *
++ * @param err            - 任意捕获到的错误（unknown，不假设形状）
++ * @param expectedReason - 可选 reason 过滤。传入时仅当 err.reason === expectedReason 才解析；
++ *                         不传时接受任何 reason，让通用 dialog 也能用
++ *
++ * 返回 null 的所有路径都让调用方走 fallback toast：
++ *   - err 不是对象 / null
++ *   - expectedReason 不匹配
++ *   - metadata 缺失或非对象
++ *   - metadata.fields 不是字符串
++ *   - JSON.parse 抛错
++ *   - 解析后非数组
++ *
++ * 单条 field 缺 path 或 code（或类型不对）时被静默跳过——避免一条破损 field
++ * 让整个错误响应都不可解析，影响其它字段红字渲染。
++ */
++export function parseFieldErrors(err: unknown, expectedReason?: string): FieldError[] | null {
++  if (!err || typeof err !== 'object') return null
++  const e = err as Record<string, unknown>
++
++  if (expectedReason !== undefined && e.reason !== expectedReason) return null
++  if (typeof e.reason !== 'string' || e.reason === '') return null
++
++  const metadata = e.metadata
++  if (!metadata || typeof metadata !== 'object') return null
++
++  const raw = (metadata as Record<string, unknown>).fields
++  if (typeof raw !== 'string') return null
++
++  let parsed: unknown
++  try {
++    parsed = JSON.parse(raw)
++  } catch {
++    return null
++  }
++  if (!Array.isArray(parsed)) return null
++
++  const out: FieldError[] = []
++  for (const f of parsed) {
++    if (!f || typeof f !== 'object') continue
++    const obj = f as Record<string, unknown>
++    if (typeof obj.path !== 'string' || typeof obj.code !== 'string') continue
++    out.push({ path: obj.path, code: obj.code })
++  }
++  return out
++}
++
++/**
++ * 把 FieldError 解析为 i18n key 序列：先在模块专属命名空间查（如
++ * 'admin.serviceQuota.errors'），未命中回退到通用 'validation.fieldErrors'。
++ *
++ * 调用方负责实际 t(key) 调用——本函数只返回候选 key 列表，不耦合 vue-i18n。
++ *
++ * @example
++ *   const keys = fieldErrorI18nKeys('REQUIRED', 'admin.serviceQuota.errors')
++ *   // → ['admin.serviceQuota.errors.REQUIRED', 'validation.fieldErrors.REQUIRED']
++ *   for (const key of keys) {
++ *     const v = t(key)
++ *     if (v !== key) return v
++ *   }
++ */
++export function fieldErrorI18nKeys(code: string, moduleNamespace?: string): string[] {
++  const out: string[] = []
++  if (moduleNamespace) out.push(`${moduleNamespace}.${code}`)
++  out.push(`validation.fieldErrors.${code}`)
++  return out
++}
+diff --git a/frontend/src/views/admin/SettingsView.vue b/frontend/src/views/admin/SettingsView.vue
+index 90d10b9a..84cb8594 100644
+--- a/frontend/src/views/admin/SettingsView.vue
++++ b/frontend/src/views/admin/SettingsView.vue
+@@ -304,6 +304,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="streamTimeoutLoading"
+@@ -484,6 +489,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="rectifierLoading"
+@@ -630,6 +640,84 @@
+                       + {{ t("admin.settings.rectifier.addPattern") }}
+                     </button>
+                   </div>
++
++                  <!-- Advisor Tool Rectifier -->
++                  <div class="flex items-center justify-between">
++                    <div>
++                      <label
++                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
++                        >{{
++                          t("admin.settings.rectifier.advisorTool")
++                        }}</label
++                      >
++                      <p class="text-xs text-gray-500 dark:text-gray-400">
++                        {{ t("admin.settings.rectifier.advisorToolHint") }}
++                      </p>
++                    </div>
++                    <Toggle v-model="rectifierForm.advisor_tool_enabled" />
++                  </div>
++
++                  <!-- Advisor Tool Custom Patterns -->
++                  <div
++                    v-if="rectifierForm.advisor_tool_enabled"
++                    class="ml-4 space-y-3 border-l-2 border-gray-200 pl-4 dark:border-dark-600"
++                  >
++                    <div>
++                      <label
++                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
++                        >{{
++                          t("admin.settings.rectifier.advisorToolPatterns")
++                        }}</label
++                      >
++                      <p class="text-xs text-gray-500 dark:text-gray-400">
++                        {{
++                          t("admin.settings.rectifier.advisorToolPatternsHint")
++                        }}
++                      </p>
++                    </div>
++                    <div
++                      v-for="(_, index) in rectifierForm.advisor_tool_patterns"
++                      :key="index"
++                      class="flex items-center gap-2"
++                    >
++                      <input
++                        v-model="rectifierForm.advisor_tool_patterns[index]"
++                        type="text"
++                        class="input input-sm flex-1"
++                        :placeholder="
++                          t('admin.settings.rectifier.advisorToolPatternPlaceholder')
++                        "
++                      />
++                      <button
++                        type="button"
++                        @click="
++                          rectifierForm.advisor_tool_patterns.splice(index, 1)
++                        "
++                        class="btn btn-ghost btn-xs text-red-500 hover:text-red-700"
++                      >
++                        <svg
++                          class="h-4 w-4"
++                          fill="none"
++                          stroke="currentColor"
++                          viewBox="0 0 24 24"
++                        >
++                          <path
++                            stroke-linecap="round"
++                            stroke-linejoin="round"
++                            stroke-width="2"
++                            d="M6 18L18 6M6 6l12 12"
++                          />
++                        </svg>
++                      </button>
++                    </div>
++                    <button
++                      type="button"
++                      @click="rectifierForm.advisor_tool_patterns.push('')"
++                      class="btn btn-ghost btn-xs text-primary-600 dark:text-primary-400"
++                    >
++                      + {{ t("admin.settings.rectifier.addPattern") }}
++                    </button>
++                  </div>
+                 </div>
+ 
+                 <!-- Save Button -->
+@@ -683,6 +771,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="betaPolicyLoading"
+@@ -3769,89 +3862,121 @@
+ 
+         <!-- Tab: Features (功能开关) -->
+         <div v-show="activeTab === 'features'" class="space-y-6">
++          <div class="card">
++            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
++              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
++                {{ t("admin.settings.features.channelMonitor.title") }}
++              </h2>
++              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
++                {{ t("admin.settings.features.channelMonitor.description") }}
++              </p>
++              <p class="mt-1.5 text-xs">
++                <router-link
++                  to="/admin/channels/monitor"
++                  class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
++                >
++                  {{ t("admin.settings.features.channelMonitor.configureLink") }}
++                  <span aria-hidden="true">→</span>
++                </router-link>
++              </p>
++            </div>
++            <div class="space-y-5 p-6">
++              <div class="flex items-center justify-between">
++                <div>
++                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
++                    {{ t("admin.settings.features.channelMonitor.enabled") }}
++                  </label>
++                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
++                    {{ t("admin.settings.features.channelMonitor.enabledHint") }}
++                  </p>
++                </div>
++                <Toggle v-model="form.channel_monitor_enabled" />
++              </div>
+ 
+-        <div class="card">
+-          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+-              {{ t('admin.settings.features.channelMonitor.title') }}
+-            </h2>
+-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+-              {{ t('admin.settings.features.channelMonitor.description') }}
+-            </p>
+-            <p class="mt-1.5 text-xs">
+-              <router-link
+-                to="/admin/channels/monitor"
+-                class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
+-              >
+-                {{ t('admin.settings.features.channelMonitor.configureLink') }}
+-                <span aria-hidden="true">→</span>
+-              </router-link>
+-            </p>
+-          </div>
+-          <div class="space-y-5 p-6">
+-            <div class="flex items-center justify-between">
+-              <div>
+-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+-                  {{ t('admin.settings.features.channelMonitor.enabled') }}
++              <div v-if="form.channel_monitor_enabled">
++                <label class="input-label">
++                  {{ t("admin.settings.features.channelMonitor.defaultInterval") }}
++                  <span class="text-red-500">*</span>
+                 </label>
+-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+-                  {{ t('admin.settings.features.channelMonitor.enabledHint') }}
++                <input
++                  v-model.number="form.channel_monitor_default_interval_seconds"
++                  type="number"
++                  min="15"
++                  max="3600"
++                  class="input"
++                />
++                <p class="mt-1 text-xs text-gray-400">
++                  {{ t("admin.settings.features.channelMonitor.defaultIntervalHint") }}
+                 </p>
+               </div>
+-              <Toggle v-model="form.channel_monitor_enabled" />
+             </div>
++          </div>
+ 
+-            <div v-if="form.channel_monitor_enabled">
+-              <label class="input-label">
+-                {{ t('admin.settings.features.channelMonitor.defaultInterval') }}
+-                <span class="text-red-500">*</span>
+-              </label>
+-              <input
+-                v-model.number="form.channel_monitor_default_interval_seconds"
+-                type="number"
+-                min="15"
+-                max="3600"
+-                class="input"
+-              />
+-              <p class="mt-1 text-xs text-gray-400">
+-                {{ t('admin.settings.features.channelMonitor.defaultIntervalHint') }}
++          <div class="card">
++            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
++              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
++                {{ t("admin.settings.features.availableChannels.title") }}
++              </h2>
++              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
++                {{ t("admin.settings.features.availableChannels.description") }}
++              </p>
++              <p class="mt-1.5 text-xs">
++                <router-link
++                  to="/admin/channels/pricing"
++                  class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
++                >
++                  {{ t("admin.settings.features.availableChannels.configureLink") }}
++                  <span aria-hidden="true">→</span>
++                </router-link>
+               </p>
+             </div>
++            <div class="space-y-5 p-6">
++              <div class="flex items-center justify-between">
++                <div>
++                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
++                    {{ t("admin.settings.features.availableChannels.enabled") }}
++                  </label>
++                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
++                    {{ t("admin.settings.features.availableChannels.enabledHint") }}
++                  </p>
++                </div>
++                <Toggle v-model="form.available_channels_enabled" />
++              </div>
++            </div>
+           </div>
+-        </div>
+ 
+-        <div class="card">
+-          <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
+-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+-              {{ t('admin.settings.features.availableChannels.title') }}
+-            </h2>
+-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+-              {{ t('admin.settings.features.availableChannels.description') }}
+-            </p>
+-            <p class="mt-1.5 text-xs">
+-              <router-link
+-                to="/admin/channels/pricing"
+-                class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
+-              >
+-                {{ t('admin.settings.features.availableChannels.configureLink') }}
+-                <span aria-hidden="true">→</span>
+-              </router-link>
+-            </p>
+-          </div>
+-          <div class="space-y-5 p-6">
+-            <div class="flex items-center justify-between">
+-              <div>
+-                <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+-                  {{ t('admin.settings.features.availableChannels.enabled') }}
+-                </label>
+-                <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+-                  {{ t('admin.settings.features.availableChannels.enabledHint') }}
+-                </p>
++          <div class="card">
++            <div class="border-b border-gray-100 px-6 py-4 dark:border-dark-700">
++              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
++                {{ t("admin.settings.features.serviceQuota.title") }}
++              </h2>
++              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
++                {{ t("admin.settings.features.serviceQuota.description") }}
++              </p>
++              <p class="mt-1.5 text-xs">
++                <router-link
++                  to="/admin/service-quotas"
++                  class="inline-flex items-center gap-1 text-primary-600 hover:underline dark:text-primary-400"
++                >
++                  {{ t("admin.settings.features.serviceQuota.configureLink") }}
++                  <span aria-hidden="true">→</span>
++                </router-link>
++              </p>
++            </div>
++            <div class="p-6">
++              <div class="flex items-center justify-between">
++                <div>
++                  <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
++                    {{ t("admin.settings.features.serviceQuota.enabled") }}
++                  </label>
++                  <p class="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
++                    {{ t("admin.settings.features.serviceQuota.enabledHint") }}
++                  </p>
++                </div>
++                <Toggle v-model="form.service_quota_enabled" />
+               </div>
+-              <Toggle v-model="form.available_channels_enabled" />
+             </div>
+           </div>
+-        </div>
+ 
+         <!-- Affiliate (邀请返利) feature card -->
+         <div class="card">
+@@ -5320,6 +5445,8 @@ const rectifierForm = reactive({
+   thinking_budget_enabled: true,
+   apikey_signature_enabled: false,
+   apikey_signature_patterns: [] as string[],
++  advisor_tool_enabled: true,
++  advisor_tool_patterns: [] as string[],
+ });
+ 
+ // Beta Policy 状态
+@@ -5370,6 +5497,7 @@ type SettingsForm = Omit<
+   oidc_connect_client_secret: string;
+   force_email_on_third_party_signup: boolean;
+   openai_advanced_scheduler_enabled: boolean;
++  service_quota_enabled: boolean;
+ };
+ 
+ const form = reactive<SettingsForm>({
+@@ -5533,6 +5661,8 @@ const form = reactive<SettingsForm>({
+   channel_monitor_default_interval_seconds: 60,
+   // Available Channels feature switch
+   available_channels_enabled: false,
++  // Service Quota feature switch
++  service_quota_enabled: false,
+   // Affiliate (邀请返利) feature switch
+   affiliate_enabled: false,
+ });
+@@ -6121,7 +6251,7 @@ async function loadSettings() {
+   } catch (error: unknown) {
+     loadFailed.value = true;
+     appStore.showError(
+-      extractApiErrorMessage(error, t("admin.settings.failedToLoad")),
++      extractI18nErrorMessage(error, t, "common.errors", t("admin.settings.failedToLoad")),
+     );
+   } finally {
+     loading.value = false;
+@@ -6456,6 +6586,8 @@ async function saveSettings() {
+         Number(form.channel_monitor_default_interval_seconds) || 60,
+       // Available Channels feature switch
+       available_channels_enabled: form.available_channels_enabled,
++      // Service Quota feature switch
++      service_quota_enabled: form.service_quota_enabled,
+       // Affiliate (邀请返利) feature switch
+       affiliate_enabled: form.affiliate_enabled,
+     };
+@@ -6510,6 +6642,12 @@ async function saveSettings() {
+     // Save web search emulation config separately (errors handled internally)
+     const wsOk = await saveWebSearchConfig();
+     // Refresh cached settings so sidebar/header update immediately
++    appStore.patchPublicSettings({
++      channel_monitor_enabled: form.channel_monitor_enabled,
++      available_channels_enabled: form.available_channels_enabled,
++      service_quota_enabled: form.service_quota_enabled,
++      payment_enabled: form.payment_enabled,
++    });
+     await appStore.fetchPublicSettings(true);
+     await adminSettingsStore.fetch(true);
+     if (wsOk) {
+@@ -6517,7 +6655,7 @@ async function saveSettings() {
+     }
+   } catch (error: unknown) {
+     appStore.showError(
+-      extractApiErrorMessage(error, t("admin.settings.failedToSave")),
++      extractI18nErrorMessage(error, t, "common.errors", t("admin.settings.failedToSave")),
+     );
+   } finally {
+     saving.value = false;
+@@ -6725,6 +6863,9 @@ async function loadRectifierSettings() {
+     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {
+       rectifierForm.apikey_signature_patterns = [];
+     }
++    if (!Array.isArray(rectifierForm.advisor_tool_patterns)) {
++      rectifierForm.advisor_tool_patterns = [];
++    }
+   } catch (_error: unknown) {
+     // Silent fail - settings will use defaults
+   } finally {
+@@ -6735,19 +6876,38 @@ async function loadRectifierSettings() {
+ async function saveRectifierSettings() {
+   rectifierSaving.value = true;
+   try {
+-    const updated = await adminAPI.settings.updateRectifierSettings({
+-      enabled: rectifierForm.enabled,
+-      thinking_signature_enabled: rectifierForm.thinking_signature_enabled,
+-      thinking_budget_enabled: rectifierForm.thinking_budget_enabled,
+-      apikey_signature_enabled: rectifierForm.apikey_signature_enabled,
++    // 总开关 enabled=false 时，UI 隐藏所有子开关，但表单内仍保留旧值。
++    // 保存时强制把所有子开关一并置 false，避免下次开总开关时旧值自动恢复（违反用户预期）。
++    const enabled = rectifierForm.enabled;
++    const payload = {
++      enabled,
++      thinking_signature_enabled: enabled
++        ? rectifierForm.thinking_signature_enabled
++        : false,
++      thinking_budget_enabled: enabled
++        ? rectifierForm.thinking_budget_enabled
++        : false,
++      apikey_signature_enabled: enabled
++        ? rectifierForm.apikey_signature_enabled
++        : false,
+       apikey_signature_patterns: rectifierForm.apikey_signature_patterns.filter(
+         (p) => p.trim() !== "",
+       ),
+-    });
++      advisor_tool_enabled: enabled
++        ? rectifierForm.advisor_tool_enabled
++        : false,
++      advisor_tool_patterns: rectifierForm.advisor_tool_patterns.filter(
++        (p) => p.trim() !== "",
++      ),
++    };
++    const updated = await adminAPI.settings.updateRectifierSettings(payload);
+     Object.assign(rectifierForm, updated);
+     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {
+       rectifierForm.apikey_signature_patterns = [];
+     }
++    if (!Array.isArray(rectifierForm.advisor_tool_patterns)) {
++      rectifierForm.advisor_tool_patterns = [];
++    }
+     appStore.showSuccess(t("admin.settings.rectifier.saved"));
+   } catch (error: unknown) {
+     appStore.showError(

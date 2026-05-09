@@ -1,0 +1,979 @@
+diff --git a/backend/internal/service/gateway_request.go b/backend/internal/service/gateway_request.go
+index 498336a4..0a68c5e0 100644
+--- a/backend/internal/service/gateway_request.go
++++ b/backend/internal/service/gateway_request.go
+@@ -7,6 +7,7 @@ import (
+ 	"math"
+ 	"regexp"
+ 	"sort"
++	"strconv"
+ 	"strings"
+ 	"unsafe"
+ 
+@@ -1055,3 +1056,67 @@ func RectifyThinkingBudget(body []byte) ([]byte, bool) {
+ 
+ 	return modified, changed
+ }
++
++// =========================
++// Advisor Tool Rectifier
++// =========================
++
++const (
++	// AdvisorBetaToken 是 Anthropic Advisor Tool 功能的 anthropic-beta header 值。
++	// 客户端（如新版 Claude Code CLI）会默认携带此 token；当上游网关（Bedrock /
++	// Vertex / 第三方中转）尚未支持该 beta 时会返回 400。
++	AdvisorBetaToken = "advisor-tool-2026-03-01"
++	// AdvisorToolType 是 advisor 工具在 tools 数组中的 type 字段值，与 beta header 配套使用。
++	AdvisorToolType = "advisor_20260301"
++	// DefaultAdvisorToolPattern 是 advisor-tool 整流默认匹配关键词，
++	// 与上游典型报错完全一致，用户首次打开整流器面板时会看到这一行被预置。
++	DefaultAdvisorToolPattern = "Unexpected value(s) `advisor-tool-2026-03-01` for the `anthropic-beta` header."
++)
++
++// IsAdvisorToolUnsupportedError 检测是否是上游不支持 advisor-tool beta header 的错误。
++// 典型上游报错：
++//
++//	"Unexpected value(s) `advisor-tool-2026-03-01` for the `anthropic-beta` header.
++//	 Please consult our documentation at docs.claude.com or try again without the header."
++//
++// patterns 为管理员配置的额外匹配关键词（不区分大小写），与内置匹配 OR 关系。
++func IsAdvisorToolUnsupportedError(respBody []byte, patterns []string) bool {
++	msg := strings.ToLower(strings.TrimSpace(extractUpstreamErrorMessage(respBody)))
++	if msg == "" {
++		return false
++	}
++	if strings.Contains(msg, AdvisorBetaToken) && strings.Contains(msg, "anthropic-beta") {
++		return true
++	}
++	return matchSignaturePatterns(respBody, patterns)
++}
++
++// RectifyAdvisorTool 从请求体的 tools 数组中移除 type=advisor_20260301 的条目。
++// 返回 (修改后的 body, 是否发生改动)。
++func RectifyAdvisorTool(body []byte) ([]byte, bool) {
++	tools := gjson.GetBytes(body, "tools")
++	if !tools.IsArray() {
++		return body, false
++	}
++
++	var indices []int
++	tools.ForEach(func(key, value gjson.Result) bool {
++		if value.Get("type").String() == AdvisorToolType {
++			indices = append(indices, int(key.Int()))
++		}
++		return true
++	})
++	if len(indices) == 0 {
++		return body, false
++	}
++
++	modified := body
++	// 倒序删除，避免下标偏移
++	for i := len(indices) - 1; i >= 0; i-- {
++		path := "tools." + strconv.Itoa(indices[i])
++		if result, err := sjson.DeleteBytes(modified, path); err == nil {
++			modified = result
++		}
++	}
++	return modified, true
++}
+diff --git a/backend/internal/service/gateway_service.go b/backend/internal/service/gateway_service.go
+index 6be19ba6..3870d375 100644
+--- a/backend/internal/service/gateway_service.go
++++ b/backend/internal/service/gateway_service.go
+@@ -4432,25 +4432,30 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
+ 				// 不是签名错误（或整流器已关闭），继续检查 budget 约束
+ 				errMsg := extractUpstreamErrorMessage(respBody)
+ 				if isThinkingBudgetConstraintError(errMsg) && s.settingService.IsBudgetRectifierEnabled(ctx) {
+-					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+-						Platform:           account.Platform,
+-						AccountID:          account.ID,
+-						AccountName:        account.Name,
+-						UpstreamStatusCode: resp.StatusCode,
+-						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+-						UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
+-						Kind:               "budget_constraint_error",
+-						Message:            errMsg,
+-						Detail: func() string {
+-							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+-								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+-							}
+-							return ""
+-						}(),
+-					})
+-
+ 					rectifiedBody, applied := RectifyThinkingBudget(body)
+-					if applied && time.Since(retryStart) < maxRetryElapsed {
++					if !applied {
++						logger.LegacyPrintf("service.gateway", "Account %d: budget rectifier matched error but body did not change, skipping retry", account.ID)
++					}
++					// 单次重试，不与 signature 整流共享 retry budget——进到这里上游已返回 budget 错误，
++					// 不重试 = 必然失败；客户端断开由 DoWithTLS 内部 ctx 兜底。
++					if applied {
++						appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
++							Platform:           account.Platform,
++							AccountID:          account.ID,
++							AccountName:        account.Name,
++							UpstreamStatusCode: resp.StatusCode,
++							UpstreamRequestID:  resp.Header.Get("x-request-id"),
++							UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
++							Kind:               "budget_constraint_error",
++							Message:            errMsg,
++							Detail: func() string {
++								if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
++									return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
++								}
++								return ""
++							}(),
++						})
++
+ 						logger.LegacyPrintf("service.gateway", "Account %d: detected budget_tokens constraint error, retrying with rectified budget (budget_tokens=%d, max_tokens=%d)", account.ID, BudgetRectifyBudgetTokens, BudgetRectifyMaxTokens)
+ 						budgetRetryCtx, releaseBudgetRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
+ 						budgetRetryReq, buildErr := s.buildUpstreamRequest(budgetRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
+@@ -4469,6 +4474,65 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
+ 							logger.LegacyPrintf("service.gateway", "Account %d: budget rectifier retry build failed: %v", account.ID, buildErr)
+ 						}
+ 					}
++				} else if s.shouldRectifyAdvisorToolError(ctx, respBody) {
++					// Advisor Tool 整流：上游不识别 advisor-tool-2026-03-01 beta header 时，
++					// 剥离 anthropic-beta 中的该 token 并删除 tools[] 里 type=advisor_20260301 的工具后重试。
++					rectifiedBody, bodyApplied := RectifyAdvisorTool(body)
++					// 触发条件：body 里有 advisor 工具（已剥）或客户端 header 里带 advisor-tool token（待剥）。
++					// 大小写不敏感比较以防御客户端发送 `Advisor-Tool-2026-03-01` 等变体。
++					headerHasAdvisor := containsBetaTokenIgnoreCase(getHeaderRaw(c.Request.Header, "anthropic-beta"), AdvisorBetaToken)
++					if !bodyApplied && !headerHasAdvisor {
++						logger.LegacyPrintf("service.gateway", "Account %d: advisor-tool rectifier matched error but body+header have no advisor token, skipping retry", account.ID)
++					}
++					// 单次重试，不与 signature 整流共享 retry budget——进到这里上游已确认是 advisor 错误，
++					// 不重试 = 必然失败；客户端断开由 DoWithTLS 内部 ctx 兜底。
++					if bodyApplied || headerHasAdvisor {
++						appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
++							Platform:           account.Platform,
++							AccountID:          account.ID,
++							AccountName:        account.Name,
++							UpstreamStatusCode: resp.StatusCode,
++							UpstreamRequestID:  resp.Header.Get("x-request-id"),
++							UpstreamURL:        safeUpstreamURL(upstreamReq.URL.String()),
++							Kind:               "advisor_tool_unsupported",
++							Message:            extractUpstreamErrorMessage(respBody),
++							Detail: func() string {
++								if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
++									return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
++								}
++								return ""
++							}(),
++						})
++
++						logger.LegacyPrintf("service.gateway", "Account %d: detected advisor-tool unsupported, retrying without %s beta+tool", account.ID, AdvisorBetaToken)
++						advisorRetryCtx, releaseAdvisorRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
++						advisorRetryReq, buildErr := s.buildUpstreamRequest(advisorRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
++						releaseAdvisorRetryCtx()
++						if buildErr == nil {
++							// 剥离 advisor token；若剥完 anthropic-beta 变空则删除整个 header，避免发送空值。
++							// 注意必须用 delHeaderRaw 而非 Header.Del——后者仅删 canonical 形式，
++							// 而 anthropic-beta 在本项目以小写 wire casing 存储，会留下幽灵 entry。
++							if v := getHeaderRaw(advisorRetryReq.Header, "anthropic-beta"); v != "" {
++								stripped := stripBetaTokenIgnoreCase(v, AdvisorBetaToken)
++								if stripped == "" {
++									delHeaderRaw(advisorRetryReq.Header, "anthropic-beta")
++								} else {
++									setHeaderRaw(advisorRetryReq.Header, "anthropic-beta", stripped)
++								}
++							}
++							advisorRetryResp, retryErr := s.httpUpstream.DoWithTLS(advisorRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
++							if retryErr == nil {
++								resp = advisorRetryResp
++								break
++							}
++							if advisorRetryResp != nil && advisorRetryResp.Body != nil {
++								_ = advisorRetryResp.Body.Close()
++							}
++							logger.LegacyPrintf("service.gateway", "Account %d: advisor-tool rectifier retry failed: %v", account.ID, retryErr)
++						} else {
++							logger.LegacyPrintf("service.gateway", "Account %d: advisor-tool rectifier retry build failed: %v", account.ID, buildErr)
++						}
++					}
+ 				}
+ 
+ 				resp.Body = io.NopCloser(bytes.NewReader(respBody))
+@@ -6186,6 +6250,43 @@ func containsBetaToken(header, token string) bool {
+ 	return false
+ }
+ 
++// containsBetaTokenIgnoreCase 大小写不敏感版本，用于 advisor-tool 整流路径——
++// 客户端理论上可能发送 `Advisor-Tool-2026-03-01` 等大小写变体，与 stripBetaTokenIgnoreCase 配套。
++func containsBetaTokenIgnoreCase(header, token string) bool {
++	if header == "" || token == "" {
++		return false
++	}
++	lowerToken := strings.ToLower(token)
++	for _, p := range strings.Split(header, ",") {
++		if strings.EqualFold(strings.TrimSpace(p), lowerToken) {
++			return true
++		}
++	}
++	return false
++}
++
++// stripBetaTokenIgnoreCase 从逗号分隔的 anthropic-beta header 中大小写不敏感地剥除单个 token。
++// 与 stripBetaTokens 不同（后者大小写敏感），专用于 advisor 整流防御客户端大小写变体。
++// 剥完所有 token 时返回空串，调用方应 Header.Del 而不是 Set 空值。
++func stripBetaTokenIgnoreCase(header, token string) string {
++	if header == "" || token == "" {
++		return header
++	}
++	parts := strings.Split(header, ",")
++	out := make([]string, 0, len(parts))
++	for _, p := range parts {
++		p = strings.TrimSpace(p)
++		if p == "" {
++			continue
++		}
++		if strings.EqualFold(p, token) {
++			continue
++		}
++		out = append(out, p)
++	}
++	return strings.Join(out, ",")
++}
++
+ func filterBetaTokens(tokens []string, filterSet map[string]struct{}) []string {
+ 	if len(tokens) == 0 || len(filterSet) == 0 {
+ 		return tokens
+@@ -6349,6 +6450,19 @@ func (s *GatewayService) isSignatureErrorPattern(ctx context.Context, account *A
+ 	return false
+ }
+ 
++// shouldRectifyAdvisorToolError 判断是否应触发 advisor-tool 整流（剥 header + tool 后重试）。
++// 仅当总开关 + advisor-tool 子开关均开启，且响应体匹配内置或自定义关键词时返回 true。
++func (s *GatewayService) shouldRectifyAdvisorToolError(ctx context.Context, respBody []byte) bool {
++	if s.settingService == nil {
++		return false
++	}
++	settings, err := s.settingService.GetRectifierSettings(ctx)
++	if err != nil || !settings.Enabled || !settings.AdvisorToolEnabled {
++		return false
++	}
++	return IsAdvisorToolUnsupportedError(respBody, settings.AdvisorToolPatterns)
++}
++
+ // matchSignaturePatterns 检查响应体是否匹配自定义关键词列表（不区分大小写）。
+ func matchSignaturePatterns(respBody []byte, patterns []string) bool {
+ 	if len(patterns) == 0 {
+diff --git a/backend/internal/service/header_util.go b/backend/internal/service/header_util.go
+index 1091070d..cdb94b73 100644
+--- a/backend/internal/service/header_util.go
++++ b/backend/internal/service/header_util.go
+@@ -109,6 +109,17 @@ func addHeaderRaw(h http.Header, key, value string) {
+ 	h[key] = append(h[key], value)
+ }
+ 
++// delHeaderRaw 与 setHeaderRaw 对称地删除一个 header，覆盖 canonical / wire casing / 原始 key 三种存储形式。
++// http.Header.Del 仅删 canonical 形式（如 "Anthropic-Beta"），无法删项目里以小写 wire casing 存储的 key
++// （如 "anthropic-beta"），单独使用会留下"幽灵 entry"。
++func delHeaderRaw(h http.Header, key string) {
++	h.Del(key) // canonical form
++	if wk := resolveWireCasing(key); wk != key {
++		delete(h, wk)
++	}
++	delete(h, key)
++}
++
+ // getHeaderRaw reads a header value, trying multiple key forms to handle the mismatch
+ // between Go canonical keys, wire casing keys, and raw keys:
+ //  1. exact key as provided
+diff --git a/backend/internal/service/setting_service.go b/backend/internal/service/setting_service.go
+index 33316031..0f748d96 100644
+--- a/backend/internal/service/setting_service.go
++++ b/backend/internal/service/setting_service.go
+@@ -3158,6 +3233,12 @@ func (s *SettingService) GetRectifierSettings(ctx context.Context) (*RectifierSe
+ 		return DefaultRectifierSettings(), nil
+ 	}
+ 
++	// AdvisorToolPatterns 字段不存在（升级前保存的旧 JSON）时注入内置默认关键词，
++	// 让用户首次打开整流器面板就能看到匹配规则；用户已显式保存的空切片不会被覆盖。
++	if settings.AdvisorToolPatterns == nil {
++		settings.AdvisorToolPatterns = []string{DefaultAdvisorToolPattern}
++	}
++
+ 	return &settings, nil
+ }
+ 
+diff --git a/backend/internal/service/settings_view.go b/backend/internal/service/settings_view.go
+index 5ec7d313..a1de4210 100644
+--- a/backend/internal/service/settings_view.go
++++ b/backend/internal/service/settings_view.go
+@@ -333,6 +340,8 @@ type RectifierSettings struct {
+ 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`    // Thinking Budget 整流
+ 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`   // API Key 签名整流开关
+ 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`  // API Key 自定义匹配关键词
++	AdvisorToolEnabled       bool     `json:"advisor_tool_enabled"`       // Advisor Tool 整流开关
++	AdvisorToolPatterns      []string `json:"advisor_tool_patterns"`      // Advisor Tool 自定义匹配关键词
+ }
+ 
+ // DefaultRectifierSettings 返回默认的整流器配置（全部启用）
+@@ -341,6 +350,8 @@ func DefaultRectifierSettings() *RectifierSettings {
+ 		Enabled:                  true,
+ 		ThinkingSignatureEnabled: true,
+ 		ThinkingBudgetEnabled:    true,
++		AdvisorToolEnabled:       true,
++		AdvisorToolPatterns:      []string{DefaultAdvisorToolPattern},
+ 	}
+ }
+ 
+diff --git a/backend/internal/service/header_util_test.go b/backend/internal/service/header_util_test.go
+new file mode 100644
+index 00000000..356a4b49
+--- /dev/null
++++ b/backend/internal/service/header_util_test.go
+@@ -0,0 +1,106 @@
++//go:build unit
++
++package service
++
++import (
++	"net/http"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestDelHeaderRaw(t *testing.T) {
++	t.Run("removes wire-casing lowercase key (anthropic-beta)", func(t *testing.T) {
++		// 模拟 setHeaderRaw 的存储形式：anthropic-beta 以小写 wire casing 存于 map。
++		h := http.Header{}
++		setHeaderRaw(h, "anthropic-beta", "claude-code-20250219,oauth-2025-04-20")
++		require.NotEmpty(t, h["anthropic-beta"])
++
++		// 普通 Header.Del 走 canonical（"Anthropic-Beta"），无法删小写 key——这正是 bug 根因。
++		h2 := http.Header{}
++		setHeaderRaw(h2, "anthropic-beta", "claude-code-20250219")
++		h2.Del("anthropic-beta")
++		require.NotEmpty(t, h2["anthropic-beta"], "vanilla Header.Del must NOT remove wire-casing key (regression guard)")
++
++		// delHeaderRaw 应同时删 canonical + wire casing + raw 三种形式。
++		delHeaderRaw(h, "anthropic-beta")
++		require.Empty(t, h["anthropic-beta"])
++		require.Empty(t, h["Anthropic-Beta"])
++		require.Empty(t, h.Get("anthropic-beta"))
++	})
++
++	t.Run("removes canonical-cased key", func(t *testing.T) {
++		h := http.Header{}
++		h.Set("Authorization", "Bearer x")
++		require.NotEmpty(t, h["Authorization"])
++
++		delHeaderRaw(h, "Authorization")
++		require.Empty(t, h["Authorization"])
++		require.Empty(t, h.Get("Authorization"))
++	})
++
++	t.Run("noop on missing key", func(t *testing.T) {
++		h := http.Header{}
++		require.NotPanics(t, func() {
++			delHeaderRaw(h, "anthropic-beta")
++		})
++	})
++
++	t.Run("removes both canonical and wire casing entries simultaneously", func(t *testing.T) {
++		// 极端情况：map 里同时有 canonical 和 wire casing 两份（不应该发生但要防御）。
++		h := http.Header{}
++		h["Anthropic-Beta"] = []string{"a"}
++		h["anthropic-beta"] = []string{"b"}
++
++		delHeaderRaw(h, "anthropic-beta")
++		require.Empty(t, h["Anthropic-Beta"])
++		require.Empty(t, h["anthropic-beta"])
++	})
++}
++
++func TestContainsBetaTokenIgnoreCase(t *testing.T) {
++	cases := []struct {
++		name   string
++		header string
++		token  string
++		want   bool
++	}{
++		{"exact lowercase match", "advisor-tool-2026-03-01,oauth-2025-04-20", "advisor-tool-2026-03-01", true},
++		{"upper-cased token in header", "Advisor-Tool-2026-03-01,oauth-2025-04-20", "advisor-tool-2026-03-01", true},
++		{"mixed case both sides", "ADVISOR-tool-2026-03-01", "Advisor-Tool-2026-03-01", true},
++		{"token absent", "claude-code-20250219,oauth-2025-04-20", "advisor-tool-2026-03-01", false},
++		{"empty header", "", "advisor-tool-2026-03-01", false},
++		{"empty token", "advisor-tool-2026-03-01", "", false},
++		{"whitespace around tokens", " advisor-tool-2026-03-01 , oauth-2025-04-20 ", "advisor-tool-2026-03-01", true},
++		{"prefix collision should not match", "advisor-tool-2026-03-01-extra", "advisor-tool-2026-03-01", false},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := containsBetaTokenIgnoreCase(tc.header, tc.token)
++			require.Equal(t, tc.want, got)
++		})
++	}
++}
++
++func TestStripBetaTokenIgnoreCase(t *testing.T) {
++	cases := []struct {
++		name   string
++		header string
++		token  string
++		want   string
++	}{
++		{"strip only token leaves empty string", "advisor-tool-2026-03-01", "advisor-tool-2026-03-01", ""},
++		{"strip case-insensitive variant", "Advisor-Tool-2026-03-01", "advisor-tool-2026-03-01", ""},
++		{"keeps other tokens", "claude-code-20250219,advisor-tool-2026-03-01,oauth-2025-04-20", "advisor-tool-2026-03-01", "claude-code-20250219,oauth-2025-04-20"},
++		{"strips whitespace and reformats", " claude-code-20250219 , Advisor-Tool-2026-03-01 ", "advisor-tool-2026-03-01", "claude-code-20250219"},
++		{"token absent unchanged", "claude-code-20250219", "advisor-tool-2026-03-01", "claude-code-20250219"},
++		{"empty header unchanged", "", "advisor-tool-2026-03-01", ""},
++		{"empty token unchanged", "claude-code-20250219", "", "claude-code-20250219"},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := stripBetaTokenIgnoreCase(tc.header, tc.token)
++			require.Equal(t, tc.want, got)
++		})
++	}
++}
+diff --git a/backend/internal/service/gateway_request_advisor_test.go b/backend/internal/service/gateway_request_advisor_test.go
+new file mode 100644
+index 00000000..39c4f7de
+--- /dev/null
++++ b/backend/internal/service/gateway_request_advisor_test.go
+@@ -0,0 +1,161 @@
++//go:build unit
++
++package service
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++	"github.com/tidwall/gjson"
++)
++
++func TestIsAdvisorToolUnsupportedError(t *testing.T) {
++	cases := []struct {
++		name     string
++		body     string
++		patterns []string
++		want     bool
++	}{
++		{
++			name: "exact upstream message hit",
++			body: `{"error":{"message":"Unexpected value(s) ` + "`advisor-tool-2026-03-01`" + ` for the ` + "`anthropic-beta`" + ` header.","type":"upstream_error"}}`,
++			want: true,
++		},
++		{
++			name: "case-insensitive token",
++			body: `{"error":{"message":"unexpected value(s) Advisor-Tool-2026-03-01 for the Anthropic-Beta header"}}`,
++			want: true,
++		},
++		{
++			name: "missing anthropic-beta keyword",
++			body: `{"error":{"message":"advisor-tool-2026-03-01 is not enabled"}}`,
++			want: false,
++		},
++		{
++			name: "missing advisor token keyword",
++			body: `{"error":{"message":"Unexpected value(s) for the anthropic-beta header"}}`,
++			want: false,
++		},
++		{
++			name: "empty body",
++			body: ``,
++			want: false,
++		},
++		{
++			name: "non-json body",
++			body: `not json`,
++			want: false,
++		},
++		{
++			name: "missing error.message field",
++			body: `{"error":{"type":"upstream_error"}}`,
++			want: false,
++		},
++		{
++			name:     "custom pattern hit",
++			body:     `{"error":{"message":"unsupported beta feature: my-custom-flag"}}`,
++			patterns: []string{"my-custom-flag"},
++			want:     true,
++		},
++		{
++			name:     "custom pattern with empty/whitespace entries skipped",
++			body:     `{"error":{"message":"random unrelated text"}}`,
++			patterns: []string{"", "  ", "\t"},
++			want:     false,
++		},
++		{
++			name:     "custom pattern case-insensitive",
++			body:     `{"error":{"message":"BLAH UNRECOGNIZED"}}`,
++			patterns: []string{"unrecognized"},
++			want:     true,
++		},
++	}
++	for _, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			got := IsAdvisorToolUnsupportedError([]byte(tc.body), tc.patterns)
++			require.Equal(t, tc.want, got)
++		})
++	}
++}
++
++func TestRectifyAdvisorTool(t *testing.T) {
++	t.Run("removes single advisor tool", func(t *testing.T) {
++		body := []byte(`{"tools":[{"type":"advisor_20260301","name":"advisor","model":"claude-opus-4-6"}]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.True(t, applied)
++		require.False(t, gjson.GetBytes(out, "tools.0").Exists())
++	})
++
++	t.Run("preserves other tools", func(t *testing.T) {
++		body := []byte(`{"tools":[
++			{"type":"custom","name":"calc"},
++			{"type":"advisor_20260301","name":"advisor","model":"claude-opus-4-6"},
++			{"type":"web_search_20250305","name":"search"}
++		]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.True(t, applied)
++		tools := gjson.GetBytes(out, "tools").Array()
++		require.Len(t, tools, 2)
++		require.Equal(t, "custom", tools[0].Get("type").String())
++		require.Equal(t, "web_search_20250305", tools[1].Get("type").String())
++	})
++
++	t.Run("removes multiple advisor tools", func(t *testing.T) {
++		body := []byte(`{"tools":[
++			{"type":"advisor_20260301","name":"a1"},
++			{"type":"custom","name":"keep"},
++			{"type":"advisor_20260301","name":"a2"}
++		]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.True(t, applied)
++		tools := gjson.GetBytes(out, "tools").Array()
++		require.Len(t, tools, 1)
++		require.Equal(t, "custom", tools[0].Get("type").String())
++	})
++
++	t.Run("no-op when tools missing", func(t *testing.T) {
++		body := []byte(`{"model":"claude-sonnet-4-6","messages":[]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.False(t, applied)
++		require.Equal(t, string(body), string(out))
++	})
++
++	t.Run("no-op when tools is empty array", func(t *testing.T) {
++		body := []byte(`{"tools":[]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.False(t, applied)
++		require.Equal(t, string(body), string(out))
++	})
++
++	t.Run("no-op when tools is non-array", func(t *testing.T) {
++		body := []byte(`{"tools":"oops"}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.False(t, applied)
++		require.Equal(t, string(body), string(out))
++	})
++
++	t.Run("no-op when tools has no advisor", func(t *testing.T) {
++		body := []byte(`{"tools":[{"type":"custom","name":"calc"}]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.False(t, applied)
++		require.Equal(t, string(body), string(out))
++	})
++
++	t.Run("returns valid json", func(t *testing.T) {
++		body := []byte(`{"tools":[{"type":"advisor_20260301"},{"type":"custom"}],"messages":[{"role":"user"}]}`)
++		out, applied := RectifyAdvisorTool(body)
++		require.True(t, applied)
++		require.True(t, gjson.ValidBytes(out))
++		require.Equal(t, "user", gjson.GetBytes(out, "messages.0.role").String())
++	})
++}
++
++func TestAdvisorBetaTokenConstants(t *testing.T) {
++	// 防御回归：客户端约定的 beta token 与 tool type 字面值不能漂移。
++	require.Equal(t, "advisor-tool-2026-03-01", AdvisorBetaToken)
++	require.Equal(t, "advisor_20260301", AdvisorToolType)
++	// DefaultAdvisorToolPattern 必须包含 token 名称，确保管理员后台默认关键词仍能命中上游报错。
++	require.True(t, strings.Contains(DefaultAdvisorToolPattern, AdvisorBetaToken))
++	require.True(t, strings.Contains(DefaultAdvisorToolPattern, "anthropic-beta"))
++}
+diff --git a/backend/internal/service/setting_service_advisor_test.go b/backend/internal/service/setting_service_advisor_test.go
+new file mode 100644
+index 00000000..4a1ce044
+--- /dev/null
++++ b/backend/internal/service/setting_service_advisor_test.go
+@@ -0,0 +1,103 @@
++//go:build unit
++
++package service
++
++import (
++	"context"
++	"testing"
++
++	"github.com/stretchr/testify/require"
++)
++
++func TestGetRectifierSettings_LegacyJSONUpgrade(t *testing.T) {
++	t.Run("legacy json without advisor fields gets default pattern injected", func(t *testing.T) {
++		legacyJSON := `{"enabled":true,"thinking_signature_enabled":true,"thinking_budget_enabled":true,"apikey_signature_enabled":false,"apikey_signature_patterns":[]}`
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: legacyJSON}}, nil)
++
++		got, err := svc.GetRectifierSettings(context.Background())
++		require.NoError(t, err)
++		require.Equal(t, []string{DefaultAdvisorToolPattern}, got.AdvisorToolPatterns,
++			"legacy JSON missing advisor_tool_patterns must inject default pattern")
++		// 升级路径：advisor_tool_enabled 字段不存在 → 反序列化为 false（设计预期，不自动启用新功能）。
++		require.False(t, got.AdvisorToolEnabled)
++	})
++
++	t.Run("user-cleared empty array is preserved (not overwritten by default)", func(t *testing.T) {
++		// 用户故意清空 patterns 后保存的 JSON：advisor_tool_patterns: []
++		clearedJSON := `{"enabled":true,"advisor_tool_enabled":true,"advisor_tool_patterns":[]}`
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: clearedJSON}}, nil)
++
++		got, err := svc.GetRectifierSettings(context.Background())
++		require.NoError(t, err)
++		require.NotNil(t, got.AdvisorToolPatterns, "cleared patterns must remain non-nil empty slice")
++		require.Empty(t, got.AdvisorToolPatterns, "user-cleared patterns must NOT be overwritten by default")
++	})
++
++	t.Run("explicit user patterns are preserved", func(t *testing.T) {
++		userJSON := `{"enabled":true,"advisor_tool_enabled":true,"advisor_tool_patterns":["foo","bar"]}`
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: userJSON}}, nil)
++
++		got, err := svc.GetRectifierSettings(context.Background())
++		require.NoError(t, err)
++		require.Equal(t, []string{"foo", "bar"}, got.AdvisorToolPatterns)
++	})
++
++	t.Run("setting not found falls back to defaults", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{err: ErrSettingNotFound}, nil)
++
++		got, err := svc.GetRectifierSettings(context.Background())
++		require.NoError(t, err)
++		// DefaultRectifierSettings 给出 enabled=true 与默认 advisor pattern。
++		require.True(t, got.Enabled)
++		require.True(t, got.AdvisorToolEnabled)
++		require.Equal(t, []string{DefaultAdvisorToolPattern}, got.AdvisorToolPatterns)
++	})
++
++	t.Run("invalid json falls back to defaults", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: `{not valid`}}, nil)
++
++		got, err := svc.GetRectifierSettings(context.Background())
++		require.NoError(t, err)
++		require.True(t, got.AdvisorToolEnabled)
++		require.Equal(t, []string{DefaultAdvisorToolPattern}, got.AdvisorToolPatterns)
++	})
++}
++
++func TestShouldRectifyAdvisorToolError_GatewayService(t *testing.T) {
++	body := []byte(`{"error":{"message":"Unexpected value(s) ` + "`advisor-tool-2026-03-01`" + ` for the ` + "`anthropic-beta`" + ` header."}}`)
++
++	t.Run("nil setting service returns false (fail-closed)", func(t *testing.T) {
++		gw := &GatewayService{}
++		got := gw.shouldRectifyAdvisorToolError(context.Background(), body)
++		require.False(t, got, "without a setting service we cannot read the switch — must be fail-closed")
++	})
++
++	t.Run("master switch off returns false", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: `{"enabled":false,"advisor_tool_enabled":true}`}}, nil)
++		gw := &GatewayService{settingService: svc}
++		got := gw.shouldRectifyAdvisorToolError(context.Background(), body)
++		require.False(t, got)
++	})
++
++	t.Run("subswitch off returns false", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: `{"enabled":true,"advisor_tool_enabled":false}`}}, nil)
++		gw := &GatewayService{settingService: svc}
++		got := gw.shouldRectifyAdvisorToolError(context.Background(), body)
++		require.False(t, got)
++	})
++
++	t.Run("both switches on returns true on built-in match", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: `{"enabled":true,"advisor_tool_enabled":true}`}}, nil)
++		gw := &GatewayService{settingService: svc}
++		got := gw.shouldRectifyAdvisorToolError(context.Background(), body)
++		require.True(t, got)
++	})
++
++	t.Run("custom pattern matches when builtin does not", func(t *testing.T) {
++		svc := NewSettingService(&settingRepoStub{values: map[string]string{SettingKeyRectifierSettings: `{"enabled":true,"advisor_tool_enabled":true,"advisor_tool_patterns":["my-private-flag"]}`}}, nil)
++		gw := &GatewayService{settingService: svc}
++		body := []byte(`{"error":{"message":"unsupported beta my-private-flag in vendor"}}`)
++		got := gw.shouldRectifyAdvisorToolError(context.Background(), body)
++		require.True(t, got)
++	})
++}
+diff --git a/backend/internal/handler/dto/settings.go b/backend/internal/handler/dto/settings.go
+index 92ae4dc6..d1ad49b8 100644
+--- a/backend/internal/handler/dto/settings.go
++++ b/backend/internal/handler/dto/settings.go
+@@ -276,6 +279,8 @@ type RectifierSettings struct {
+ 	ThinkingBudgetEnabled    bool     `json:"thinking_budget_enabled"`
+ 	APIKeySignatureEnabled   bool     `json:"apikey_signature_enabled"`
+ 	APIKeySignaturePatterns  []string `json:"apikey_signature_patterns"`
++	AdvisorToolEnabled       bool     `json:"advisor_tool_enabled"`
++	AdvisorToolPatterns      []string `json:"advisor_tool_patterns"`
+ }
+ 
+ // BetaPolicyRule Beta 策略规则 DTO
+diff --git a/frontend/src/api/admin/settings.ts b/frontend/src/api/admin/settings.ts
+index defbab43..13f64dc0 100644
+--- a/frontend/src/api/admin/settings.ts
++++ b/frontend/src/api/admin/settings.ts
+@@ -847,6 +853,8 @@ export interface RectifierSettings {
+   thinking_budget_enabled: boolean;
+   apikey_signature_enabled: boolean;
+   apikey_signature_patterns: string[];
++  advisor_tool_enabled: boolean;
++  advisor_tool_patterns: string[];
+ }
+ 
+ /**
+diff --git a/frontend/src/views/admin/SettingsView.vue b/frontend/src/views/admin/SettingsView.vue
+index 90d10b9a..84cb8594 100644
+--- a/frontend/src/views/admin/SettingsView.vue
++++ b/frontend/src/views/admin/SettingsView.vue
+@@ -304,6 +304,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="streamTimeoutLoading"
+@@ -484,6 +489,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="rectifierLoading"
+@@ -630,6 +640,84 @@
+                       + {{ t("admin.settings.rectifier.addPattern") }}
+                     </button>
+                   </div>
++
++                  <!-- Advisor Tool Rectifier -->
++                  <div class="flex items-center justify-between">
++                    <div>
++                      <label
++                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
++                        >{{
++                          t("admin.settings.rectifier.advisorTool")
++                        }}</label
++                      >
++                      <p class="text-xs text-gray-500 dark:text-gray-400">
++                        {{ t("admin.settings.rectifier.advisorToolHint") }}
++                      </p>
++                    </div>
++                    <Toggle v-model="rectifierForm.advisor_tool_enabled" />
++                  </div>
++
++                  <!-- Advisor Tool Custom Patterns -->
++                  <div
++                    v-if="rectifierForm.advisor_tool_enabled"
++                    class="ml-4 space-y-3 border-l-2 border-gray-200 pl-4 dark:border-dark-600"
++                  >
++                    <div>
++                      <label
++                        class="text-sm font-medium text-gray-700 dark:text-gray-300"
++                        >{{
++                          t("admin.settings.rectifier.advisorToolPatterns")
++                        }}</label
++                      >
++                      <p class="text-xs text-gray-500 dark:text-gray-400">
++                        {{
++                          t("admin.settings.rectifier.advisorToolPatternsHint")
++                        }}
++                      </p>
++                    </div>
++                    <div
++                      v-for="(_, index) in rectifierForm.advisor_tool_patterns"
++                      :key="index"
++                      class="flex items-center gap-2"
++                    >
++                      <input
++                        v-model="rectifierForm.advisor_tool_patterns[index]"
++                        type="text"
++                        class="input input-sm flex-1"
++                        :placeholder="
++                          t('admin.settings.rectifier.advisorToolPatternPlaceholder')
++                        "
++                      />
++                      <button
++                        type="button"
++                        @click="
++                          rectifierForm.advisor_tool_patterns.splice(index, 1)
++                        "
++                        class="btn btn-ghost btn-xs text-red-500 hover:text-red-700"
++                      >
++                        <svg
++                          class="h-4 w-4"
++                          fill="none"
++                          stroke="currentColor"
++                          viewBox="0 0 24 24"
++                        >
++                          <path
++                            stroke-linecap="round"
++                            stroke-linejoin="round"
++                            stroke-width="2"
++                            d="M6 18L18 6M6 6l12 12"
++                          />
++                        </svg>
++                      </button>
++                    </div>
++                    <button
++                      type="button"
++                      @click="rectifierForm.advisor_tool_patterns.push('')"
++                      class="btn btn-ghost btn-xs text-primary-600 dark:text-primary-400"
++                    >
++                      + {{ t("admin.settings.rectifier.addPattern") }}
++                    </button>
++                  </div>
+                 </div>
+ 
+                 <!-- Save Button -->
+@@ -683,6 +771,11 @@
+               </p>
+             </div>
+             <div class="space-y-5 p-6">
++              <!-- Passthrough notice: 账号级开启透传后整流不生效 -->
++              <div class="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700/50 dark:bg-amber-900/20 dark:text-amber-200">
++                {{ t("admin.settings.rectifier.passthroughNotice") }}
++              </div>
++
+               <!-- Loading State -->
+               <div
+                 v-if="betaPolicyLoading"
+@@ -5320,6 +5445,8 @@ const rectifierForm = reactive({
+   thinking_budget_enabled: true,
+   apikey_signature_enabled: false,
+   apikey_signature_patterns: [] as string[],
++  advisor_tool_enabled: true,
++  advisor_tool_patterns: [] as string[],
+ });
+ 
+ // Beta Policy 状态
+@@ -6725,6 +6863,9 @@ async function loadRectifierSettings() {
+     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {
+       rectifierForm.apikey_signature_patterns = [];
+     }
++    if (!Array.isArray(rectifierForm.advisor_tool_patterns)) {
++      rectifierForm.advisor_tool_patterns = [];
++    }
+   } catch (_error: unknown) {
+     // Silent fail - settings will use defaults
+   } finally {
+@@ -6735,19 +6876,38 @@ async function loadRectifierSettings() {
+ async function saveRectifierSettings() {
+   rectifierSaving.value = true;
+   try {
+-    const updated = await adminAPI.settings.updateRectifierSettings({
+-      enabled: rectifierForm.enabled,
+-      thinking_signature_enabled: rectifierForm.thinking_signature_enabled,
+-      thinking_budget_enabled: rectifierForm.thinking_budget_enabled,
+-      apikey_signature_enabled: rectifierForm.apikey_signature_enabled,
++    // 总开关 enabled=false 时，UI 隐藏所有子开关，但表单内仍保留旧值。
++    // 保存时强制把所有子开关一并置 false，避免下次开总开关时旧值自动恢复（违反用户预期）。
++    const enabled = rectifierForm.enabled;
++    const payload = {
++      enabled,
++      thinking_signature_enabled: enabled
++        ? rectifierForm.thinking_signature_enabled
++        : false,
++      thinking_budget_enabled: enabled
++        ? rectifierForm.thinking_budget_enabled
++        : false,
++      apikey_signature_enabled: enabled
++        ? rectifierForm.apikey_signature_enabled
++        : false,
+       apikey_signature_patterns: rectifierForm.apikey_signature_patterns.filter(
+         (p) => p.trim() !== "",
+       ),
+-    });
++      advisor_tool_enabled: enabled
++        ? rectifierForm.advisor_tool_enabled
++        : false,
++      advisor_tool_patterns: rectifierForm.advisor_tool_patterns.filter(
++        (p) => p.trim() !== "",
++      ),
++    };
++    const updated = await adminAPI.settings.updateRectifierSettings(payload);
+     Object.assign(rectifierForm, updated);
+     if (!Array.isArray(rectifierForm.apikey_signature_patterns)) {
+       rectifierForm.apikey_signature_patterns = [];
+     }
++    if (!Array.isArray(rectifierForm.advisor_tool_patterns)) {
++      rectifierForm.advisor_tool_patterns = [];
++    }
+     appStore.showSuccess(t("admin.settings.rectifier.saved"));
+   } catch (error: unknown) {
+     appStore.showError(
+diff --git a/frontend/src/i18n/locales/zh.ts b/frontend/src/i18n/locales/zh.ts
+index e399530b..60a4d8e4 100644
+--- a/frontend/src/i18n/locales/zh.ts
++++ b/frontend/src/i18n/locales/zh.ts
+@@ -5648,6 +5803,7 @@ export default {
+       rectifier: {
+         title: '请求整流器',
+         description: '当上游返回特定错误时，自动修正请求参数并重试，提高请求成功率',
++        passthroughNotice: '注意：账号级别开启「自动透传（仅替换认证）」后，整流器对该账号不生效——透传保留原始请求体不做改写。',
+         enabled: '启用请求整流器',
+         enabledHint: '总开关，关闭后所有整流功能均不生效',
+         thinkingSignature: 'Thinking 签名整流',
+@@ -5661,6 +5817,13 @@ export default {
+         apikeyPatternsHint:
+           '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
+         apikeyPatternPlaceholder: '例如：thinking_error 或 签名无效',
++        advisorTool: 'Advisor Tool 整流',
++        advisorToolHint:
++          '当上游不识别 advisor-tool-2026-03-01 beta header 时，自动剥离该 header 与 advisor 工具定义并重试（内置规则始终生效）',
++        advisorToolPatterns: '自定义匹配关键词',
++        advisorToolPatternsHint:
++          '额外的关键词，匹配响应体中的内容（不区分大小写）。内置规则始终生效，此处用于补充额外匹配。',
++        advisorToolPatternPlaceholder: '例如：advisor-tool 或 not supported',
+         addPattern: '添加关键词',
+         saved: '整流器设置保存成功',
+         saveFailed: '保存整流器设置失败'
+diff --git a/frontend/src/i18n/locales/en.ts b/frontend/src/i18n/locales/en.ts
+index 6f445986..12b868cf 100644
+--- a/frontend/src/i18n/locales/en.ts
++++ b/frontend/src/i18n/locales/en.ts
+@@ -5488,6 +5637,7 @@ export default {
+       rectifier: {
+         title: 'Request Rectifier',
+         description: 'Automatically fix request parameters and retry when upstream returns specific errors',
++        passthroughNotice: "Note: When an account has \"Anthropic API Key Passthrough\" enabled, rectifiers do NOT take effect for that account — passthrough preserves the original request body as-is.",
+         enabled: 'Enable Request Rectifier',
+         enabledHint: 'Master switch - disabling turns off all rectification features',
+         thinkingSignature: 'Thinking Signature Rectifier',
+@@ -5501,6 +5651,13 @@ export default {
+         apikeyPatternsHint:
+           'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
+         apikeyPatternPlaceholder: 'e.g., thinking_error',
++        advisorTool: 'Advisor Tool Rectifier',
++        advisorToolHint:
++          'Automatically strip the advisor-tool-2026-03-01 beta header and the advisor tool definition, then retry, when upstream does not recognise this beta (built-in patterns always apply)',
++        advisorToolPatterns: 'Custom Match Patterns',
++        advisorToolPatternsHint:
++          'Additional keywords matched against the response body (case-insensitive). Built-in patterns always apply; use these for supplementary matching.',
++        advisorToolPatternPlaceholder: 'e.g., advisor-tool',
+         addPattern: 'Add Pattern',
+         saved: 'Rectifier settings saved',
+         saveFailed: 'Failed to save rectifier settings'
