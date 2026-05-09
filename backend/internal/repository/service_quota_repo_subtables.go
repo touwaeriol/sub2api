@@ -51,39 +51,54 @@ func (r *serviceQuotaRuleRepository) loadPaths(ctx context.Context, rules []*ser
 	}
 	ids, index := indexRules(rules)
 	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(
-		`SELECT id, rule_id, platform, channel_id, group_id, account_id, model_pattern FROM service_quota_paths WHERE rule_id IN (%s) ORDER BY rule_id, id`,
+		`SELECT p.id, p.rule_id, p.platform, p.channel_id, p.group_id, p.account_id, p.model_pattern, c.name, g.name, a.name FROM service_quota_paths p LEFT JOIN channels c ON c.id = p.channel_id LEFT JOIN groups g ON g.id = p.group_id LEFT JOIN accounts a ON a.id = p.account_id WHERE p.rule_id IN (%s) ORDER BY p.rule_id, p.id`,
 		joinPlaceholders(len(ids))), ids...)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
-		var def service.ServiceQuotaPathDef
-		var platform, model sql.NullString
-		var channelID, groupID, accountID sql.NullInt64
-		if err := rows.Scan(&def.ID, &def.RuleID, &platform, &channelID, &groupID, &accountID, &model); err != nil {
+		def, err := scanPathRow(rows)
+		if err != nil {
 			return err
-		}
-		if platform.Valid {
-			def.Platform = &platform.String
-		}
-		if channelID.Valid {
-			def.ChannelID = &channelID.Int64
-		}
-		if groupID.Valid {
-			def.GroupID = &groupID.Int64
-		}
-		if accountID.Valid {
-			def.AccountID = &accountID.Int64
-		}
-		if model.Valid {
-			def.ModelPattern = &model.String
 		}
 		if rule, ok := index[def.RuleID]; ok {
 			rule.Paths = append(rule.Paths, def)
 		}
 	}
 	return rows.Err()
+}
+
+func scanPathRow(rows *sql.Rows) (service.ServiceQuotaPathDef, error) {
+	var def service.ServiceQuotaPathDef
+	var platform, model, channelName, groupName, accountName sql.NullString
+	var channelID, groupID, accountID sql.NullInt64
+	if err := rows.Scan(&def.ID, &def.RuleID, &platform, &channelID, &groupID, &accountID, &model, &channelName, &groupName, &accountName); err != nil {
+		return def, err
+	}
+	def.Platform = nullStringPtr(platform)
+	def.ChannelID = nullInt64Ptr(channelID)
+	def.GroupID = nullInt64Ptr(groupID)
+	def.AccountID = nullInt64Ptr(accountID)
+	def.ModelPattern = nullStringPtr(model)
+	def.ChannelName = nullStringPtr(channelName)
+	def.GroupName = nullStringPtr(groupName)
+	def.AccountName = nullStringPtr(accountName)
+	return def, nil
+}
+
+func nullStringPtr(ns sql.NullString) *string {
+	if ns.Valid {
+		return &ns.String
+	}
+	return nil
+}
+
+func nullInt64Ptr(ni sql.NullInt64) *int64 {
+	if ni.Valid {
+		return &ni.Int64
+	}
+	return nil
 }
 
 func (r *serviceQuotaRuleRepository) loadRuleUsers(ctx context.Context, rules []*service.ServiceQuotaRule) error {

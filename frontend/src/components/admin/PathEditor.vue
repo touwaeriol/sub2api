@@ -55,6 +55,7 @@
               :placeholder="t('common.optional')"
               :search="(kw, signal) => searchChannels(kw, signal, item.platform)"
               :resolve-label="resolveChannelLabel"
+              :initial-label="item.channel_name"
               :reset-token="item.platform ?? ''"
               @update:model-value="updateField(index, 'channel_id', $event)"
             />
@@ -66,6 +67,7 @@
               :placeholder="t('common.optional')"
               :search="(kw, signal) => searchGroups(kw, signal, item.platform)"
               :resolve-label="resolveGroupLabel"
+              :initial-label="item.group_name"
               :reset-token="`${item.platform ?? ''}:${item.channel_id ?? ''}`"
               @update:model-value="updateField(index, 'group_id', $event)"
             />
@@ -77,6 +79,7 @@
               :placeholder="t('common.optional')"
               :search="(kw, signal) => searchAccounts(kw, signal, item.platform, item.group_id)"
               :resolve-label="resolveAccountLabel"
+              :initial-label="item.account_name"
               :reset-token="`${item.platform ?? ''}:${item.channel_id ?? ''}:${item.group_id ?? ''}`"
               @update:model-value="updateField(index, 'account_id', $event)"
             />
@@ -180,16 +183,22 @@ function updateField<K extends keyof ServiceQuotaPathInput>(index: number, key: 
   // 改平台时清空下游字段（渠道/分组/账号/模型）
   if (key === 'platform') {
     updated.channel_id = null
+    updated.channel_name = null
     updated.group_id = null
+    updated.group_name = null
     updated.account_id = null
+    updated.account_name = null
     updated.model_pattern = null
   } else if (key === 'channel_id') {
-    // 切换渠道时同样清掉模型 pattern，避免 datalist 候选与上一个 channel 错位
+    updated.channel_name = null
     updated.group_id = null
+    updated.group_name = null
     updated.account_id = null
+    updated.account_name = null
     updated.model_pattern = null
   } else if (key === 'group_id') {
     updated.account_id = null
+    updated.account_name = null
   }
   next[index] = updated
   emit('update:modelValue', next)

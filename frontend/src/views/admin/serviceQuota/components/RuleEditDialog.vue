@@ -212,6 +212,9 @@ function resetForm(rule: ServiceQuotaRule | null) {
       group_id: p.group_id ?? null,
       account_id: p.account_id ?? null,
       model_pattern: p.model_pattern ?? null,
+      channel_name: p.channel_name ?? null,
+      group_name: p.group_name ?? null,
+      account_name: p.account_name ?? null,
     }))
     initial.target_user_ids = rule.target_user_ids ?? null
   }

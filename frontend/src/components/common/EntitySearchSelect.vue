@@ -59,7 +59,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
 import { useKeyedDebouncedSearch } from '@/composables/useKeyedDebouncedSearch'
@@ -75,8 +75,8 @@ const props = defineProps<{
   placeholder?: string
   search: (keyword: string, signal: AbortSignal) => Promise<EntitySearchItem[]>
   resolveLabel?: (id: number) => Promise<EntitySearchItem | null>
+  initialLabel?: string | null
   resetToken?: string | number
-  hintType?: string
   hintNoMatch?: string
 }>()
 
@@ -93,6 +93,7 @@ const loading = ref(false)
 const focused = ref(false)
 const showDropdown = ref(false)
 const selectedLabel = ref('')
+const selectedId = ref<number | null>(null)
 
 const emptyHint = computed(() => props.hintNoMatch || t('common.entitySearch.noMatches'))
 
@@ -116,9 +117,13 @@ watch(
       selectedLabel.value = ''
       return
     }
+    // select() 已同步设好 label+id，跳过异步 resolve 防止失败时清空
+    if (selectedLabel.value && selectedId.value === id) return
+    if (props.initialLabel) {
+      selectedLabel.value = props.initialLabel
+      return
+    }
     if (!props.resolveLabel) return
-    // 捕获本次 modelValue 作为 token，async 完成后比对，
-    // 防止旧 resolveLabel 在 modelValue 已被更新/清空后写回过期 label
     const token = id
     try {
       const item = await props.resolveLabel(id)
@@ -138,6 +143,7 @@ watch(
     if (prev === undefined || curr === prev) return
     if (props.modelValue !== null) emit('update:modelValue', null)
     selectedLabel.value = ''
+    selectedId.value = null
     keyword.value = ''
     results.value = []
   },
@@ -166,12 +172,18 @@ function onInput() {
 }
 
 function focusInput() {
-  inputRef.value?.focus()
+  if (inputRef.value) {
+    inputRef.value.focus()
+  } else {
+    focused.value = true
+    nextTick(() => inputRef.value?.focus())
+  }
 }
 
 function select(item: EntitySearchItem) {
   emit('update:modelValue', item.id)
   selectedLabel.value = item.label
+  selectedId.value = item.id
   keyword.value = ''
   // 保留 results：下次 focus 时用户仍能看到包含已选项的列表，
   // 避免新搜索的前 N 条不含已选项导致看不到选中态
@@ -182,6 +194,7 @@ function select(item: EntitySearchItem) {
 function clear() {
   emit('update:modelValue', null)
   selectedLabel.value = ''
+  selectedId.value = null
   keyword.value = ''
   results.value = []
   inputRef.value?.focus()

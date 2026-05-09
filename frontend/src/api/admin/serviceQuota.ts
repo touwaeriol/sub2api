@@ -76,6 +76,9 @@ export interface ServiceQuotaPathDef {
   group_id?: number | null
   account_id?: number | null
   model_pattern?: string | null
+  channel_name?: string | null
+  group_name?: string | null
+  account_name?: string | null
 }
 
 export interface ServiceQuotaPathInput {
@@ -84,8 +87,11 @@ export interface ServiceQuotaPathInput {
   group_id?: number | null
   account_id?: number | null
   model_pattern?: string | null
-  // 仅前端使用：v-for stable key，提交前会被 strip 掉，不会发到 backend
+  // 仅前端使用，提交前会被 strip 掉，不会发到 backend
   uid?: string
+  channel_name?: string | null
+  group_name?: string | null
+  account_name?: string | null
 }
 
 export interface ServiceQuotaRule {

@@ -77,6 +77,9 @@ type ServiceQuotaPathDef struct {
 	GroupID      *int64  `json:"group_id,omitempty"`
 	AccountID    *int64  `json:"account_id,omitempty"`
 	ModelPattern *string `json:"model_pattern,omitempty"`
+	ChannelName  *string `json:"channel_name,omitempty"`
+	GroupName    *string `json:"group_name,omitempty"`
+	AccountName  *string `json:"account_name,omitempty"`
 }
 
 type ServiceQuotaPathInput struct {
