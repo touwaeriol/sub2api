@@ -2983,6 +2983,11 @@ export default {
         webSearchDefault: 'Default',
         webSearchEnabled: 'Enabled',
         webSearchDisabled: 'Disabled',
+        syncToStream: 'Sync to Stream',
+        syncToStreamDesc:
+          'When enabled, all synchronous (non-streaming) requests are sent to upstream as streaming, and the complete response is assembled before returning as a non-streaming response.',
+        syncToStreamDefault: 'Default',
+        syncToStreamEnabled: 'Enabled',
       },
       modelRestriction: 'Model Restriction (Optional)',
       modelWhitelist: 'Model Whitelist',

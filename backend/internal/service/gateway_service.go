@@ -4394,6 +4394,9 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		})
 	}
 
+	var syncToStream bool
+	body, reqStream, syncToStream = applySyncToStream(body, reqStream, account)
+
 	// Claude Code 客户端判定：UA 匹配 claude-cli/* 且携带 metadata.user_id。
 	// 真正的 Claude Code 客户端自带完整的 system prompt、cache_control 断点和 header，
 	// 不需要代理做任何 body 级别的 mimicry；强行替换反而会破坏客户端的缓存策略
@@ -4986,7 +4989,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
-	if reqStream {
+	if syncToStream {
+		usage, err = s.handleSyncToStreamResponse(ctx, resp, c, account, originalModel, reqModel)
+		if err != nil {
+			return nil, err
+		}
+	} else if reqStream {
 		streamResult, err := s.handleStreamingResponse(ctx, resp, c, account, startTime, originalModel, reqModel, shouldMimicClaudeCode)
 		if err != nil {
 			if err.Error() == "have error in stream" {
@@ -5011,7 +5019,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		Usage:            *usage,
 		Model:            originalModel, // 使用原始模型用于计费和日志
 		UpstreamModel:    mappedModel,
-		Stream:           reqStream,
+		Stream:           reqStream && !syncToStream,
 		Duration:         time.Since(startTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,
@@ -5063,6 +5071,9 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
+
+	var syncToStream bool
+	input.Body, input.RequestStream, syncToStream = applySyncToStream(input.Body, input.RequestStream, account)
 
 	logger.LegacyPrintf("service.gateway", "[Anthropic 自动透传] 命中 API Key 透传分支: account=%d name=%s model=%s stream=%v",
 		account.ID, account.Name, input.RequestModel, input.RequestStream)
@@ -5240,7 +5251,12 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	var usage *ClaudeUsage
 	var firstTokenMs *int
 	var clientDisconnect bool
-	if input.RequestStream {
+	if syncToStream {
+		usage, err = s.handleSyncToStreamPassthroughResponse(ctx, resp, c, account)
+		if err != nil {
+			return nil, err
+		}
+	} else if input.RequestStream {
 		streamResult, err := s.handleStreamingResponseAnthropicAPIKeyPassthrough(ctx, resp, c, account, input.StartTime, input.RequestModel)
 		if err != nil {
 			return nil, err
@@ -5263,7 +5279,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		Usage:            *usage,
 		Model:            input.OriginalModel,
 		UpstreamModel:    input.RequestModel,
-		Stream:           input.RequestStream,
+		Stream:           input.RequestStream && !syncToStream,
 		Duration:         time.Since(input.StartTime),
 		FirstTokenMs:     firstTokenMs,
 		ClientDisconnect: clientDisconnect,

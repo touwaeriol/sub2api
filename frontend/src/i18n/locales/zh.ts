@@ -3134,6 +3134,11 @@ export default {
         webSearchDefault: '默认',
         webSearchEnabled: '开启',
         webSearchDisabled: '关闭',
+        syncToStream: '同步转流式',
+        syncToStreamDesc:
+          '开启后，所有同步（非流式）请求将以流式发送到上游，收集完整响应后以非流式格式返回。',
+        syncToStreamDefault: '默认',
+        syncToStreamEnabled: '开启',
       },
       modelRestriction: '模型限制（可选）',
       modelWhitelist: '模型白名单',

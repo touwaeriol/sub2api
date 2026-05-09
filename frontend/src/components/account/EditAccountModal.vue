@@ -1388,6 +1388,25 @@
         </div>
       </div>
 
+      <!-- Anthropic: Sync to Stream (Bedrock 除外) -->
+      <div
+        v-if="account?.platform === 'anthropic' && account?.type !== 'bedrock'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.syncToStream') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.syncToStreamDesc') }}
+            </p>
+          </div>
+          <select v-model="syncToStreamMode" class="input w-24 text-sm">
+            <option value="default">{{ t('admin.accounts.anthropic.syncToStreamDefault') }}</option>
+            <option value="enabled">{{ t('admin.accounts.anthropic.syncToStreamEnabled') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- 配额控制 (Anthropic apikey/bedrock: 配额限制 + 亲和) -->
       <div
         v-if="account?.platform === 'anthropic' && (account?.type === 'apikey' || account?.type === 'bedrock')"
@@ -2277,6 +2296,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const anthropicPassthroughEnabled = ref(false)
 const webSearchEmulationMode = ref('default')
+const syncToStreamMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
 const {
   globalEnabled: quotaNotifyGlobalEnabled,
@@ -2485,6 +2505,7 @@ const syncFormFromAccount = (newAccount: Account | null) => {
   codexCLIOnlyEnabled.value = false
   anthropicPassthroughEnabled.value = false
   webSearchEmulationMode.value = 'default'
+  syncToStreamMode.value = 'default'
   if (newAccount.platform === 'openai' && (newAccount.type === 'oauth' || newAccount.type === 'apikey')) {
     openaiPassthroughEnabled.value = extra?.openai_passthrough === true || extra?.openai_oauth_passthrough === true
     openAICompactMode.value = (extra?.openai_compact_mode as OpenAICompactMode) || 'auto'
@@ -2520,6 +2541,9 @@ const syncFormFromAccount = (newAccount: Account | null) => {
     } else {
       webSearchEmulationMode.value = 'default'
     }
+  }
+  if (newAccount.platform === 'anthropic') {
+    syncToStreamMode.value = extra?.sync_to_stream === 'enabled' ? 'enabled' : 'default'
   }
 
   // Load quota limit for apikey/bedrock accounts (bedrock quota is also loaded in its own branch above)
@@ -3580,6 +3604,18 @@ const handleSubmit = async () => {
         delete newExtra.web_search_emulation
       } else {
         newExtra.web_search_emulation = webSearchEmulationMode.value
+      }
+      updatePayload.extra = newExtra
+    }
+
+    // For all Anthropic accounts, handle sync_to_stream in extra
+    if (props.account.platform === 'anthropic') {
+      const currentExtra = (updatePayload.extra as Record<string, unknown>) || (props.account.extra as Record<string, unknown>) || {}
+      const newExtra: Record<string, unknown> = { ...currentExtra }
+      if (syncToStreamMode.value === 'default') {
+        delete newExtra.sync_to_stream
+      } else {
+        newExtra.sync_to_stream = syncToStreamMode.value
       }
       updatePayload.extra = newExtra
     }

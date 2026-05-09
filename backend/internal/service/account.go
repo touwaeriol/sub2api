@@ -1340,6 +1340,22 @@ func (a *Account) GetWebSearchEmulationMode() string {
 	}
 }
 
+// IsSyncToStreamEnabled 返回 Anthropic 账号是否启用"同步转流式"。
+// 开启后，非流式请求将以流式发送到上游，收集完整响应后以非流式格式返回。
+func (a *Account) IsSyncToStreamEnabled() bool {
+	if a == nil || a.Platform != PlatformAnthropic || a.IsBedrock() || a.Extra == nil {
+		return false
+	}
+	mode, ok := a.Extra["sync_to_stream"].(string)
+	return ok && mode == SyncToStreamModeEnabled
+}
+
+// SyncToStream 模式常量
+const (
+	SyncToStreamModeDefault = "default"
+	SyncToStreamModeEnabled = "enabled"
+)
+
 // IsCodexCLIOnlyEnabled 返回 OpenAI OAuth 账号是否启用"仅允许 Codex 官方客户端"。
 // 字段：accounts.extra.codex_cli_only。
 // 字段缺失或类型不正确时，按 false（关闭）处理。

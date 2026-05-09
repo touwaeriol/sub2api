@@ -2580,6 +2580,25 @@
         </div>
       </div>
 
+      <!-- Anthropic: Sync to Stream (Bedrock 除外) -->
+      <div
+        v-if="form.platform === 'anthropic' && accountCategory !== 'bedrock'"
+        class="border-t border-gray-200 pt-4 dark:border-dark-600"
+      >
+        <div class="flex items-center justify-between">
+          <div>
+            <label class="input-label mb-0">{{ t('admin.accounts.anthropic.syncToStream') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+              {{ t('admin.accounts.anthropic.syncToStreamDesc') }}
+            </p>
+          </div>
+          <select v-model="syncToStreamMode" class="input w-24 text-sm">
+            <option value="default">{{ t('admin.accounts.anthropic.syncToStreamDefault') }}</option>
+            <option value="enabled">{{ t('admin.accounts.anthropic.syncToStreamEnabled') }}</option>
+          </select>
+        </div>
+      </div>
+
       <!-- OpenAI OAuth Codex 官方客户端限制开关 -->
       <div
         v-if="form.platform === 'openai' && accountCategory === 'oauth-based'"
@@ -3280,6 +3299,7 @@ const openaiAPIKeyResponsesWebSocketV2Mode = ref<OpenAIWSMode>(OPENAI_WS_MODE_OF
 const codexCLIOnlyEnabled = ref(false)
 const anthropicPassthroughEnabled = ref(false)
 const webSearchEmulationMode = ref('default')
+const syncToStreamMode = ref('default')
 const webSearchGlobalEnabled = ref(false)
 const {
   globalEnabled: quotaNotifyGlobalEnabled,
@@ -3653,6 +3673,7 @@ watch(
     if (newPlatform !== 'anthropic') {
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
+      syncToStreamMode.value = 'default'
     }
     // Reset OAuth states
     oauth.resetState()
@@ -3673,6 +3694,9 @@ watch(
     if (platform !== 'anthropic' || category !== 'apikey') {
       anthropicPassthroughEnabled.value = false
       webSearchEmulationMode.value = 'default'
+    }
+    if (platform !== 'anthropic') {
+      syncToStreamMode.value = 'default'
     }
   }
 )
@@ -4048,6 +4072,7 @@ const resetForm = () => {
   codexCLIOnlyEnabled.value = false
   anthropicPassthroughEnabled.value = false
   webSearchEmulationMode.value = 'default'
+  syncToStreamMode.value = 'default'
   // Reset quota control state
   windowCostEnabled.value = false
   windowCostLimit.value = null
@@ -4148,6 +4173,11 @@ const buildAnthropicExtra = (base?: Record<string, unknown>): Record<string, unk
     delete extra.web_search_emulation
   } else {
     extra.web_search_emulation = webSearchEmulationMode.value
+  }
+  if (syncToStreamMode.value === 'default') {
+    delete extra.sync_to_stream
+  } else {
+    extra.sync_to_stream = syncToStreamMode.value
   }
 
   return Object.keys(extra).length > 0 ? extra : undefined
