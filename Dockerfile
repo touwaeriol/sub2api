@@ -25,7 +25,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 # Install dependencies first (better caching)
 COPY frontend/package.json frontend/pnpm-lock.yaml ./
-RUN pnpm config set onlyBuiltDependencies '["esbuild","vue-demi"]' && pnpm install --frozen-lockfile
+RUN printf 'onlyBuiltDependencies[]=esbuild\nonlyBuiltDependencies[]=vue-demi\n' > .npmrc && pnpm install --frozen-lockfile
 
 # Copy frontend source and build
 COPY frontend/ ./
