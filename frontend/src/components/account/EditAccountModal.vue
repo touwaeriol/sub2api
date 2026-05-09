@@ -1388,7 +1388,7 @@
         </div>
       </div>
 
-      <!-- Anthropic: Sync to Stream (Bedrock 除外) -->
+      <!-- Anthropic: Sync to Stream (Bedrock 除外，Bedrock 使用 EventStream 二进制格式) -->
       <div
         v-if="account?.platform === 'anthropic' && account?.type !== 'bedrock'"
         class="border-t border-gray-200 pt-4 dark:border-dark-600"
