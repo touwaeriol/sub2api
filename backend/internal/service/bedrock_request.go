@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -209,6 +210,7 @@ func PrepareBedrockRequestBodyWithTokens(body []byte, modelID string, betaTokens
 		if err != nil {
 			return nil, fmt.Errorf("inject anthropic_beta: %w", err)
 		}
+		logger.LegacyPrintf("service.gateway", "[Bedrock] Injected beta tokens: %v (model=%s ccCompat=%v)", betaTokens, modelID, ccCompat)
 	}
 
 	// 移除 model 字段（Bedrock 通过 URL 指定模型）
@@ -462,7 +464,7 @@ var bedrockSupportedBetaTokens = map[string]bool{
 	"computer-use-2025-01-24":         true,
 	"computer-use-2025-11-24":         true,
 	"context-1m-2025-08-07":           true,
-	"context-management-2025-06-27":   true,
+	// "context-management-2025-06-27": false, // Bedrock 不支持 context_management 功能
 	"compact-2026-01-12":              true,
 	"interleaved-thinking-2025-05-14": true,
 	"tool-search-tool-2025-10-19":     true,
@@ -747,6 +749,8 @@ func sanitizeBedrockCCBetaTokens(body []byte, modelID string) []byte {
 		}
 	}
 
+	originalTokens := append([]string(nil), tokens...) // 保存原始 tokens 用于日志
+
 	// 复用现有的 Bedrock beta token 过滤逻辑（自动注入 + 白名单过滤 + 转换）
 	// 即使 tokens 为空，也要执行自动注入（根据 body 内容补充必要的 beta token）
 	tokens = autoInjectBedrockBetaTokens(tokens, body, modelID)
@@ -755,9 +759,15 @@ func sanitizeBedrockCCBetaTokens(body []byte, modelID string) []byte {
 	if len(tokens) == 0 {
 		// 所有 token 都被过滤掉，删除 anthropic_beta 字段
 		body, _ = sjson.DeleteBytes(body, "anthropic_beta")
+		logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Removed all beta tokens: original=%v", originalTokens)
 	} else {
 		// 更新为过滤后的 token 列表
 		body, _ = sjson.SetBytes(body, "anthropic_beta", tokens)
+		if len(originalTokens) > 0 {
+			logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Filtered beta tokens: original=%v final=%v", originalTokens, tokens)
+		} else {
+			logger.LegacyPrintf("service.gateway", "[Bedrock CC Compat] Auto-injected beta tokens: %v", tokens)
+		}
 	}
 
 	return body
