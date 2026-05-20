@@ -117,7 +117,6 @@ import { useMonitorKeyPicker } from '@/composables/useMonitorKeyPicker'
 import {
   PROVIDER_ANTHROPIC,
   PROVIDER_OPENAI,
-  PROVIDER_GEMINI,
   API_MODE_CHAT_COMPLETIONS,
   API_MODE_RESPONSES,
   DEFAULT_INTERVAL_SECONDS,
