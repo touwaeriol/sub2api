@@ -72,9 +72,15 @@ func (d *grpcDriver) Open(_ string) (driver.Conn, error) {
 
 // grpcConn implements driver.Conn plus the *Context interfaces so
 // database/sql can pass a context.Context all the way down.
+//
+// When a transaction is active (activeTxID != ""), QueryContext and
+// ExecContext route through TxQuery/TxExec instead of Query/Exec so
+// that SQL issued via sql.Tx actually executes inside the server-side
+// transaction.
 type grpcConn struct {
-	client pb.SQLProxyClient
-	closed atomic.Bool
+	client     pb.SQLProxyClient
+	closed     atomic.Bool
+	activeTxID string // non-empty while a transaction is in progress
 }
 
 // Prepare returns a statement that defers its real work until Exec/Query.
@@ -105,10 +111,15 @@ func (c *grpcConn) Begin() (driver.Tx, error) {
 }
 
 // BeginTx starts a transaction on the core via gRPC and returns a Tx that
-// remembers the txID for subsequent TxQuery/TxExec calls.
+// remembers the txID for subsequent TxQuery/TxExec calls. It also sets
+// activeTxID on the conn so that QueryContext/ExecContext route through
+// TxQuery/TxExec while the transaction is open.
 func (c *grpcConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
 	if c.closed.Load() {
 		return nil, driver.ErrBadConn
+	}
+	if c.activeTxID != "" {
+		return nil, fmt.Errorf("plugin-sdk: connection already has an active transaction")
 	}
 	resp, err := c.client.BeginTx(ctx, &pb.BeginTxRequest{
 		IsolationLevel: isolationLevelString(sql.IsolationLevel(opts.Isolation)),
@@ -117,8 +128,13 @@ func (c *grpcConn) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.T
 	if err != nil {
 		return nil, err
 	}
-	return &grpcTx{client: c.client, txID: resp.GetTxId()}, nil
+	c.activeTxID = resp.GetTxId()
+	return &grpcTx{conn: c, client: c.client, txID: c.activeTxID, ctx: ctx}, nil
 }
+
+// clearTx resets the transaction state on the connection. Called by grpcTx
+// on Commit or Rollback to allow the conn to be reused for non-tx queries.
+func (c *grpcConn) clearTx() { c.activeTxID = "" }
 
 // Ping is a cheap RPC so database/sql can check liveness. We approximate it
 // with a no-op SELECT 1 on the gRPC channel.
@@ -130,7 +146,9 @@ func (c *grpcConn) Ping(ctx context.Context) error {
 	return err
 }
 
-// QueryContext satisfies driver.QueryerContext.
+// QueryContext satisfies driver.QueryerContext. When a transaction is active
+// on this conn, the query is routed through TxQuery so it executes inside
+// the server-side transaction.
 func (c *grpcConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
 	if c.closed.Load() {
 		return nil, driver.ErrBadConn
@@ -139,6 +157,9 @@ func (c *grpcConn) QueryContext(ctx context.Context, query string, args []driver
 	if err != nil {
 		return nil, err
 	}
+	if c.activeTxID != "" {
+		return c.txQuery(ctx, query, pbArgs)
+	}
 	resp, err := c.client.Query(ctx, &pb.SQLRequest{Query: query, Args: pbArgs})
 	if err != nil {
 		return nil, err
@@ -146,7 +167,19 @@ func (c *grpcConn) QueryContext(ctx context.Context, query string, args []driver
 	return newRows(resp), nil
 }
 
-// ExecContext satisfies driver.ExecerContext.
+// txQuery sends a query through the TxQuery RPC.
+func (c *grpcConn) txQuery(ctx context.Context, query string, args []*pb.SQLValue) (driver.Rows, error) {
+	req := &pb.TxSQLRequest{TxId: c.activeTxID, Query: query, Args: args}
+	resp, err := c.client.TxQuery(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return newRows(resp), nil
+}
+
+// ExecContext satisfies driver.ExecerContext. When a transaction is active
+// on this conn, the statement is routed through TxExec so it executes
+// inside the server-side transaction.
 func (c *grpcConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
 	if c.closed.Load() {
 		return nil, driver.ErrBadConn
@@ -155,7 +188,20 @@ func (c *grpcConn) ExecContext(ctx context.Context, query string, args []driver.
 	if err != nil {
 		return nil, err
 	}
+	if c.activeTxID != "" {
+		return c.txExec(ctx, query, pbArgs)
+	}
 	resp, err := c.client.Exec(ctx, &pb.SQLRequest{Query: query, Args: pbArgs})
+	if err != nil {
+		return nil, err
+	}
+	return &execResult{rowsAffected: resp.GetRowsAffected(), lastID: resp.GetLastInsertId()}, nil
+}
+
+// txExec sends a statement through the TxExec RPC.
+func (c *grpcConn) txExec(ctx context.Context, query string, args []*pb.SQLValue) (driver.Result, error) {
+	req := &pb.TxSQLRequest{TxId: c.activeTxID, Query: query, Args: args}
+	resp, err := c.client.TxExec(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -185,10 +231,14 @@ func (s *grpcStmt) QueryContext(ctx context.Context, args []driver.NamedValue) (
 }
 
 // grpcTx tracks the server-side transaction id and forwards the final
-// commit/rollback back through the proxy.
+// commit/rollback back through the proxy. It holds a reference to the
+// owning grpcConn so it can clear activeTxID on completion, and retains
+// the context from BeginTx for Commit/Rollback RPCs.
 type grpcTx struct {
+	conn   *grpcConn
 	client pb.SQLProxyClient
 	txID   string
+	ctx    context.Context
 	done   atomic.Bool
 }
 
@@ -196,7 +246,8 @@ func (t *grpcTx) Commit() error {
 	if !t.done.CompareAndSwap(false, true) {
 		return sql.ErrTxDone
 	}
-	_, err := t.client.CommitTx(context.Background(), &pb.TxIDRequest{TxId: t.txID})
+	t.conn.clearTx()
+	_, err := t.client.CommitTx(t.ctx, &pb.TxIDRequest{TxId: t.txID})
 	return err
 }
 
@@ -204,7 +255,8 @@ func (t *grpcTx) Rollback() error {
 	if !t.done.CompareAndSwap(false, true) {
 		return sql.ErrTxDone
 	}
-	_, err := t.client.RollbackTx(context.Background(), &pb.TxIDRequest{TxId: t.txID})
+	t.conn.clearTx()
+	_, err := t.client.RollbackTx(t.ctx, &pb.TxIDRequest{TxId: t.txID})
 	return err
 }
 

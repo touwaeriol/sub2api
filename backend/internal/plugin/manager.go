@@ -131,7 +131,7 @@ func (m *PluginManager) startSDKServer() error {
 	m.sdkLn = ln
 	m.sdkAddr = ln.Addr().String()
 
-	srv := grpc.NewServer()
+	srv := grpc.NewServer(GRPCServerOptions()...)
 	m.sdkServer.RegisterServices(srv)
 	m.sdkGRPC = srv
 
@@ -579,118 +579,145 @@ type handshakeMessage struct {
 // spawnAndConnect 启动子进程,读取握手,连接 gRPC,跑迁移,注册路由,启动健康监控。
 // 任一步失败会清理已创建资源并返回错误。
 func (m *PluginManager) spawnAndConnect(parentCtx context.Context, inst *PluginInstance, pluginConfig map[string]string) error {
-	procCtx, cancelProc := context.WithCancel(context.Background())
+	proc, err := m.startPluginProcess(inst)
+	if err != nil {
+		return err
+	}
 
+	conn, lifecycle, manifest, err := m.initPluginGRPC(parentCtx, inst, proc, pluginConfig)
+	if err != nil {
+		proc.cleanup()
+		return err
+	}
+
+	m.registerAndMonitor(inst, proc, conn, lifecycle, manifest)
+	return nil
+}
+
+type pluginProcess struct {
+	cmd       *exec.Cmd
+	cancelCtx context.CancelFunc
+	hs        handshakeMessage
+}
+
+func (p *pluginProcess) cleanup() {
+	p.cancelCtx()
+	_ = p.cmd.Wait()
+}
+
+func (m *PluginManager) startPluginProcess(inst *PluginInstance) (*pluginProcess, error) {
+	procCtx, cancelProc := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(procCtx, inst.BinaryPath)
+
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		cancelProc()
-		return fmt.Errorf("stdout pipe: %w", err)
+		return nil, fmt.Errorf("stdout pipe: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		cancelProc()
-		return fmt.Errorf("stderr pipe: %w", err)
+		return nil, fmt.Errorf("stderr pipe: %w", err)
 	}
-
 	if err := cmd.Start(); err != nil {
 		cancelProc()
-		return fmt.Errorf("start plugin process: %w", err)
+		return nil, fmt.Errorf("start plugin process: %w", err)
 	}
-
-	// 后台转发 stderr 到日志,便于排查启动问题。
 	go forwardStderr(stderr, inst.Name)
 
 	hs, err := readHandshake(stdout, m.cfg.HandshakeTimeout)
 	if err != nil {
 		cancelProc()
 		_ = cmd.Wait()
-		return fmt.Errorf("read handshake: %w", err)
+		return nil, fmt.Errorf("read handshake: %w", err)
 	}
+	return &pluginProcess{cmd: cmd, cancelCtx: cancelProc, hs: hs}, nil
+}
 
-	conn, lifecycle, err := dialPlugin(parentCtx, hs.GRPCAddr, m.cfg.GRPCDialTimeout)
+func (m *PluginManager) initPluginGRPC(
+	parentCtx context.Context,
+	inst *PluginInstance,
+	proc *pluginProcess,
+	pluginConfig map[string]string,
+) (*grpc.ClientConn, pluginsdk.PluginLifecycleClient, *pluginsdk.ManifestResponse, error) {
+	conn, lifecycle, err := dialPlugin(parentCtx, proc.hs.GRPCAddr, m.cfg.GRPCDialTimeout)
 	if err != nil {
-		cancelProc()
-		_ = cmd.Wait()
-		return err
+		return nil, nil, nil, err
 	}
 
-	// 调用 Init 把 SDK 地址和插件配置传给子进程。
-	initCtx, cancelInit := context.WithTimeout(parentCtx, m.cfg.ManifestTimeout)
-	initResp, initErr := lifecycle.Init(initCtx, &pluginsdk.PluginInitRequest{
+	pluginConfig[corePluginNameConfigKey] = inst.Name
+	if err := m.callPluginInit(parentCtx, lifecycle, pluginConfig); err != nil {
+		_ = conn.Close()
+		return nil, nil, nil, err
+	}
+
+	manifest, err := m.fetchManifest(parentCtx, lifecycle, inst.Name)
+	if err != nil {
+		_ = conn.Close()
+		return nil, nil, nil, err
+	}
+	return conn, lifecycle, manifest, nil
+}
+
+func (m *PluginManager) callPluginInit(ctx context.Context, lc pluginsdk.PluginLifecycleClient, config map[string]string) error {
+	initCtx, cancel := context.WithTimeout(ctx, m.cfg.ManifestTimeout)
+	defer cancel()
+	resp, err := lc.Init(initCtx, &pluginsdk.PluginInitRequest{
 		SdkAddress: m.sdkAddr,
-		Config:     pluginConfig,
+		Config:     config,
 	})
-	cancelInit()
-	if initErr != nil {
-		_ = conn.Close()
-		cancelProc()
-		_ = cmd.Wait()
-		return fmt.Errorf("plugin init rpc: %w", initErr)
-	}
-	if initResp != nil && !initResp.Success {
-		_ = conn.Close()
-		cancelProc()
-		_ = cmd.Wait()
-		return fmt.Errorf("plugin init reported failure: %s", initResp.Error)
-	}
-
-	// 拉取 manifest。
-	manifestCtx, cancelManifest := context.WithTimeout(parentCtx, m.cfg.ManifestTimeout)
-	manifest, err := lifecycle.GetManifest(manifestCtx, &emptypb.Empty{})
-	cancelManifest()
 	if err != nil {
-		_ = conn.Close()
-		cancelProc()
-		_ = cmd.Wait()
-		return fmt.Errorf("get manifest: %w", err)
+		return fmt.Errorf("plugin init rpc: %w", err)
 	}
+	if resp != nil && !resp.Success {
+		return fmt.Errorf("plugin init reported failure: %s", resp.Error)
+	}
+	return nil
+}
 
-	// 跑迁移(若声明了文件)。当前实现假定迁移文件由插件自己 embed,核心仅记录已应用列表。
-	// 真正读取 SQL 内容的逻辑后续会通过 GetFrontendBundle 之外的 RPC 提供;此处仅打印日志。
+func (m *PluginManager) fetchManifest(ctx context.Context, lc pluginsdk.PluginLifecycleClient, name string) (*pluginsdk.ManifestResponse, error) {
+	mCtx, cancel := context.WithTimeout(ctx, m.cfg.ManifestTimeout)
+	defer cancel()
+	manifest, err := lc.GetManifest(mCtx, &emptypb.Empty{})
+	if err != nil {
+		return nil, fmt.Errorf("get manifest: %w", err)
+	}
 	if len(manifest.GetMigrationFiles()) > 0 {
-		m.logger.Info("plugin declared migrations",
-			"plugin", inst.Name,
-			"count", len(manifest.GetMigrationFiles()),
-		)
+		m.logger.Info("plugin declared migrations", "plugin", name, "count", len(manifest.GetMigrationFiles()))
 	}
+	return manifest, nil
+}
 
-	entries := buildRouteEntries(inst.Name, manifest, hs.HTTPAddr)
+func (m *PluginManager) registerAndMonitor(
+	inst *PluginInstance,
+	proc *pluginProcess,
+	conn *grpc.ClientConn,
+	lifecycle pluginsdk.PluginLifecycleClient,
+	manifest *pluginsdk.ManifestResponse,
+) {
+	entries := buildRouteEntries(inst.Name, manifest, proc.hs.HTTPAddr)
 	newTable := m.router.CurrentTable().AddPlugin(inst.Name, entries)
 	m.router.SwapRouteTable(newTable)
 
-	// 健康监控独立 ctx,不受 parentCtx 影响。
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	monitor := NewHealthMonitor(m.cfg.HealthInterval, m.cfg.HealthFailThreshold)
 
 	inst.mu.Lock()
-	inst.Cmd = cmd
-	inst.CancelFunc = cancelProc
-	inst.GRPCAddr = hs.GRPCAddr
-	inst.HTTPAddr = hs.HTTPAddr
+	inst.ResetWait()
+	inst.Cmd = proc.cmd
+	inst.CancelFunc = proc.cancelCtx
+	inst.GRPCAddr = proc.hs.GRPCAddr
+	inst.HTTPAddr = proc.hs.HTTPAddr
 	inst.GRPCConn = conn
 	inst.LifecycleStub = lifecycle
 	inst.Manifest = manifest
 	inst.StartedAt = time.Now()
 	inst.HealthCancel = healthCancel
-	if err := inst.transitionTo(StateRunning); err != nil {
-		inst.mu.Unlock()
-		// 不太可能发生,但保留 defensive 处理。
-		healthCancel()
-		_ = conn.Close()
-		cancelProc()
-		_ = cmd.Wait()
-		return err
-	}
+	_ = inst.transitionTo(StateRunning)
 	inst.mu.Unlock()
 
-	go monitor.Monitor(healthCtx, inst, func() {
-		m.handleUnhealthy(inst)
-	})
-
+	go monitor.Monitor(healthCtx, inst, func() { m.handleUnhealthy(inst) })
 	go m.waitProcessExit(inst)
-
-	return nil
 }
 
 // stopInstance 优雅停止某个插件:Shutdown RPC -> 等待退出 -> SIGKILL -> 清理。
@@ -727,9 +754,10 @@ func (m *PluginManager) stopInstance(ctx context.Context, name string, markRegis
 	}
 
 	// 等待进程退出,超时则 cancel context 触发 kill。
+	// 通过 inst.WaitProcess() 复用 waitOnce,避免对同一 cmd 多次 Wait。
 	if cmd != nil {
 		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
+		go func() { done <- inst.WaitProcess() }()
 		select {
 		case <-done:
 		case <-time.After(m.cfg.ProcessExitTimeout):
@@ -759,12 +787,9 @@ func (m *PluginManager) stopInstance(ctx context.Context, name string, markRegis
 }
 
 // waitProcessExit 等待插件进程退出,触发自动重启决策。
+// 通过 inst.WaitProcess() 确保 cmd.Wait() 只被调用一次。
 func (m *PluginManager) waitProcessExit(inst *PluginInstance) {
-	cmd := inst.Cmd
-	if cmd == nil {
-		return
-	}
-	err := cmd.Wait()
+	err := inst.WaitProcess()
 
 	inst.mu.Lock()
 	currentState := inst.State
@@ -902,46 +927,50 @@ func forwardStderr(r io.Reader, pluginName string) {
 }
 
 // readHandshake 从插件 stdout 第一行读取握手 JSON,带超时。
-func readHandshake(r io.Reader, timeout time.Duration) (handshakeMessage, error) {
+// 超时时关闭 stdout pipe 以释放阻塞在 scanner.Scan() 上的 goroutine。
+func readHandshake(r io.ReadCloser, timeout time.Duration) (handshakeMessage, error) {
 	type result struct {
 		hs  handshakeMessage
 		err error
 	}
 	ch := make(chan result, 1)
 	go func() {
-		scanner := bufio.NewScanner(r)
-		scanner.Buffer(make([]byte, 0, 4*1024), 64*1024)
-		if !scanner.Scan() {
-			err := scanner.Err()
-			if err == nil {
-				err = errors.New("plugin closed stdout before handshake")
-			}
-			ch <- result{err: err}
-			return
-		}
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			ch <- result{err: errors.New("empty handshake line")}
-			return
-		}
-		var hs handshakeMessage
-		if err := json.Unmarshal([]byte(line), &hs); err != nil {
-			ch <- result{err: fmt.Errorf("decode handshake: %w (raw=%q)", err, line)}
-			return
-		}
-		if hs.GRPCAddr == "" {
-			ch <- result{err: errors.New("handshake missing grpc_addr")}
-			return
-		}
-		ch <- result{hs: hs}
+		hs, err := parseHandshakeLine(r)
+		ch <- result{hs: hs, err: err}
 	}()
 
 	select {
-	case r := <-ch:
-		return r.hs, r.err
+	case res := <-ch:
+		return res.hs, res.err
 	case <-time.After(timeout):
+		_ = r.Close() // 关闭 pipe 解除 scanner.Scan() 阻塞,防止 goroutine 泄漏。
 		return handshakeMessage{}, fmt.Errorf("handshake timeout after %s", timeout)
 	}
+}
+
+// parseHandshakeLine 从 reader 读取并解析第一行握手 JSON。
+func parseHandshakeLine(r io.Reader) (handshakeMessage, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 4*1024), 64*1024)
+	if !scanner.Scan() {
+		err := scanner.Err()
+		if err == nil {
+			err = errors.New("plugin closed stdout before handshake")
+		}
+		return handshakeMessage{}, err
+	}
+	line := strings.TrimSpace(scanner.Text())
+	if line == "" {
+		return handshakeMessage{}, errors.New("empty handshake line")
+	}
+	var hs handshakeMessage
+	if err := json.Unmarshal([]byte(line), &hs); err != nil {
+		return handshakeMessage{}, fmt.Errorf("decode handshake: %w (raw=%q)", err, line)
+	}
+	if hs.GRPCAddr == "" {
+		return handshakeMessage{}, errors.New("handshake missing grpc_addr")
+	}
+	return hs, nil
 }
 
 // dialPlugin 拨号到插件 gRPC server,失败时关闭未完成的资源。

@@ -1,9 +1,11 @@
-// Package pluginsdk provides the SDK that out-of-process plugins use to
+﻿// Package pluginsdk provides the SDK that out-of-process plugins use to
 // integrate with the Sub2API core. A plugin implements the Plugin interface
 // and starts itself with pluginsdk.Run, which handles the gRPC handshake
 // with the core, exposes the plugin's HTTP endpoints, and wires up SQL/Redis
 // proxies so the plugin can use the core's connection pools transparently.
 package pluginsdk
+
+import "net/http"
 
 // Plugin is the contract every plugin binary implements.
 //
@@ -49,10 +51,14 @@ type HTTPRegistrar interface {
 	RegisterHTTP(mux HTTPMux)
 }
 
-// HTTPMux is the minimal mux interface the SDK exposes to plugins. It is
-// intentionally narrow so plugins are not coupled to net/http internals.
+// HTTPMux is the minimal mux interface the SDK exposes to plugins.
+// It provides type-safe handler registration via Handle and HandleFunc.
 type HTTPMux interface {
-	Handle(pattern string, handler interface{})
+	// Handle registers an http.Handler for the given pattern.
+	Handle(pattern string, handler http.Handler)
+
+	// HandleFunc registers an http.HandlerFunc for the given pattern.
+	HandleFunc(pattern string, handler http.HandlerFunc)
 }
 
 // FrontendBundleProvider is an optional interface a Plugin may implement to

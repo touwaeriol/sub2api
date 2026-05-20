@@ -1,6 +1,7 @@
 package plugin
 
 import (
+	"context"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -20,33 +21,103 @@ import (
 type PluginRouter struct {
 	routeTable  atomic.Pointer[RouteTable]
 	coreHandler http.Handler
-	jwtAuth     gin.HandlerFunc
-	adminAuth   gin.HandlerFunc
-	apiKeyAuth  gin.HandlerFunc
+
+	// authEngines 按鉴权类型缓存预构建的 gin.Engine,避免每次请求分配。
+	authEngines map[string]*gin.Engine
 
 	// proxies 缓存反向代理实例,避免每次请求重新构造。
 	proxies sync.Map // map[string]*httputil.ReverseProxy
 }
+
+// authCapture 是请求级别的捕获容器,通过 request context 传递给 auth engine 的 catch-all handler。
+// gin.Engine.ServeHTTP 同步执行中间件链,因此 capture 写入与读取在同一 goroutine,无竞态。
+type authCapture struct {
+	ginCtx *gin.Context
+}
+
+type authCaptureKeyType struct{}
+
+var authCaptureKey authCaptureKeyType
 
 // NewPluginRouter 构造插件路由器,coreHandler 通常是 *gin.Engine。
 // 三个鉴权中间件在请求被代理到插件前执行,与正式路由享有完全一致的鉴权语义。
 func NewPluginRouter(coreHandler http.Handler, jwtAuth, adminAuth, apiKeyAuth gin.HandlerFunc) *PluginRouter {
 	r := &PluginRouter{
 		coreHandler: coreHandler,
-		jwtAuth:     jwtAuth,
-		adminAuth:   adminAuth,
-		apiKeyAuth:  apiKeyAuth,
+		authEngines: buildAuthEngines(jwtAuth, adminAuth, apiKeyAuth),
 	}
 	r.routeTable.Store(NewRouteTable())
 	return r
 }
 
+// buildAuthEngines 为每种鉴权类型预构建一个 gin.Engine,构造一次后在所有请求中复用。
+// gin.Engine.ServeHTTP 是并发安全的(内部用 sync.Pool 管理 Context)。
+func buildAuthEngines(jwtAuth, adminAuth, apiKeyAuth gin.HandlerFunc) map[string]*gin.Engine {
+	engines := make(map[string]*gin.Engine, 3)
+	pairs := []struct {
+		authType string
+		handler  gin.HandlerFunc
+	}{
+		{AuthTypeAdmin, adminAuth},
+		{AuthTypeUser, jwtAuth},
+		{AuthTypeAPIKey, apiKeyAuth},
+	}
+	for _, p := range pairs {
+		if p.handler == nil {
+			continue
+		}
+		engines[p.authType] = newAuthEngine(p.handler)
+	}
+	return engines
+}
+
+// newAuthEngine 构造带单个鉴权中间件的 gin.Engine。
+// 鉴权通过后,catch-all handler 把 gin.Context 写入 request context 中的 authCapture。
+func newAuthEngine(mw gin.HandlerFunc) *gin.Engine {
+	engine := gin.New()
+	engine.Use(mw)
+	engine.Any("/*any", captureGinContext)
+	return engine
+}
+
+// captureGinContext 是 auth engine 的 catch-all handler,鉴权通过时将 gin.Context
+// 写入 request context 中的 authCapture。若鉴权 abort,此 handler 不会被执行。
+func captureGinContext(c *gin.Context) {
+	if cap, ok := c.Request.Context().Value(authCaptureKey).(*authCapture); ok {
+		cap.ginCtx = c
+	}
+}
+
 // SwapRouteTable 原子地替换路由表,供 manager 在插件加载/卸载时调用。
+// 同时清理不再被任何路由引用的反向代理缓存条目。
 func (r *PluginRouter) SwapRouteTable(table *RouteTable) {
 	if table == nil {
 		table = NewRouteTable()
 	}
 	r.routeTable.Store(table)
+	r.pruneStaleProxies(table)
+}
+
+// RemovePlugin 清理指定插件在 proxies sync.Map 中的缓存条目。
+// manager 在卸载 / 重启插件时,应在 SwapRouteTable 后调用此方法,
+// 确保旧端口对应的 ReverseProxy 实例被释放。
+func (r *PluginRouter) RemovePlugin(proxyURL string) {
+	if proxyURL != "" {
+		r.proxies.Delete(proxyURL)
+	}
+}
+
+// pruneStaleProxies 遍历 proxies 缓存,删除不在新路由表中出现的条目。
+func (r *PluginRouter) pruneStaleProxies(table *RouteTable) {
+	active := table.collectProxyURLs()
+	r.proxies.Range(func(key, _ any) bool {
+		if k, ok := key.(string); ok {
+			if _, inUse := active[k]; !inUse {
+				r.proxies.Delete(k)
+			}
+		}
+		return true
+	})
 }
 
 // CurrentTable 返回当前路由表快照,主要供测试与状态接口使用。
@@ -63,18 +134,15 @@ func (r *PluginRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	// 借用 Gin 的鉴权中间件:先在临时 gin.Engine 上执行鉴权,
-	// 鉴权通过后从 gin.Context 中读取用户信息再转发。
 	authCtx, ok := r.runAuthMiddleware(w, req, entry.AuthType)
 	if !ok {
-		// 鉴权失败,中间件已写入响应。
 		return
 	}
 
 	r.proxyTo(w, req, authCtx, entry)
 }
 
-// runAuthMiddleware 通过临时 gin.Engine 执行匹配 authType 的鉴权中间件。
+// runAuthMiddleware 通过预构建的 gin.Engine 执行匹配 authType 的鉴权中间件。
 // 返回的 *gin.Context 在通过时携带鉴权信息(无鉴权时返回 nil ctx + ok=true)。
 // ok=false 表示鉴权失败,响应已经被中间件写出,调用方应直接返回。
 func (r *PluginRouter) runAuthMiddleware(w http.ResponseWriter, req *http.Request, authType string) (*gin.Context, bool) {
@@ -82,42 +150,29 @@ func (r *PluginRouter) runAuthMiddleware(w http.ResponseWriter, req *http.Reques
 		return nil, true
 	}
 
-	var handler gin.HandlerFunc
-	switch authType {
-	case AuthTypeAdmin:
-		handler = r.adminAuth
-	case AuthTypeUser:
-		handler = r.jwtAuth
-	case AuthTypeAPIKey:
-		handler = r.apiKeyAuth
-	default:
-		// 未知鉴权类型按禁止处理,防止意外暴露插件接口。
-		http.Error(w, "unknown auth type", http.StatusForbidden)
+	engine, exists := r.authEngines[authType]
+	if !exists {
+		http.Error(w, "auth middleware not available", http.StatusForbidden)
 		return nil, false
 	}
 
-	if handler == nil {
-		// 中间件未注入(测试或配置错误),保守地返回 503。
-		http.Error(w, "auth middleware not configured", http.StatusServiceUnavailable)
-		return nil, false
-	}
+	return runPrebuiltAuthEngine(engine, w, req)
+}
 
-	engine := gin.New()
-	engine.Use(handler)
-	var captured *gin.Context
-	engine.Any("/*any", func(c *gin.Context) {
-		captured = c
-	})
-	engine.ServeHTTP(w, req)
-	if captured == nil {
-		// handler 已 abort,响应已写出。
+// runPrebuiltAuthEngine 在预构建 engine 上执行鉴权,通过 authCapture 提取 gin.Context。
+// gin.Engine.ServeHTTP 在同一 goroutine 同步执行整个中间件链,因此 capture
+// 的写入(captureGinContext)和读取(本函数返回后)之间不存在竞态。
+func runPrebuiltAuthEngine(engine *gin.Engine, w http.ResponseWriter, req *http.Request) (*gin.Context, bool) {
+	cap := &authCapture{}
+	ctx := context.WithValue(req.Context(), authCaptureKey, cap)
+	engine.ServeHTTP(w, req.WithContext(ctx))
+	if cap.ginCtx == nil {
 		return nil, false
 	}
-	return captured, true
+	return cap.ginCtx, true
 }
 
 // proxyTo 把请求反向代理到插件进程。
-// 在转发前会清除 hop-by-hop header,并补充 X-Plugin-User-* 头便于插件识别调用者。
 func (r *PluginRouter) proxyTo(w http.ResponseWriter, req *http.Request, authCtx *gin.Context, entry *RouteEntry) {
 	target, err := url.Parse(entry.ProxyURL)
 	if err != nil {
@@ -126,8 +181,13 @@ func (r *PluginRouter) proxyTo(w http.ResponseWriter, req *http.Request, authCtx
 	}
 
 	proxy := r.getOrCreateProxy(entry.ProxyURL, target)
+	injectPluginHeaders(req, authCtx, entry.PluginName)
+	stripHopByHopHeaders(req.Header)
+	proxy.ServeHTTP(w, req)
+}
 
-	// 注入用户上下文头,使插件不必再次解析 JWT/APIKey。
+// injectPluginHeaders 注入用户上下文头,使插件不必再次解析 JWT/APIKey。
+func injectPluginHeaders(req *http.Request, authCtx *gin.Context, pluginName string) {
 	if authCtx != nil {
 		if subject, ok := middleware.GetAuthSubjectFromContext(authCtx); ok && subject.UserID > 0 {
 			req.Header.Set("X-Plugin-User-ID", strconv.FormatInt(subject.UserID, 10))
@@ -136,12 +196,7 @@ func (r *PluginRouter) proxyTo(w http.ResponseWriter, req *http.Request, authCtx
 			req.Header.Set("X-Plugin-User-Role", role)
 		}
 	}
-	req.Header.Set("X-Plugin-Name", entry.PluginName)
-
-	// 移除 hop-by-hop header,避免误传给插件 HTTP server。
-	stripHopByHopHeaders(req.Header)
-
-	proxy.ServeHTTP(w, req)
+	req.Header.Set("X-Plugin-Name", pluginName)
 }
 
 func (r *PluginRouter) getOrCreateProxy(key string, target *url.URL) *httputil.ReverseProxy {
@@ -149,7 +204,6 @@ func (r *PluginRouter) getOrCreateProxy(key string, target *url.URL) *httputil.R
 		return v.(*httputil.ReverseProxy)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
-	// 覆写 Director,设置 req.Host 为目标 host,确保上游 server 正确处理。
 	original := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		original(req)
@@ -174,7 +228,6 @@ var hopByHopHeaders = []string{
 
 func stripHopByHopHeaders(h http.Header) {
 	if connection := h.Get("Connection"); connection != "" {
-		// Connection 头中列出的字段也属于 hop-by-hop。
 		for _, f := range strings.Split(connection, ",") {
 			if name := strings.TrimSpace(f); name != "" {
 				h.Del(name)

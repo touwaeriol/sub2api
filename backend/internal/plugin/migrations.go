@@ -38,7 +38,9 @@ type MigrationFile struct {
 //   - 使用 PostgreSQL Advisory Lock 序列化执行(每个插件名独立锁 ID,避免互相阻塞)。
 //   - 通过 SHA-256 校验和检测已应用迁移是否被篡改。
 //   - 已应用的迁移自动跳过。
-func RunPluginMigrations(ctx context.Context, db *sql.DB, pluginName string, migrations []MigrationFile) error {
+//
+// 如果提供了 gate,则自动从每个迁移的 SQL 中扫描 CREATE TABLE 语句并注册到 gate。
+func RunPluginMigrations(ctx context.Context, db *sql.DB, pluginName string, migrations []MigrationFile, gate *SQLTableGate) error {
 	if db == nil {
 		return errors.New("nil sql db")
 	}
@@ -70,11 +72,21 @@ func RunPluginMigrations(ctx context.Context, db *sql.DB, pluginName string, mig
 	})
 
 	for _, m := range files {
-		if err := applyOnePluginMigration(ctx, db, pluginName, m); err != nil {
+		if err := registerAndApplyMigration(ctx, db, pluginName, m, gate); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// registerAndApplyMigration registers tables from the migration SQL and then applies it.
+func registerAndApplyMigration(ctx context.Context, db *sql.DB, pluginName string, m MigrationFile, gate *SQLTableGate) error {
+	if gate != nil {
+		if err := gate.RegisterTablesFromSQL(pluginName, string(m.Content)); err != nil {
+			return fmt.Errorf("register tables from migration %s: %w", m.Filename, err)
+		}
+	}
+	return applyOnePluginMigration(ctx, db, pluginName, m)
 }
 
 func applyOnePluginMigration(ctx context.Context, db *sql.DB, pluginName string, m MigrationFile) error {
@@ -135,6 +147,8 @@ func pluginMigrationLockID(pluginName string) int64 {
 	return int64(h.Sum64()) //nolint:gosec // 故意将 uint64 重新解读为 int64
 }
 
+// PostgreSQL-specific: uses pg_try_advisory_lock for cross-process migration serialization.
+// If a non-PostgreSQL backend is needed, replace with a DB-agnostic locking strategy.
 func pgPluginAdvisoryLock(ctx context.Context, db *sql.DB, lockID int64) error {
 	ticker := time.NewTicker(pluginMigrationLockRetryInterval)
 	defer ticker.Stop()

@@ -21,6 +21,7 @@ import (
 	pb "github.com/Wei-Shaw/sub2api/plugin-sdk/proto/pluginsdk"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
@@ -201,15 +202,12 @@ func newLogger(level string, m *Manifest) *slog.Logger {
 // plugins are not coupled to the concrete mux type.
 type httpMuxAdapter struct{ mux *http.ServeMux }
 
-func (a httpMuxAdapter) Handle(pattern string, handler interface{}) {
-	switch h := handler.(type) {
-	case http.Handler:
-		a.mux.Handle(pattern, h)
-	case func(http.ResponseWriter, *http.Request):
-		a.mux.HandleFunc(pattern, h)
-	default:
-		panic(fmt.Sprintf("pluginsdk: unsupported handler type %T for pattern %s", handler, pattern))
-	}
+func (a httpMuxAdapter) Handle(pattern string, handler http.Handler) {
+	a.mux.Handle(pattern, handler)
+}
+
+func (a httpMuxAdapter) HandleFunc(pattern string, handler http.HandlerFunc) {
+	a.mux.HandleFunc(pattern, handler)
 }
 
 // runner ties together the PluginLifecycle gRPC service and the lifecycle of
@@ -236,46 +234,7 @@ type runner struct {
 // hands control to Plugin.Init.
 func (r *runner) Init(ctx context.Context, req *pb.PluginInitRequest) (*pb.PluginInitResponse, error) {
 	r.initOnce.Do(func() {
-		addr := req.GetSdkAddress()
-		if addr == "" {
-			addr = r.opts.coreSDKAddr
-		}
-		if addr == "" {
-			r.initErr = errors.New("pluginsdk: core SDK address is empty")
-			return
-		}
-		conn, err := grpc.NewClient(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-		if err != nil {
-			r.initErr = fmt.Errorf("pluginsdk: dial core: %w", err)
-			return
-		}
-		r.coreConn = conn
-
-		sqlClient := pb.NewSQLProxyClient(conn)
-		redisClient := pb.NewRedisProxyClient(conn)
-		sdkdriver.Register(sqlClient)
-		db, err := sql.Open(sdkdriver.DriverName, "")
-		if err != nil {
-			r.initErr = fmt.Errorf("pluginsdk: open sql: %w", err)
-			return
-		}
-
-		cfgCopy := make(map[string]string, len(req.GetConfig()))
-		for k, v := range req.GetConfig() {
-			cfgCopy[k] = v
-		}
-
-		r.ctxImpl = &pluginCtx{
-			db:     db,
-			redis:  &redisAdapter{inner: sdkdriver.NewRedisClient(redisClient, r.logger)},
-			logger: r.logger,
-			config: cfgCopy,
-		}
-
-		if err := r.plugin.Init(r.ctxImpl); err != nil {
-			r.initErr = err
-			return
-		}
+		r.initErr = r.doInit(req)
 	})
 
 	if r.initErr != nil {
@@ -283,6 +242,80 @@ func (r *runner) Init(ctx context.Context, req *pb.PluginInitRequest) (*pb.Plugi
 	}
 	_ = ctx
 	return &pb.PluginInitResponse{Success: true}, nil
+}
+
+// doInit performs the actual initialization, separated for readability.
+func (r *runner) doInit(req *pb.PluginInitRequest) error {
+	addr := req.GetSdkAddress()
+	if addr == "" {
+		addr = r.opts.coreSDKAddr
+	}
+	if addr == "" {
+		return errors.New("pluginsdk: core SDK address is empty")
+	}
+
+	// Extract plugin name injected by core for gRPC metadata isolation.
+	pluginName := req.GetConfig()[corePluginNameConfigKey]
+	if pluginName == "" {
+		pluginName = r.plugin.Manifest().Name
+	}
+
+	conn, err := dialCoreWithIdentity(addr, pluginName)
+	if err != nil {
+		return err
+	}
+	r.coreConn = conn
+
+	db, err := openPluginDB(conn)
+	if err != nil {
+		return err
+	}
+
+	cfgCopy := filterSystemConfig(req.GetConfig())
+	r.ctxImpl = &pluginCtx{
+		db:     db,
+		redis:  &redisAdapter{inner: sdkdriver.NewRedisClient(pb.NewRedisProxyClient(conn), r.logger)},
+		logger: r.logger,
+		config: cfgCopy,
+	}
+	return r.plugin.Init(r.ctxImpl)
+}
+
+// dialCoreWithIdentity opens a gRPC connection to the core SDK server
+// with interceptors that inject the plugin name into every RPC's metadata.
+func dialCoreWithIdentity(addr, pluginName string) (*grpc.ClientConn, error) {
+	md := metadata.Pairs(pluginNameMDKey, pluginName)
+	conn, err := grpc.NewClient(addr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUnaryInterceptor(pluginIdentityUnaryInterceptor(md)),
+		grpc.WithStreamInterceptor(pluginIdentityStreamInterceptor(md)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: dial core: %w", err)
+	}
+	return conn, nil
+}
+
+// openPluginDB registers the SQL driver and opens a *sql.DB.
+func openPluginDB(conn *grpc.ClientConn) (*sql.DB, error) {
+	sdkdriver.Register(pb.NewSQLProxyClient(conn))
+	db, err := sql.Open(sdkdriver.DriverName, "")
+	if err != nil {
+		return nil, fmt.Errorf("pluginsdk: open sql: %w", err)
+	}
+	return db, nil
+}
+
+// filterSystemConfig copies config entries, stripping core-internal keys (prefixed "__").
+func filterSystemConfig(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		if len(k) >= 2 && k[:2] == "__" {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // GetManifest reflects the plugin's static description back to the core.

@@ -151,3 +151,15 @@ func (t *RouteTable) RemovePlugin(name string) *RouteTable {
 	}
 	return out
 }
+
+// collectProxyURLs 返回路由表中所有活跃的 ProxyURL 集合。
+// 供 PluginRouter.pruneStaleProxies 比对缓存使用。
+func (t *RouteTable) collectProxyURLs() map[string]struct{} {
+	urls := make(map[string]struct{}, len(t.entries))
+	for i := range t.entries {
+		if t.entries[i].ProxyURL != "" {
+			urls[t.entries[i].ProxyURL] = struct{}{}
+		}
+	}
+	return urls
+}

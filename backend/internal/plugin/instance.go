@@ -36,6 +36,12 @@ type PluginInstance struct {
 	StartedAt     time.Time
 	HealthCancel  context.CancelFunc
 	restartPolicy *RestartPolicy
+
+	// waitOnce 保证 cmd.Wait() 只被调用一次(Go 文档要求)。
+	// waitDone 在 Wait 完成后关闭,供多个消费者等待结果。
+	waitOnce sync.Once
+	waitErr  error
+	waitDone chan struct{}
 }
 
 // NewPluginInstance 构造新的插件实例,初始状态为 StateRegistered。
@@ -45,7 +51,33 @@ func NewPluginInstance(name, binaryPath string, policy *RestartPolicy) *PluginIn
 		BinaryPath:    binaryPath,
 		State:         StateRegistered,
 		restartPolicy: policy,
+		waitDone:      make(chan struct{}),
 	}
+}
+
+// WaitProcess 等待子进程退出,保证 cmd.Wait() 只被调用一次。
+// 多个 goroutine 可安全并发调用;首次调用执行真正的 Wait,
+// 后续调用阻塞在 waitDone channel 上并返回缓存的 error。
+func (inst *PluginInstance) WaitProcess() error {
+	inst.waitOnce.Do(func() {
+		defer close(inst.waitDone)
+		inst.mu.Lock()
+		cmd := inst.Cmd
+		inst.mu.Unlock()
+		if cmd != nil {
+			inst.waitErr = cmd.Wait()
+		}
+	})
+	<-inst.waitDone
+	return inst.waitErr
+}
+
+// ResetWait 重置进程等待状态,供重启场景使用。
+// 调用方需持有 mu。
+func (inst *PluginInstance) ResetWait() {
+	inst.waitOnce = sync.Once{}
+	inst.waitErr = nil
+	inst.waitDone = make(chan struct{})
 }
 
 // transitionTo 在持有 mu 的前提下变更状态;

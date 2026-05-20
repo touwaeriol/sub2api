@@ -19,6 +19,9 @@
     "build": "vue-tsc -b && vite build",
     "typecheck": "vue-tsc --noEmit"
   },
+  "dependencies": {
+    "@sub2api/plugin-sdk": "workspace:*"
+  },
   "peerDependencies": {
     "axios": "^1.15.0",
     "pinia": "^2.1.7",
