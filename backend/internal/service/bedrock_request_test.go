@@ -813,6 +813,21 @@ func TestSanitizeBedrockThinking_EdgeCases(t *testing.T) {
 		assert.Equal(t, "adaptive", gjson.GetBytes(result, "thinking.type").String())
 		assert.Equal(t, int64(5000), gjson.GetBytes(result, "thinking.budget_tokens").Int())
 	})
+
+	// Forward() passes parsed.Model (standard names like "claude-opus-4-7")
+	t.Run("standard model name opus 4.7 converts enabled to adaptive", func(t *testing.T) {
+		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
+		result := sanitizeBedrockThinking([]byte(input), "claude-opus-4-7")
+		assert.Equal(t, "adaptive", gjson.GetBytes(result, "thinking.type").String())
+		assert.False(t, gjson.GetBytes(result, "thinking.budget_tokens").Exists())
+	})
+
+	t.Run("standard model name opus 4.6 keeps enabled", func(t *testing.T) {
+		input := `{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[]}`
+		result := sanitizeBedrockThinking([]byte(input), "claude-opus-4-6")
+		assert.Equal(t, "enabled", gjson.GetBytes(result, "thinking.type").String())
+		assert.Equal(t, int64(10000), gjson.GetBytes(result, "thinking.budget_tokens").Int())
+	})
 }
 
 func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
@@ -823,6 +838,10 @@ func TestIsBedrockOpus47OrNewer_EdgeCases(t *testing.T) {
 		{"anthropic.claude-opus-4-7-v1", true},
 		{"us.anthropic.claude-opus-4-7-20270101-v1:0", true},
 		{"", false},
+		// Forward() passes parsed.Model (standard names), not Bedrock IDs
+		{"claude-opus-4-7", true},
+		{"claude-opus-4-6", false},
+		{"claude-sonnet-4-7", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.modelID, func(t *testing.T) {

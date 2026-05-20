@@ -4342,6 +4342,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
 	}
 
+	// Bedrock CC 兼容：在转发之前对请求体做 CC 兼容处理。
+	// 只修改 body 内容（thinking 类型、tool_use ID），不影响后续的透传/Bedrock 转发路径。
+	if account != nil && s.isBedrockCCCompatEnabled(ctx, account, parsed.GroupID) {
+		parsed.Body = sanitizeBedrockThinking(parsed.Body, parsed.Model)
+		parsed.Body = sanitizeBedrockToolUseIDs(parsed.Body)
+	}
+
 	if account != nil && account.IsAnthropicAPIKeyPassthroughEnabled() {
 		passthroughBody := parsed.Body
 		passthroughModel := parsed.Model
@@ -5723,8 +5730,7 @@ func (s *GatewayService) forwardBedrock(
 		return nil, err
 	}
 
-	ccCompat := s.isBedrockCCCompatEnabled(ctx, account, parsed.GroupID)
-	bedrockBody, err := PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens, ccCompat)
+	bedrockBody, err := PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens, false)
 	if err != nil {
 		return nil, fmt.Errorf("prepare bedrock request body: %w", err)
 	}
