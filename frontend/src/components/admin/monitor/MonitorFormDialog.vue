@@ -15,6 +15,25 @@
         @open-key-picker="openMyKeyPicker"
       />
 
+      <!-- OpenAI API Mode -->
+      <div v-if="form.provider === PROVIDER_OPENAI" class="rounded-lg border border-blue-100 bg-blue-50/50 p-3 dark:border-blue-500/20 dark:bg-blue-500/10">
+        <label class="input-label">{{ t('admin.channelMonitor.form.apiMode') }}</label>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <button
+            v-for="opt in apiModeOptions"
+            :key="opt.value"
+            type="button"
+            :aria-pressed="form.api_mode === opt.value"
+            class="rounded-lg border-2 px-3 py-2 text-left transition-colors"
+            :class="apiModeButtonClass(opt.value)"
+            @click="form.api_mode = opt.value"
+          >
+            <span class="block text-sm font-semibold">{{ opt.label }}</span>
+            <span class="mt-0.5 block text-xs opacity-80">{{ opt.hint }}</span>
+          </button>
+        </div>
+      </div>
+
       <MonitorFormModelSection
         v-model:primary-model="form.primary_model"
         v-model:extra-models="form.extra_models"
@@ -40,6 +59,7 @@
         v-model:body-override="form.body_override"
         :active="show"
         :provider="form.provider"
+        :api-mode="form.api_mode"
       />
     </form>
 
@@ -83,6 +103,7 @@ import type {
   BodyOverrideMode,
   ChannelMonitor,
   CreateParams,
+  APIMode,
   Provider,
   UpdateParams,
 } from '@/api/admin/channelMonitor'
@@ -95,6 +116,10 @@ import MonitorFormAdvancedSection from '@/components/admin/monitor/MonitorFormAd
 import { useMonitorKeyPicker } from '@/composables/useMonitorKeyPicker'
 import {
   PROVIDER_ANTHROPIC,
+  PROVIDER_OPENAI,
+  PROVIDER_GEMINI,
+  API_MODE_CHAT_COMPLETIONS,
+  API_MODE_RESPONSES,
   DEFAULT_INTERVAL_SECONDS,
 } from '@/constants/channelMonitor'
 
@@ -126,6 +151,7 @@ const submitting = ref(false)
 interface MonitorForm {
   name: string
   provider: Provider
+  api_mode: APIMode
   endpoint: string
   api_key: string
   primary_model: string
@@ -143,6 +169,7 @@ interface MonitorForm {
 const form = reactive<MonitorForm>({
   name: '',
   provider: PROVIDER_ANTHROPIC,
+  api_mode: API_MODE_CHAT_COMPLETIONS,
   endpoint: '',
   api_key: '',
   primary_model: '',
@@ -156,19 +183,66 @@ const form = reactive<MonitorForm>({
   body_override: null,
 })
 
+let suppressFormWatchers = false
+
+const apiModeOptions = computed<{ value: APIMode; label: string; hint: string }[]>(() => [
+  {
+    value: API_MODE_CHAT_COMPLETIONS,
+    label: t('admin.channelMonitor.form.apiModeChatCompletions'),
+    hint: t('admin.channelMonitor.form.apiModeChatCompletionsHint'),
+  },
+  {
+    value: API_MODE_RESPONSES,
+    label: t('admin.channelMonitor.form.apiModeResponses'),
+    hint: t('admin.channelMonitor.form.apiModeResponsesHint'),
+  },
+])
+
+function normalizeAPIMode(mode: APIMode | undefined | null): APIMode {
+  return mode === API_MODE_RESPONSES ? API_MODE_RESPONSES : API_MODE_CHAT_COMPLETIONS
+}
+
+function apiModeButtonClass(mode: APIMode): string {
+  const active = form.api_mode === mode
+  if (active) {
+    return 'border-primary-500 bg-white text-primary-700 shadow-sm dark:border-primary-400 dark:bg-primary-500/15 dark:text-primary-300'
+  }
+  return 'border-blue-100 bg-white/70 text-gray-600 hover:border-primary-300 dark:border-dark-700 dark:bg-dark-800 dark:text-gray-400'
+}
+
+function clearRequestSnapshot() {
+  form.template_id = null
+  form.extra_headers = {}
+  form.body_override_mode = 'off'
+  form.body_override = null
+}
+
 // Clear api_key whenever provider changes to avoid cross-provider key mismatch.
 // Editing mode loads api_key='' via loadFromMonitor and only sets it on user
 // typing, so clearing on provider change is always a safe no-op until the user
 // picks a new key.
 // 同时清空 template_id（模板有 provider 归属，跨平台不通用）。
 watch(() => form.provider, () => {
+  if (suppressFormWatchers) return
   form.api_key = ''
-  form.template_id = null
-})
+  if (form.provider !== PROVIDER_OPENAI) {
+    form.api_mode = API_MODE_CHAT_COMPLETIONS
+  }
+  clearRequestSnapshot()
+}, { flush: 'sync' })
+
+watch(() => form.api_mode, () => {
+  if (suppressFormWatchers) return
+  if (form.provider === PROVIDER_OPENAI) {
+    clearRequestSnapshot()
+  }
+}, { flush: 'sync' })
 
 function resetForm() {
+  suppressFormWatchers = true
   form.name = ''
   form.provider = PROVIDER_ANTHROPIC
+  form.api_mode = API_MODE_CHAT_COMPLETIONS
   form.endpoint = ''
   form.api_key = ''
   form.primary_model = ''
@@ -180,11 +254,14 @@ function resetForm() {
   form.extra_headers = {}
   form.body_override_mode = 'off'
   form.body_override = null
+  suppressFormWatchers = false
 }
 
 function loadFromMonitor(m: ChannelMonitor) {
+  suppressFormWatchers = true
   form.name = m.name
   form.provider = m.provider
+  form.api_mode = normalizeAPIMode(m.api_mode)
   form.endpoint = m.endpoint
   form.api_key = ''
   form.primary_model = m.primary_model
@@ -196,6 +273,7 @@ function loadFromMonitor(m: ChannelMonitor) {
   form.extra_headers = { ...(m.extra_headers || {}) }
   form.body_override_mode = m.body_override_mode || 'off'
   form.body_override = m.body_override ? { ...m.body_override } : null
+  suppressFormWatchers = false
 }
 
 // Re-sync form whenever the dialog is opened or the target monitor changes.
@@ -227,6 +305,7 @@ function buildPayload(): CreateParams {
   return {
     name: form.name.trim(),
     provider: form.provider,
+    api_mode: form.provider === PROVIDER_OPENAI ? form.api_mode : API_MODE_CHAT_COMPLETIONS,
     endpoint: form.endpoint.trim(),
     api_key: form.api_key.trim(),
     primary_model: form.primary_model.trim(),

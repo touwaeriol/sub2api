@@ -17,6 +17,8 @@
       </div>
 
       <MonitorAdvancedRequestConfig
+        :provider="provider"
+        :api-mode="apiMode"
         :extra-headers="extraHeaders"
         :body-override-mode="bodyOverrideMode"
         :body-override="bodyOverride"
@@ -32,7 +34,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { adminAPI } from '@/api/admin'
-import type { BodyOverrideMode, Provider } from '@/api/admin/channelMonitor'
+import type { APIMode, BodyOverrideMode, Provider } from '@/api/admin/channelMonitor'
 import type { ChannelMonitorTemplate } from '@/api/admin/channelMonitorTemplate'
 import Select from '@/components/common/Select.vue'
 import MonitorAdvancedRequestConfig from '@/components/admin/monitor/MonitorAdvancedRequestConfig.vue'
@@ -41,7 +43,9 @@ const props = defineProps<{
   // 当 dialog 打开时父组件设为 true，触发模板列表懒加载
   active: boolean
   provider: Provider
+  apiMode?: APIMode
 }>()
+
 
 const templateId = defineModel<number | null>('templateId', { required: true })
 const extraHeaders = defineModel<Record<string, string>>('extraHeaders', { required: true })
