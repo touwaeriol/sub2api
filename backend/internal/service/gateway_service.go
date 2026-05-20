@@ -5744,6 +5744,7 @@ func (s *GatewayService) ApplyBedrockCCCompat(ctx context.Context, body []byte, 
 	body = sanitizeBedrockCCFields(body)
 	body = sanitizeBedrockThinking(body, model)
 	body = sanitizeBedrockToolUseIDs(body)
+	body = sanitizeBedrockCCBetaTokens(body, model)
 	return body
 }
 
