@@ -965,14 +965,20 @@ func TestSanitizeBedrockCCBetaTokens(t *testing.T) {
 		assert.False(t, gjson.GetBytes(result, "anthropic_beta").Exists())
 	})
 
-	t.Run("auto-injects required beta tokens", func(t *testing.T) {
+	t.Run("thinking alone does not auto-inject beta tokens", func(t *testing.T) {
 		input := `{"anthropic_beta":[],"thinking":{"type":"enabled"},"messages":[]}`
+		result := sanitizeBedrockCCBetaTokens([]byte(input), "claude-opus-4-6")
+		assert.False(t, gjson.GetBytes(result, "anthropic_beta").Exists())
+	})
+
+	t.Run("auto-injects computer-use beta token", func(t *testing.T) {
+		input := `{"anthropic_beta":[],"tools":[{"type":"computer_20250124","name":"computer"}],"messages":[]}`
 		result := sanitizeBedrockCCBetaTokens([]byte(input), "claude-opus-4-6")
 		beta := gjson.GetBytes(result, "anthropic_beta")
 		assert.True(t, beta.Exists())
 		tokens := beta.Array()
 		assert.Equal(t, 1, len(tokens))
-		assert.Equal(t, "interleaved-thinking-2025-05-14", tokens[0].String())
+		assert.Equal(t, "computer-use-2025-11-24", tokens[0].String())
 	})
 
 	t.Run("transforms advanced-tool-use to tool-search-tool", func(t *testing.T) {
