@@ -708,6 +708,7 @@ const defaultCCMaxTokens = 81920
 // sanitizeBedrockCCFields 处理 Claude Code 发送的 Bedrock 不兼容字段：
 //   - 移除 service_tier（Anthropic API 专有，Bedrock 不支持）
 //   - 移除 interface_geo（Anthropic API 专有，Bedrock 不支持）
+//   - 移除 context_management（Anthropic API 专有，Bedrock 不支持，CC v2.1.87+ 默认携带）
 //   - 注入 max_tokens 默认值 81920（CC 可能省略，Bedrock 要求必须提供）
 //   - 注入 anthropic_version（CC 通过 HTTP 头发送，Bedrock 需要放在请求体中）
 func sanitizeBedrockCCFields(body []byte) []byte {
@@ -716,6 +717,9 @@ func sanitizeBedrockCCFields(body []byte) []byte {
 	}
 	if gjson.GetBytes(body, "interface_geo").Exists() {
 		body, _ = sjson.DeleteBytes(body, "interface_geo")
+	}
+	if gjson.GetBytes(body, "context_management").Exists() {
+		body, _ = sjson.DeleteBytes(body, "context_management")
 	}
 	if !gjson.GetBytes(body, "max_tokens").Exists() {
 		body, _ = sjson.SetBytes(body, "max_tokens", defaultCCMaxTokens)
