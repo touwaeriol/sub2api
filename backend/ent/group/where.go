@@ -210,6 +210,11 @@ func RpmLimit(v int) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldRpmLimit, v))
 }
 
+// ProtocolID applies equality check predicate on the "protocol_id" field. It's identical to ProtocolIDEQ.
+func ProtocolID(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldProtocolID, v))
+}
+
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.
 func CreatedAtEQ(v time.Time) predicate.Group {
 	return predicate.Group(sql.FieldEQ(FieldCreatedAt, v))
@@ -1440,6 +1445,36 @@ func RpmLimitLTE(v int) predicate.Group {
 	return predicate.Group(sql.FieldLTE(FieldRpmLimit, v))
 }
 
+// ProtocolIDEQ applies the EQ predicate on the "protocol_id" field.
+func ProtocolIDEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldEQ(FieldProtocolID, v))
+}
+
+// ProtocolIDNEQ applies the NEQ predicate on the "protocol_id" field.
+func ProtocolIDNEQ(v int64) predicate.Group {
+	return predicate.Group(sql.FieldNEQ(FieldProtocolID, v))
+}
+
+// ProtocolIDIn applies the In predicate on the "protocol_id" field.
+func ProtocolIDIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldIn(FieldProtocolID, vs...))
+}
+
+// ProtocolIDNotIn applies the NotIn predicate on the "protocol_id" field.
+func ProtocolIDNotIn(vs ...int64) predicate.Group {
+	return predicate.Group(sql.FieldNotIn(FieldProtocolID, vs...))
+}
+
+// ProtocolIDIsNil applies the IsNil predicate on the "protocol_id" field.
+func ProtocolIDIsNil() predicate.Group {
+	return predicate.Group(sql.FieldIsNull(FieldProtocolID))
+}
+
+// ProtocolIDNotNil applies the NotNil predicate on the "protocol_id" field.
+func ProtocolIDNotNil() predicate.Group {
+	return predicate.Group(sql.FieldNotNull(FieldProtocolID))
+}
+
 // HasAPIKeys applies the HasEdge predicate on the "api_keys" edge.
 func HasAPIKeys() predicate.Group {
 	return predicate.Group(func(s *sql.Selector) {
@@ -1524,6 +1559,29 @@ func HasUsageLogs() predicate.Group {
 func HasUsageLogsWith(preds ...predicate.UsageLog) predicate.Group {
 	return predicate.Group(func(s *sql.Selector) {
 		step := newUsageLogsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
+// HasProtocol applies the HasEdge predicate on the "protocol" edge.
+func HasProtocol() predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, ProtocolTable, ProtocolColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasProtocolWith applies the HasEdge predicate on the "protocol" edge with a given conditions (other predicates).
+func HasProtocolWith(preds ...predicate.Protocol) predicate.Group {
+	return predicate.Group(func(s *sql.Selector) {
+		step := newProtocolStep()
 		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
 			for _, p := range preds {
 				p(s)

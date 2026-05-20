@@ -317,6 +317,7 @@ export default {
     searchPlaceholder: 'Search...',
     noOptionsFound: 'No options found',
     noGroupsAvailable: 'No groups available',
+    other: 'Other',
     unknownError: 'Unknown error occurred',
     saving: 'Saving...',
     selectedCount: '({count} selected)',
@@ -2067,7 +2068,10 @@ export default {
         exclusive: 'Exclusive Group',
         rpmLimit: 'Requests Per Minute (RPM)',
         rpmLimitPlaceholder: '0 = unlimited',
-        rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).'
+        rpmLimitHint: 'Max requests per minute for each user in this group; 0 = unlimited. Once set, it takes over per-user rate limiting in this group (overrides the user-level rpm_limit fallback).',
+        protocol: 'Protocol',
+        protocolNone: 'None',
+        protocolHint: 'Associate this group with a specific protocol for routing'
       },
       enterGroupName: 'Enter group name',
       optionalDescription: 'Optional description',

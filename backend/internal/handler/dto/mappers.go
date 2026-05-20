@@ -152,6 +152,8 @@ func GroupFromServiceAdmin(g *service.Group) *AdminGroup {
 		ActiveAccountCount:          g.ActiveAccountCount,
 		RateLimitedAccountCount:     g.RateLimitedAccountCount,
 		SortOrder:                   g.SortOrder,
+		ProtocolID:                  g.ProtocolID,
+		Protocol:                    ProtocolFromService(g.Protocol),
 	}
 	if len(g.AccountGroups) > 0 {
 		out.AccountGroups = make([]AccountGroup, 0, len(g.AccountGroups))
@@ -774,6 +776,22 @@ func PromoCodeFromService(pc *service.PromoCode) *PromoCode {
 		Notes:       pc.Notes,
 		CreatedAt:   pc.CreatedAt,
 		UpdatedAt:   pc.UpdatedAt,
+	}
+}
+
+func ProtocolFromService(p *service.Protocol) *Protocol {
+	if p == nil {
+		return nil
+	}
+	return &Protocol{
+		ID:              p.ID,
+		Name:            p.Name,
+		DisplayName:     p.DisplayName,
+		Platform:        p.Platform,
+		GatewayEndpoint: p.GatewayEndpoint,
+		IconSvg:         p.IconSvg,
+		ThemeColor:      p.ThemeColor,
+		SortOrder:       p.SortOrder,
 	}
 }
 

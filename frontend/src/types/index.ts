@@ -482,6 +482,19 @@ export interface PaginationConfig {
   page_size: number
 }
 
+// ==================== Protocol Types ====================
+
+export interface Protocol {
+  id: number
+  name: string
+  display_name: string
+  platform: string
+  gateway_endpoint: string
+  icon_svg?: string | null
+  theme_color: string
+  sort_order: number
+}
+
 // ==================== API Key & Group Types ====================
 
 export type GroupPlatform = 'anthropic' | 'openai' | 'gemini' | 'antigravity'
@@ -530,6 +543,9 @@ export interface Group {
 }
 
 export interface AdminGroup extends Group {
+  protocol_id?: number | null
+  protocol?: Protocol | null
+
   // 模型路由配置（仅管理员可见，内部信息）
   model_routing: Record<string, number[]> | null
   model_routing_enabled: boolean
@@ -615,6 +631,7 @@ export interface CreateGroupRequest {
   name: string
   description?: string | null
   platform?: GroupPlatform
+  protocol_id?: number | null
   rate_multiplier?: number
   is_exclusive?: boolean
   subscription_type?: SubscriptionType
@@ -642,6 +659,7 @@ export interface UpdateGroupRequest {
   name?: string
   description?: string | null
   platform?: GroupPlatform
+  protocol_id?: number | null
   rate_multiplier?: number
   is_exclusive?: boolean
   status?: 'active' | 'inactive'

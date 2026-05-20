@@ -41,6 +41,7 @@ func ProvideAdminHandlers(
 	serviceQuotaHandler *admin.ServiceQuotaHandler,
 	serviceQuotaMonitorHandler *admin.ServiceQuotaMonitorHandler,
 	affiliateHandler *admin.AffiliateHandler,
+	protocolHandler *admin.ProtocolHandler,
 ) *AdminHandlers {
 	return &AdminHandlers{
 		Dashboard:              dashboardHandler,
@@ -75,6 +76,7 @@ func ProvideAdminHandlers(
 		ServiceQuota:           serviceQuotaHandler,
 		ServiceQuotaMonitor:    serviceQuotaMonitorHandler,
 		Affiliate:              affiliateHandler,
+		Protocol:               protocolHandler,
 	}
 }
 
@@ -184,6 +186,7 @@ var ProviderSet = wire.NewSet(
 	admin.NewServiceQuotaHandler,
 	admin.NewServiceQuotaMonitorHandler,
 	admin.NewAffiliateHandler,
+	admin.NewProtocolHandler,
 
 	// AdminHandlers and Handlers constructors
 	ProvideAdminHandlers,

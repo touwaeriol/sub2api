@@ -67,7 +67,8 @@ func (r *groupRepository) Create(ctx context.Context, groupIn *service.Group) er
 		SetRequirePrivacySet(groupIn.RequirePrivacySet).
 		SetDefaultMappedModel(groupIn.DefaultMappedModel).
 		SetMessagesDispatchModelConfig(groupIn.MessagesDispatchModelConfig).
-		SetRpmLimit(groupIn.RPMLimit)
+		SetRpmLimit(groupIn.RPMLimit).
+		SetNillableProtocolID(groupIn.ProtocolID)
 
 	// 设置模型路由配置
 	if groupIn.ModelRouting != nil {
@@ -101,9 +102,9 @@ func (r *groupRepository) GetByID(ctx context.Context, id int64) (*service.Group
 }
 
 func (r *groupRepository) GetByIDLite(ctx context.Context, id int64) (*service.Group, error) {
-	// AccountCount is intentionally not loaded here; use GetByID when needed.
 	m, err := r.client.Group.Query().
 		Where(group.IDEQ(id)).
+		WithProtocol().
 		Only(ctx)
 	if err != nil {
 		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
@@ -195,6 +196,12 @@ func (r *groupRepository) Update(ctx context.Context, groupIn *service.Group) er
 	// 处理 SupportedModelScopes（始终设置，空数组表示不限制）
 	builder = builder.SetSupportedModelScopes(groupIn.SupportedModelScopes)
 
+	if groupIn.ProtocolID != nil {
+		builder = builder.SetProtocolID(*groupIn.ProtocolID)
+	} else {
+		builder = builder.ClearProtocolID()
+	}
+
 	updated, err := builder.Save(ctx)
 	if err != nil {
 		return translatePersistenceError(err, service.ErrGroupNotFound, service.ErrGroupExists)
@@ -250,6 +257,7 @@ func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination
 	}
 
 	groupsQuery := q.
+		WithProtocol().
 		Offset(params.Offset()).
 		Limit(params.Limit())
 	for _, order := range groupListOrder(params) {
@@ -284,6 +292,7 @@ func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination
 
 func (r *groupRepository) listWithAccountCountSort(ctx context.Context, q *dbent.GroupQuery, params pagination.PaginationParams, total int) ([]service.Group, *pagination.PaginationResult, error) {
 	groups, err := q.
+		WithProtocol().
 		Order(dbent.Asc(group.FieldSortOrder), dbent.Asc(group.FieldID)).
 		All(ctx)
 	if err != nil {
@@ -383,6 +392,7 @@ func groupListOrder(params pagination.PaginationParams) []func(*entsql.Selector)
 func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, error) {
 	groups, err := r.client.Group.Query().
 		Where(group.StatusEQ(service.StatusActive)).
+		WithProtocol().
 		Order(dbent.Asc(group.FieldSortOrder), dbent.Asc(group.FieldID)).
 		All(ctx)
 	if err != nil {
@@ -413,6 +423,7 @@ func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, erro
 func (r *groupRepository) ListActiveByPlatform(ctx context.Context, platform string) ([]service.Group, error) {
 	groups, err := r.client.Group.Query().
 		Where(group.StatusEQ(service.StatusActive), group.PlatformEQ(platform)).
+		WithProtocol().
 		Order(dbent.Asc(group.FieldSortOrder), dbent.Asc(group.FieldID)).
 		All(ctx)
 	if err != nil {

@@ -146,6 +146,9 @@ type AdminGroup struct {
 
 	// 分组排序
 	SortOrder int `json:"sort_order"`
+
+	ProtocolID *int64    `json:"protocol_id"`
+	Protocol   *Protocol `json:"protocol,omitempty"`
 }
 
 type Account struct {
@@ -548,6 +551,17 @@ type PromoCode struct {
 	Notes       string     `json:"notes"`
 	CreatedAt   time.Time  `json:"created_at"`
 	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type Protocol struct {
+	ID              int64   `json:"id"`
+	Name            string  `json:"name"`
+	DisplayName     string  `json:"display_name"`
+	Platform        string  `json:"platform"`
+	GatewayEndpoint string  `json:"gateway_endpoint"`
+	IconSvg         *string `json:"icon_svg"`
+	ThemeColor      string  `json:"theme_color"`
+	SortOrder       int     `json:"sort_order"`
 }
 
 // PromoCodeUsage 优惠码使用记录

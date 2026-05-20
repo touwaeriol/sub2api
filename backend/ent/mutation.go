@@ -34,6 +34,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
@@ -80,6 +81,7 @@ const (
 	TypePendingAuthSession            = "PendingAuthSession"
 	TypePromoCode                     = "PromoCode"
 	TypePromoCodeUsage                = "PromoCodeUsage"
+	TypeProtocol                      = "Protocol"
 	TypeProxy                         = "Proxy"
 	TypeRedeemCode                    = "RedeemCode"
 	TypeSecuritySecret                = "SecuritySecret"
@@ -14806,6 +14808,8 @@ type GroupMutation struct {
 	usage_logs                              map[int64]struct{}
 	removedusage_logs                       map[int64]struct{}
 	clearedusage_logs                       bool
+	protocol                                *int64
+	clearedprotocol                         bool
 	accounts                                map[int64]struct{}
 	removedaccounts                         map[int64]struct{}
 	clearedaccounts                         bool
@@ -16565,6 +16569,55 @@ func (m *GroupMutation) ResetRpmLimit() {
 	m.addrpm_limit = nil
 }
 
+// SetProtocolID sets the "protocol_id" field.
+func (m *GroupMutation) SetProtocolID(i int64) {
+	m.protocol = &i
+}
+
+// ProtocolID returns the value of the "protocol_id" field in the mutation.
+func (m *GroupMutation) ProtocolID() (r int64, exists bool) {
+	v := m.protocol
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldProtocolID returns the old "protocol_id" field's value of the Group entity.
+// If the Group object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *GroupMutation) OldProtocolID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldProtocolID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldProtocolID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldProtocolID: %w", err)
+	}
+	return oldValue.ProtocolID, nil
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (m *GroupMutation) ClearProtocolID() {
+	m.protocol = nil
+	m.clearedFields[group.FieldProtocolID] = struct{}{}
+}
+
+// ProtocolIDCleared returns if the "protocol_id" field was cleared in this mutation.
+func (m *GroupMutation) ProtocolIDCleared() bool {
+	_, ok := m.clearedFields[group.FieldProtocolID]
+	return ok
+}
+
+// ResetProtocolID resets all changes to the "protocol_id" field.
+func (m *GroupMutation) ResetProtocolID() {
+	m.protocol = nil
+	delete(m.clearedFields, group.FieldProtocolID)
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by ids.
 func (m *GroupMutation) AddAPIKeyIDs(ids ...int64) {
 	if m.api_keys == nil {
@@ -16781,6 +16834,33 @@ func (m *GroupMutation) ResetUsageLogs() {
 	m.removedusage_logs = nil
 }
 
+// ClearProtocol clears the "protocol" edge to the Protocol entity.
+func (m *GroupMutation) ClearProtocol() {
+	m.clearedprotocol = true
+	m.clearedFields[group.FieldProtocolID] = struct{}{}
+}
+
+// ProtocolCleared reports if the "protocol" edge to the Protocol entity was cleared.
+func (m *GroupMutation) ProtocolCleared() bool {
+	return m.ProtocolIDCleared() || m.clearedprotocol
+}
+
+// ProtocolIDs returns the "protocol" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// ProtocolID instead. It exists only for internal usage by the builders.
+func (m *GroupMutation) ProtocolIDs() (ids []int64) {
+	if id := m.protocol; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetProtocol resets all changes to the "protocol" edge.
+func (m *GroupMutation) ResetProtocol() {
+	m.protocol = nil
+	m.clearedprotocol = false
+}
+
 // AddAccountIDs adds the "accounts" edge to the Account entity by ids.
 func (m *GroupMutation) AddAccountIDs(ids ...int64) {
 	if m.accounts == nil {
@@ -16923,7 +17003,7 @@ func (m *GroupMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *GroupMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 35)
 	if m.created_at != nil {
 		fields = append(fields, group.FieldCreatedAt)
 	}
@@ -17026,6 +17106,9 @@ func (m *GroupMutation) Fields() []string {
 	if m.rpm_limit != nil {
 		fields = append(fields, group.FieldRpmLimit)
 	}
+	if m.protocol != nil {
+		fields = append(fields, group.FieldProtocolID)
+	}
 	return fields
 }
 
@@ -17102,6 +17185,8 @@ func (m *GroupMutation) Field(name string) (ent.Value, bool) {
 		return m.MessagesDispatchModelConfig()
 	case group.FieldRpmLimit:
 		return m.RpmLimit()
+	case group.FieldProtocolID:
+		return m.ProtocolID()
 	}
 	return nil, false
 }
@@ -17179,6 +17264,8 @@ func (m *GroupMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldMessagesDispatchModelConfig(ctx)
 	case group.FieldRpmLimit:
 		return m.OldRpmLimit(ctx)
+	case group.FieldProtocolID:
+		return m.OldProtocolID(ctx)
 	}
 	return nil, fmt.Errorf("unknown Group field %s", name)
 }
@@ -17426,6 +17513,13 @@ func (m *GroupMutation) SetField(name string, value ent.Value) error {
 		}
 		m.SetRpmLimit(v)
 		return nil
+	case group.FieldProtocolID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetProtocolID(v)
+		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
 }
@@ -17648,6 +17742,9 @@ func (m *GroupMutation) ClearedFields() []string {
 	if m.FieldCleared(group.FieldModelRouting) {
 		fields = append(fields, group.FieldModelRouting)
 	}
+	if m.FieldCleared(group.FieldProtocolID) {
+		fields = append(fields, group.FieldProtocolID)
+	}
 	return fields
 }
 
@@ -17694,6 +17791,9 @@ func (m *GroupMutation) ClearField(name string) error {
 		return nil
 	case group.FieldModelRouting:
 		m.ClearModelRouting()
+		return nil
+	case group.FieldProtocolID:
+		m.ClearProtocolID()
 		return nil
 	}
 	return fmt.Errorf("unknown Group nullable field %s", name)
@@ -17805,13 +17905,16 @@ func (m *GroupMutation) ResetField(name string) error {
 	case group.FieldRpmLimit:
 		m.ResetRpmLimit()
 		return nil
+	case group.FieldProtocolID:
+		m.ResetProtocolID()
+		return nil
 	}
 	return fmt.Errorf("unknown Group field %s", name)
 }
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *GroupMutation) AddedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.api_keys != nil {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -17823,6 +17926,9 @@ func (m *GroupMutation) AddedEdges() []string {
 	}
 	if m.usage_logs != nil {
 		edges = append(edges, group.EdgeUsageLogs)
+	}
+	if m.protocol != nil {
+		edges = append(edges, group.EdgeProtocol)
 	}
 	if m.accounts != nil {
 		edges = append(edges, group.EdgeAccounts)
@@ -17861,6 +17967,10 @@ func (m *GroupMutation) AddedIDs(name string) []ent.Value {
 			ids = append(ids, id)
 		}
 		return ids
+	case group.EdgeProtocol:
+		if id := m.protocol; id != nil {
+			return []ent.Value{*id}
+		}
 	case group.EdgeAccounts:
 		ids := make([]ent.Value, 0, len(m.accounts))
 		for id := range m.accounts {
@@ -17879,7 +17989,7 @@ func (m *GroupMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *GroupMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.removedapi_keys != nil {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -17947,7 +18057,7 @@ func (m *GroupMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *GroupMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 6)
+	edges := make([]string, 0, 7)
 	if m.clearedapi_keys {
 		edges = append(edges, group.EdgeAPIKeys)
 	}
@@ -17959,6 +18069,9 @@ func (m *GroupMutation) ClearedEdges() []string {
 	}
 	if m.clearedusage_logs {
 		edges = append(edges, group.EdgeUsageLogs)
+	}
+	if m.clearedprotocol {
+		edges = append(edges, group.EdgeProtocol)
 	}
 	if m.clearedaccounts {
 		edges = append(edges, group.EdgeAccounts)
@@ -17981,6 +18094,8 @@ func (m *GroupMutation) EdgeCleared(name string) bool {
 		return m.clearedsubscriptions
 	case group.EdgeUsageLogs:
 		return m.clearedusage_logs
+	case group.EdgeProtocol:
+		return m.clearedprotocol
 	case group.EdgeAccounts:
 		return m.clearedaccounts
 	case group.EdgeAllowedUsers:
@@ -17993,6 +18108,9 @@ func (m *GroupMutation) EdgeCleared(name string) bool {
 // if that edge is not defined in the schema.
 func (m *GroupMutation) ClearEdge(name string) error {
 	switch name {
+	case group.EdgeProtocol:
+		m.ClearProtocol()
+		return nil
 	}
 	return fmt.Errorf("unknown Group unique edge %s", name)
 }
@@ -18012,6 +18130,9 @@ func (m *GroupMutation) ResetEdge(name string) error {
 		return nil
 	case group.EdgeUsageLogs:
 		m.ResetUsageLogs()
+		return nil
+	case group.EdgeProtocol:
+		m.ResetProtocol()
 		return nil
 	case group.EdgeAccounts:
 		m.ResetAccounts()
@@ -27585,6 +27706,969 @@ func (m *PromoCodeUsageMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown PromoCodeUsage edge %s", name)
+}
+
+// ProtocolMutation represents an operation that mutates the Protocol nodes in the graph.
+type ProtocolMutation struct {
+	config
+	op               Op
+	typ              string
+	id               *int64
+	created_at       *time.Time
+	updated_at       *time.Time
+	name             *string
+	display_name     *string
+	platform         *string
+	gateway_endpoint *string
+	icon_svg         *string
+	theme_color      *string
+	sort_order       *int
+	addsort_order    *int
+	status           *string
+	clearedFields    map[string]struct{}
+	groups           map[int64]struct{}
+	removedgroups    map[int64]struct{}
+	clearedgroups    bool
+	done             bool
+	oldValue         func(context.Context) (*Protocol, error)
+	predicates       []predicate.Protocol
+}
+
+var _ ent.Mutation = (*ProtocolMutation)(nil)
+
+// protocolOption allows management of the mutation configuration using functional options.
+type protocolOption func(*ProtocolMutation)
+
+// newProtocolMutation creates new mutation for the Protocol entity.
+func newProtocolMutation(c config, op Op, opts ...protocolOption) *ProtocolMutation {
+	m := &ProtocolMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeProtocol,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withProtocolID sets the ID field of the mutation.
+func withProtocolID(id int64) protocolOption {
+	return func(m *ProtocolMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *Protocol
+		)
+		m.oldValue = func(ctx context.Context) (*Protocol, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().Protocol.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withProtocol sets the old Protocol of the mutation.
+func withProtocol(node *Protocol) protocolOption {
+	return func(m *ProtocolMutation) {
+		m.oldValue = func(context.Context) (*Protocol, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ProtocolMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ProtocolMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ProtocolMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ProtocolMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().Protocol.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ProtocolMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ProtocolMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ProtocolMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ProtocolMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ProtocolMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ProtocolMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetName sets the "name" field.
+func (m *ProtocolMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *ProtocolMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *ProtocolMutation) ResetName() {
+	m.name = nil
+}
+
+// SetDisplayName sets the "display_name" field.
+func (m *ProtocolMutation) SetDisplayName(s string) {
+	m.display_name = &s
+}
+
+// DisplayName returns the value of the "display_name" field in the mutation.
+func (m *ProtocolMutation) DisplayName() (r string, exists bool) {
+	v := m.display_name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDisplayName returns the old "display_name" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldDisplayName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDisplayName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDisplayName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDisplayName: %w", err)
+	}
+	return oldValue.DisplayName, nil
+}
+
+// ResetDisplayName resets all changes to the "display_name" field.
+func (m *ProtocolMutation) ResetDisplayName() {
+	m.display_name = nil
+}
+
+// SetPlatform sets the "platform" field.
+func (m *ProtocolMutation) SetPlatform(s string) {
+	m.platform = &s
+}
+
+// Platform returns the value of the "platform" field in the mutation.
+func (m *ProtocolMutation) Platform() (r string, exists bool) {
+	v := m.platform
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldPlatform returns the old "platform" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldPlatform(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldPlatform is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldPlatform requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldPlatform: %w", err)
+	}
+	return oldValue.Platform, nil
+}
+
+// ResetPlatform resets all changes to the "platform" field.
+func (m *ProtocolMutation) ResetPlatform() {
+	m.platform = nil
+}
+
+// SetGatewayEndpoint sets the "gateway_endpoint" field.
+func (m *ProtocolMutation) SetGatewayEndpoint(s string) {
+	m.gateway_endpoint = &s
+}
+
+// GatewayEndpoint returns the value of the "gateway_endpoint" field in the mutation.
+func (m *ProtocolMutation) GatewayEndpoint() (r string, exists bool) {
+	v := m.gateway_endpoint
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldGatewayEndpoint returns the old "gateway_endpoint" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldGatewayEndpoint(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldGatewayEndpoint is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldGatewayEndpoint requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldGatewayEndpoint: %w", err)
+	}
+	return oldValue.GatewayEndpoint, nil
+}
+
+// ResetGatewayEndpoint resets all changes to the "gateway_endpoint" field.
+func (m *ProtocolMutation) ResetGatewayEndpoint() {
+	m.gateway_endpoint = nil
+}
+
+// SetIconSvg sets the "icon_svg" field.
+func (m *ProtocolMutation) SetIconSvg(s string) {
+	m.icon_svg = &s
+}
+
+// IconSvg returns the value of the "icon_svg" field in the mutation.
+func (m *ProtocolMutation) IconSvg() (r string, exists bool) {
+	v := m.icon_svg
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldIconSvg returns the old "icon_svg" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldIconSvg(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldIconSvg is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldIconSvg requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldIconSvg: %w", err)
+	}
+	return oldValue.IconSvg, nil
+}
+
+// ClearIconSvg clears the value of the "icon_svg" field.
+func (m *ProtocolMutation) ClearIconSvg() {
+	m.icon_svg = nil
+	m.clearedFields[protocol.FieldIconSvg] = struct{}{}
+}
+
+// IconSvgCleared returns if the "icon_svg" field was cleared in this mutation.
+func (m *ProtocolMutation) IconSvgCleared() bool {
+	_, ok := m.clearedFields[protocol.FieldIconSvg]
+	return ok
+}
+
+// ResetIconSvg resets all changes to the "icon_svg" field.
+func (m *ProtocolMutation) ResetIconSvg() {
+	m.icon_svg = nil
+	delete(m.clearedFields, protocol.FieldIconSvg)
+}
+
+// SetThemeColor sets the "theme_color" field.
+func (m *ProtocolMutation) SetThemeColor(s string) {
+	m.theme_color = &s
+}
+
+// ThemeColor returns the value of the "theme_color" field in the mutation.
+func (m *ProtocolMutation) ThemeColor() (r string, exists bool) {
+	v := m.theme_color
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldThemeColor returns the old "theme_color" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldThemeColor(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldThemeColor is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldThemeColor requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldThemeColor: %w", err)
+	}
+	return oldValue.ThemeColor, nil
+}
+
+// ResetThemeColor resets all changes to the "theme_color" field.
+func (m *ProtocolMutation) ResetThemeColor() {
+	m.theme_color = nil
+}
+
+// SetSortOrder sets the "sort_order" field.
+func (m *ProtocolMutation) SetSortOrder(i int) {
+	m.sort_order = &i
+	m.addsort_order = nil
+}
+
+// SortOrder returns the value of the "sort_order" field in the mutation.
+func (m *ProtocolMutation) SortOrder() (r int, exists bool) {
+	v := m.sort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldSortOrder returns the old "sort_order" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldSortOrder(ctx context.Context) (v int, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldSortOrder is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldSortOrder requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldSortOrder: %w", err)
+	}
+	return oldValue.SortOrder, nil
+}
+
+// AddSortOrder adds i to the "sort_order" field.
+func (m *ProtocolMutation) AddSortOrder(i int) {
+	if m.addsort_order != nil {
+		*m.addsort_order += i
+	} else {
+		m.addsort_order = &i
+	}
+}
+
+// AddedSortOrder returns the value that was added to the "sort_order" field in this mutation.
+func (m *ProtocolMutation) AddedSortOrder() (r int, exists bool) {
+	v := m.addsort_order
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetSortOrder resets all changes to the "sort_order" field.
+func (m *ProtocolMutation) ResetSortOrder() {
+	m.sort_order = nil
+	m.addsort_order = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ProtocolMutation) SetStatus(s string) {
+	m.status = &s
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ProtocolMutation) Status() (r string, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the Protocol entity.
+// If the Protocol object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProtocolMutation) OldStatus(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ProtocolMutation) ResetStatus() {
+	m.status = nil
+}
+
+// AddGroupIDs adds the "groups" edge to the Group entity by ids.
+func (m *ProtocolMutation) AddGroupIDs(ids ...int64) {
+	if m.groups == nil {
+		m.groups = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.groups[ids[i]] = struct{}{}
+	}
+}
+
+// ClearGroups clears the "groups" edge to the Group entity.
+func (m *ProtocolMutation) ClearGroups() {
+	m.clearedgroups = true
+}
+
+// GroupsCleared reports if the "groups" edge to the Group entity was cleared.
+func (m *ProtocolMutation) GroupsCleared() bool {
+	return m.clearedgroups
+}
+
+// RemoveGroupIDs removes the "groups" edge to the Group entity by IDs.
+func (m *ProtocolMutation) RemoveGroupIDs(ids ...int64) {
+	if m.removedgroups == nil {
+		m.removedgroups = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.groups, ids[i])
+		m.removedgroups[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedGroups returns the removed IDs of the "groups" edge to the Group entity.
+func (m *ProtocolMutation) RemovedGroupsIDs() (ids []int64) {
+	for id := range m.removedgroups {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// GroupsIDs returns the "groups" edge IDs in the mutation.
+func (m *ProtocolMutation) GroupsIDs() (ids []int64) {
+	for id := range m.groups {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetGroups resets all changes to the "groups" edge.
+func (m *ProtocolMutation) ResetGroups() {
+	m.groups = nil
+	m.clearedgroups = false
+	m.removedgroups = nil
+}
+
+// Where appends a list predicates to the ProtocolMutation builder.
+func (m *ProtocolMutation) Where(ps ...predicate.Protocol) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ProtocolMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ProtocolMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.Protocol, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ProtocolMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ProtocolMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (Protocol).
+func (m *ProtocolMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ProtocolMutation) Fields() []string {
+	fields := make([]string, 0, 10)
+	if m.created_at != nil {
+		fields = append(fields, protocol.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, protocol.FieldUpdatedAt)
+	}
+	if m.name != nil {
+		fields = append(fields, protocol.FieldName)
+	}
+	if m.display_name != nil {
+		fields = append(fields, protocol.FieldDisplayName)
+	}
+	if m.platform != nil {
+		fields = append(fields, protocol.FieldPlatform)
+	}
+	if m.gateway_endpoint != nil {
+		fields = append(fields, protocol.FieldGatewayEndpoint)
+	}
+	if m.icon_svg != nil {
+		fields = append(fields, protocol.FieldIconSvg)
+	}
+	if m.theme_color != nil {
+		fields = append(fields, protocol.FieldThemeColor)
+	}
+	if m.sort_order != nil {
+		fields = append(fields, protocol.FieldSortOrder)
+	}
+	if m.status != nil {
+		fields = append(fields, protocol.FieldStatus)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ProtocolMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case protocol.FieldCreatedAt:
+		return m.CreatedAt()
+	case protocol.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case protocol.FieldName:
+		return m.Name()
+	case protocol.FieldDisplayName:
+		return m.DisplayName()
+	case protocol.FieldPlatform:
+		return m.Platform()
+	case protocol.FieldGatewayEndpoint:
+		return m.GatewayEndpoint()
+	case protocol.FieldIconSvg:
+		return m.IconSvg()
+	case protocol.FieldThemeColor:
+		return m.ThemeColor()
+	case protocol.FieldSortOrder:
+		return m.SortOrder()
+	case protocol.FieldStatus:
+		return m.Status()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ProtocolMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case protocol.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case protocol.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case protocol.FieldName:
+		return m.OldName(ctx)
+	case protocol.FieldDisplayName:
+		return m.OldDisplayName(ctx)
+	case protocol.FieldPlatform:
+		return m.OldPlatform(ctx)
+	case protocol.FieldGatewayEndpoint:
+		return m.OldGatewayEndpoint(ctx)
+	case protocol.FieldIconSvg:
+		return m.OldIconSvg(ctx)
+	case protocol.FieldThemeColor:
+		return m.OldThemeColor(ctx)
+	case protocol.FieldSortOrder:
+		return m.OldSortOrder(ctx)
+	case protocol.FieldStatus:
+		return m.OldStatus(ctx)
+	}
+	return nil, fmt.Errorf("unknown Protocol field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ProtocolMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case protocol.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case protocol.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case protocol.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case protocol.FieldDisplayName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDisplayName(v)
+		return nil
+	case protocol.FieldPlatform:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetPlatform(v)
+		return nil
+	case protocol.FieldGatewayEndpoint:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetGatewayEndpoint(v)
+		return nil
+	case protocol.FieldIconSvg:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetIconSvg(v)
+		return nil
+	case protocol.FieldThemeColor:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetThemeColor(v)
+		return nil
+	case protocol.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetSortOrder(v)
+		return nil
+	case protocol.FieldStatus:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	}
+	return fmt.Errorf("unknown Protocol field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ProtocolMutation) AddedFields() []string {
+	var fields []string
+	if m.addsort_order != nil {
+		fields = append(fields, protocol.FieldSortOrder)
+	}
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ProtocolMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	case protocol.FieldSortOrder:
+		return m.AddedSortOrder()
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ProtocolMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	case protocol.FieldSortOrder:
+		v, ok := value.(int)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddSortOrder(v)
+		return nil
+	}
+	return fmt.Errorf("unknown Protocol numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ProtocolMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(protocol.FieldIconSvg) {
+		fields = append(fields, protocol.FieldIconSvg)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ProtocolMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ProtocolMutation) ClearField(name string) error {
+	switch name {
+	case protocol.FieldIconSvg:
+		m.ClearIconSvg()
+		return nil
+	}
+	return fmt.Errorf("unknown Protocol nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ProtocolMutation) ResetField(name string) error {
+	switch name {
+	case protocol.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case protocol.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case protocol.FieldName:
+		m.ResetName()
+		return nil
+	case protocol.FieldDisplayName:
+		m.ResetDisplayName()
+		return nil
+	case protocol.FieldPlatform:
+		m.ResetPlatform()
+		return nil
+	case protocol.FieldGatewayEndpoint:
+		m.ResetGatewayEndpoint()
+		return nil
+	case protocol.FieldIconSvg:
+		m.ResetIconSvg()
+		return nil
+	case protocol.FieldThemeColor:
+		m.ResetThemeColor()
+		return nil
+	case protocol.FieldSortOrder:
+		m.ResetSortOrder()
+		return nil
+	case protocol.FieldStatus:
+		m.ResetStatus()
+		return nil
+	}
+	return fmt.Errorf("unknown Protocol field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ProtocolMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.groups != nil {
+		edges = append(edges, protocol.EdgeGroups)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ProtocolMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case protocol.EdgeGroups:
+		ids := make([]ent.Value, 0, len(m.groups))
+		for id := range m.groups {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ProtocolMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.removedgroups != nil {
+		edges = append(edges, protocol.EdgeGroups)
+	}
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ProtocolMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case protocol.EdgeGroups:
+		ids := make([]ent.Value, 0, len(m.removedgroups))
+		for id := range m.removedgroups {
+			ids = append(ids, id)
+		}
+		return ids
+	}
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ProtocolMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.clearedgroups {
+		edges = append(edges, protocol.EdgeGroups)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ProtocolMutation) EdgeCleared(name string) bool {
+	switch name {
+	case protocol.EdgeGroups:
+		return m.clearedgroups
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ProtocolMutation) ClearEdge(name string) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown Protocol unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ProtocolMutation) ResetEdge(name string) error {
+	switch name {
+	case protocol.EdgeGroups:
+		m.ResetGroups()
+		return nil
+	}
+	return fmt.Errorf("unknown Protocol edge %s", name)
 }
 
 // ProxyMutation represents an operation that mutates the Proxy nodes in the graph.

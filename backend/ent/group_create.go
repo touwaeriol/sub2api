@@ -14,6 +14,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/account"
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
@@ -481,6 +482,20 @@ func (_c *GroupCreate) SetNillableRpmLimit(v *int) *GroupCreate {
 	return _c
 }
 
+// SetProtocolID sets the "protocol_id" field.
+func (_c *GroupCreate) SetProtocolID(v int64) *GroupCreate {
+	_c.mutation.SetProtocolID(v)
+	return _c
+}
+
+// SetNillableProtocolID sets the "protocol_id" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableProtocolID(v *int64) *GroupCreate {
+	if v != nil {
+		_c.SetProtocolID(*v)
+	}
+	return _c
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_c *GroupCreate) AddAPIKeyIDs(ids ...int64) *GroupCreate {
 	_c.mutation.AddAPIKeyIDs(ids...)
@@ -539,6 +554,11 @@ func (_c *GroupCreate) AddUsageLogs(v ...*UsageLog) *GroupCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddUsageLogIDs(ids...)
+}
+
+// SetProtocol sets the "protocol" edge to the Protocol entity.
+func (_c *GroupCreate) SetProtocol(v *Protocol) *GroupCreate {
+	return _c.SetProtocolID(v.ID)
 }
 
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
@@ -1026,6 +1046,23 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 		for _, k := range nodes {
 			edge.Target.Nodes = append(edge.Target.Nodes, k)
 		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.ProtocolIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   group.ProtocolTable,
+			Columns: []string{group.ProtocolColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(protocol.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_node.ProtocolID = &nodes[0]
 		_spec.Edges = append(_spec.Edges, edge)
 	}
 	if nodes := _c.mutation.AccountsIDs(); len(nodes) > 0 {
@@ -1657,6 +1694,24 @@ func (u *GroupUpsert) UpdateRpmLimit() *GroupUpsert {
 // AddRpmLimit adds v to the "rpm_limit" field.
 func (u *GroupUpsert) AddRpmLimit(v int) *GroupUpsert {
 	u.Add(group.FieldRpmLimit, v)
+	return u
+}
+
+// SetProtocolID sets the "protocol_id" field.
+func (u *GroupUpsert) SetProtocolID(v int64) *GroupUpsert {
+	u.Set(group.FieldProtocolID, v)
+	return u
+}
+
+// UpdateProtocolID sets the "protocol_id" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateProtocolID() *GroupUpsert {
+	u.SetExcluded(group.FieldProtocolID)
+	return u
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (u *GroupUpsert) ClearProtocolID() *GroupUpsert {
+	u.SetNull(group.FieldProtocolID)
 	return u
 }
 
@@ -2332,6 +2387,27 @@ func (u *GroupUpsertOne) AddRpmLimit(v int) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateRpmLimit() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetProtocolID sets the "protocol_id" field.
+func (u *GroupUpsertOne) SetProtocolID(v int64) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetProtocolID(v)
+	})
+}
+
+// UpdateProtocolID sets the "protocol_id" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateProtocolID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateProtocolID()
+	})
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (u *GroupUpsertOne) ClearProtocolID() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearProtocolID()
 	})
 }
 
@@ -3173,6 +3249,27 @@ func (u *GroupUpsertBulk) AddRpmLimit(v int) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateRpmLimit() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateRpmLimit()
+	})
+}
+
+// SetProtocolID sets the "protocol_id" field.
+func (u *GroupUpsertBulk) SetProtocolID(v int64) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetProtocolID(v)
+	})
+}
+
+// UpdateProtocolID sets the "protocol_id" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateProtocolID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateProtocolID()
+	})
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (u *GroupUpsertBulk) ClearProtocolID() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.ClearProtocolID()
 	})
 }
 

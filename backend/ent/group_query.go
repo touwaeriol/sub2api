@@ -18,6 +18,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
@@ -36,6 +37,7 @@ type GroupQuery struct {
 	withRedeemCodes       *RedeemCodeQuery
 	withSubscriptions     *UserSubscriptionQuery
 	withUsageLogs         *UsageLogQuery
+	withProtocol          *ProtocolQuery
 	withAccounts          *AccountQuery
 	withAllowedUsers      *UserQuery
 	withAccountGroups     *AccountGroupQuery
@@ -158,6 +160,28 @@ func (_q *GroupQuery) QueryUsageLogs() *UsageLogQuery {
 			sqlgraph.From(group.Table, group.FieldID, selector),
 			sqlgraph.To(usagelog.Table, usagelog.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, group.UsageLogsTable, group.UsageLogsColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryProtocol chains the current query on the "protocol" edge.
+func (_q *GroupQuery) QueryProtocol() *ProtocolQuery {
+	query := (&ProtocolClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(group.Table, group.FieldID, selector),
+			sqlgraph.To(protocol.Table, protocol.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, group.ProtocolTable, group.ProtocolColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -449,6 +473,7 @@ func (_q *GroupQuery) Clone() *GroupQuery {
 		withRedeemCodes:       _q.withRedeemCodes.Clone(),
 		withSubscriptions:     _q.withSubscriptions.Clone(),
 		withUsageLogs:         _q.withUsageLogs.Clone(),
+		withProtocol:          _q.withProtocol.Clone(),
 		withAccounts:          _q.withAccounts.Clone(),
 		withAllowedUsers:      _q.withAllowedUsers.Clone(),
 		withAccountGroups:     _q.withAccountGroups.Clone(),
@@ -500,6 +525,17 @@ func (_q *GroupQuery) WithUsageLogs(opts ...func(*UsageLogQuery)) *GroupQuery {
 		opt(query)
 	}
 	_q.withUsageLogs = query
+	return _q
+}
+
+// WithProtocol tells the query-builder to eager-load the nodes that are connected to
+// the "protocol" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *GroupQuery) WithProtocol(opts ...func(*ProtocolQuery)) *GroupQuery {
+	query := (&ProtocolClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withProtocol = query
 	return _q
 }
 
@@ -625,11 +661,12 @@ func (_q *GroupQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Group,
 	var (
 		nodes       = []*Group{}
 		_spec       = _q.querySpec()
-		loadedTypes = [8]bool{
+		loadedTypes = [9]bool{
 			_q.withAPIKeys != nil,
 			_q.withRedeemCodes != nil,
 			_q.withSubscriptions != nil,
 			_q.withUsageLogs != nil,
+			_q.withProtocol != nil,
 			_q.withAccounts != nil,
 			_q.withAllowedUsers != nil,
 			_q.withAccountGroups != nil,
@@ -682,6 +719,12 @@ func (_q *GroupQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*Group,
 		if err := _q.loadUsageLogs(ctx, query, nodes,
 			func(n *Group) { n.Edges.UsageLogs = []*UsageLog{} },
 			func(n *Group, e *UsageLog) { n.Edges.UsageLogs = append(n.Edges.UsageLogs, e) }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withProtocol; query != nil {
+		if err := _q.loadProtocol(ctx, query, nodes, nil,
+			func(n *Group, e *Protocol) { n.Edges.Protocol = e }); err != nil {
 			return nil, err
 		}
 	}
@@ -842,6 +885,38 @@ func (_q *GroupQuery) loadUsageLogs(ctx context.Context, query *UsageLogQuery, n
 			return fmt.Errorf(`unexpected referenced foreign-key "group_id" returned %v for node %v`, *fk, n.ID)
 		}
 		assign(node, n)
+	}
+	return nil
+}
+func (_q *GroupQuery) loadProtocol(ctx context.Context, query *ProtocolQuery, nodes []*Group, init func(*Group), assign func(*Group, *Protocol)) error {
+	ids := make([]int64, 0, len(nodes))
+	nodeids := make(map[int64][]*Group)
+	for i := range nodes {
+		if nodes[i].ProtocolID == nil {
+			continue
+		}
+		fk := *nodes[i].ProtocolID
+		if _, ok := nodeids[fk]; !ok {
+			ids = append(ids, fk)
+		}
+		nodeids[fk] = append(nodeids[fk], nodes[i])
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	query.Where(protocol.IDIn(ids...))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		nodes, ok := nodeids[n.ID]
+		if !ok {
+			return fmt.Errorf(`unexpected foreign-key "protocol_id" returned %v`, n.ID)
+		}
+		for i := range nodes {
+			assign(nodes[i], n)
+		}
 	}
 	return nil
 }
@@ -1055,6 +1130,9 @@ func (_q *GroupQuery) querySpec() *sqlgraph.QuerySpec {
 			if fields[i] != group.FieldID {
 				_spec.Node.Columns = append(_spec.Node.Columns, fields[i])
 			}
+		}
+		if _q.withProtocol != nil {
+			_spec.Node.AddColumnOnce(group.FieldProtocolID)
 		}
 	}
 	if ps := _q.predicates; len(ps) > 0 {

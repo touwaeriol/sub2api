@@ -26,6 +26,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/schema"
@@ -1258,6 +1259,109 @@ func init() {
 	promocodeusageDescUsedAt := promocodeusageFields[3].Descriptor()
 	// promocodeusage.DefaultUsedAt holds the default value on creation for the used_at field.
 	promocodeusage.DefaultUsedAt = promocodeusageDescUsedAt.Default.(func() time.Time)
+	protocolMixin := schema.Protocol{}.Mixin()
+	protocolMixinFields0 := protocolMixin[0].Fields()
+	_ = protocolMixinFields0
+	protocolFields := schema.Protocol{}.Fields()
+	_ = protocolFields
+	// protocolDescCreatedAt is the schema descriptor for created_at field.
+	protocolDescCreatedAt := protocolMixinFields0[0].Descriptor()
+	// protocol.DefaultCreatedAt holds the default value on creation for the created_at field.
+	protocol.DefaultCreatedAt = protocolDescCreatedAt.Default.(func() time.Time)
+	// protocolDescUpdatedAt is the schema descriptor for updated_at field.
+	protocolDescUpdatedAt := protocolMixinFields0[1].Descriptor()
+	// protocol.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	protocol.DefaultUpdatedAt = protocolDescUpdatedAt.Default.(func() time.Time)
+	// protocol.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	protocol.UpdateDefaultUpdatedAt = protocolDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// protocolDescName is the schema descriptor for name field.
+	protocolDescName := protocolFields[0].Descriptor()
+	// protocol.NameValidator is a validator for the "name" field. It is called by the builders before save.
+	protocol.NameValidator = func() func(string) error {
+		validators := protocolDescName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(name string) error {
+			for _, fn := range fns {
+				if err := fn(name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// protocolDescDisplayName is the schema descriptor for display_name field.
+	protocolDescDisplayName := protocolFields[1].Descriptor()
+	// protocol.DisplayNameValidator is a validator for the "display_name" field. It is called by the builders before save.
+	protocol.DisplayNameValidator = func() func(string) error {
+		validators := protocolDescDisplayName.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(display_name string) error {
+			for _, fn := range fns {
+				if err := fn(display_name); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// protocolDescPlatform is the schema descriptor for platform field.
+	protocolDescPlatform := protocolFields[2].Descriptor()
+	// protocol.PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
+	protocol.PlatformValidator = func() func(string) error {
+		validators := protocolDescPlatform.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(platform string) error {
+			for _, fn := range fns {
+				if err := fn(platform); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// protocolDescGatewayEndpoint is the schema descriptor for gateway_endpoint field.
+	protocolDescGatewayEndpoint := protocolFields[3].Descriptor()
+	// protocol.GatewayEndpointValidator is a validator for the "gateway_endpoint" field. It is called by the builders before save.
+	protocol.GatewayEndpointValidator = func() func(string) error {
+		validators := protocolDescGatewayEndpoint.Validators
+		fns := [...]func(string) error{
+			validators[0].(func(string) error),
+			validators[1].(func(string) error),
+		}
+		return func(gateway_endpoint string) error {
+			for _, fn := range fns {
+				if err := fn(gateway_endpoint); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+	}()
+	// protocolDescThemeColor is the schema descriptor for theme_color field.
+	protocolDescThemeColor := protocolFields[5].Descriptor()
+	// protocol.DefaultThemeColor holds the default value on creation for the theme_color field.
+	protocol.DefaultThemeColor = protocolDescThemeColor.Default.(string)
+	// protocol.ThemeColorValidator is a validator for the "theme_color" field. It is called by the builders before save.
+	protocol.ThemeColorValidator = protocolDescThemeColor.Validators[0].(func(string) error)
+	// protocolDescSortOrder is the schema descriptor for sort_order field.
+	protocolDescSortOrder := protocolFields[6].Descriptor()
+	// protocol.DefaultSortOrder holds the default value on creation for the sort_order field.
+	protocol.DefaultSortOrder = protocolDescSortOrder.Default.(int)
+	// protocolDescStatus is the schema descriptor for status field.
+	protocolDescStatus := protocolFields[7].Descriptor()
+	// protocol.DefaultStatus holds the default value on creation for the status field.
+	protocol.DefaultStatus = protocolDescStatus.Default.(string)
+	// protocol.StatusValidator is a validator for the "status" field. It is called by the builders before save.
+	protocol.StatusValidator = protocolDescStatus.Validators[0].(func(string) error)
 	proxyMixin := schema.Proxy{}.Mixin()
 	proxyMixinHooks1 := proxyMixin[1].Hooks()
 	proxy.Hooks[0] = proxyMixinHooks1[0]

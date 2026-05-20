@@ -690,7 +690,7 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 	if g == nil {
 		return nil
 	}
-	return &service.Group{
+	out := &service.Group{
 		ID:                              g.ID,
 		Name:                            g.Name,
 		Description:                     derefString(g.Description),
@@ -724,9 +724,23 @@ func groupEntityToService(g *dbent.Group) *service.Group {
 		DefaultMappedModel:              g.DefaultMappedModel,
 		MessagesDispatchModelConfig:     g.MessagesDispatchModelConfig,
 		RPMLimit:                        g.RpmLimit,
+		ProtocolID:                      g.ProtocolID,
 		CreatedAt:                       g.CreatedAt,
 		UpdatedAt:                       g.UpdatedAt,
 	}
+	if p := g.Edges.Protocol; p != nil {
+		out.Protocol = &service.Protocol{
+			ID:              p.ID,
+			Name:            p.Name,
+			DisplayName:     p.DisplayName,
+			Platform:        p.Platform,
+			GatewayEndpoint: p.GatewayEndpoint,
+			IconSvg:         p.IconSvg,
+			ThemeColor:      p.ThemeColor,
+			SortOrder:       p.SortOrder,
+		}
+	}
+	return out
 }
 
 func derefString(s *string) string {

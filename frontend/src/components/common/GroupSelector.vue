@@ -18,34 +18,42 @@
     </div>
     <div
       :class="[
-        'grid max-h-32 grid-cols-2 gap-1 overflow-y-auto p-2',
+        'max-h-48 overflow-y-auto p-2',
         isSearchable
           ? 'rounded-b-lg border border-t-0 border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
           : 'rounded-lg border border-gray-200 bg-gray-50 dark:border-dark-600 dark:bg-dark-800'
       ]"
     >
-      <label
-        v-for="group in filteredGroups"
-        :key="group.id"
-        class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 transition-colors hover:bg-white dark:hover:bg-dark-700"
-        :title="t('admin.groups.rateAndAccounts', { rate: group.rate_multiplier, count: group.account_count || 0 })"
-      >
-        <input
-          type="checkbox"
-          :value="group.id"
+      <template v-if="hasProtocolSections">
+        <div v-for="section in protocolSections" :key="section.protocolId ?? 'ungrouped'" class="mb-2 last:mb-0">
+          <div class="mb-1 flex items-center gap-1.5 px-1 text-xs font-medium text-gray-500 dark:text-gray-400">
+            <span
+              v-if="section.themeColor"
+              class="inline-block h-2 w-2 rounded-full"
+              :style="{ backgroundColor: section.themeColor }"
+            />
+            {{ section.label }}
+          </div>
+          <div class="grid grid-cols-2 gap-1">
+            <GroupCheckboxItem
+              v-for="group in section.groups"
+              :key="group.id"
+              :group="group"
+              :checked="modelValue.includes(group.id)"
+              @toggle="handleChange(group.id, $event)"
+            />
+          </div>
+        </div>
+      </template>
+      <div v-else class="grid grid-cols-2 gap-1">
+        <GroupCheckboxItem
+          v-for="group in filteredGroups"
+          :key="group.id"
+          :group="group"
           :checked="modelValue.includes(group.id)"
-          @change="handleChange(group.id, ($event.target as HTMLInputElement).checked)"
-          class="h-3.5 w-3.5 shrink-0 rounded border-gray-300 text-primary-500 focus:ring-primary-500 dark:border-dark-500"
+          @toggle="handleChange(group.id, $event)"
         />
-        <GroupBadge
-          :name="group.name"
-          :platform="group.platform"
-          :subscription-type="group.subscription_type"
-          :rate-multiplier="group.rate_multiplier"
-          class="min-w-0 flex-1"
-        />
-        <span class="shrink-0 text-xs text-gray-400">{{ group.account_count || 0 }}</span>
-      </label>
+      </div>
       <div
         v-if="filteredGroups.length === 0"
         class="col-span-2 py-2 text-center text-sm text-gray-500 dark:text-gray-400"
@@ -59,17 +67,25 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import GroupBadge from './GroupBadge.vue'
+import GroupCheckboxItem from './GroupCheckboxItem.vue'
 import Icon from '@/components/icons/Icon.vue'
-import type { AdminGroup, GroupPlatform } from '@/types'
+import type { AdminGroup, GroupPlatform, Protocol } from '@/types'
 
 const { t } = useI18n()
+
+interface ProtocolSection {
+  protocolId: number | null
+  label: string
+  themeColor: string | null
+  groups: AdminGroup[]
+}
 
 interface Props {
   modelValue: number[]
   groups: AdminGroup[]
-  platform?: GroupPlatform // Optional platform filter
-  mixedScheduling?: boolean // For antigravity accounts: allow anthropic/gemini groups
+  platform?: GroupPlatform
+  protocols?: Protocol[]
+  mixedScheduling?: boolean
   searchable?: boolean | 'auto'
 }
 
@@ -87,17 +103,14 @@ const isSearchable = computed(() => {
   return props.searchable
 })
 
-// Filter groups by platform if specified
 const filteredGroups = computed(() => {
   let result: AdminGroup[] = props.groups
   if (props.platform) {
-    // antigravity 账户启用混合调度后，可选择 anthropic/gemini 分组
     if (props.platform === 'antigravity' && props.mixedScheduling) {
       result = result.filter(
         (g) => g.platform === 'antigravity' || g.platform === 'anthropic' || g.platform === 'gemini'
       )
     } else {
-      // 默认：只能选择同 platform 的分组
       result = result.filter((g) => g.platform === props.platform)
     }
   }
@@ -108,6 +121,40 @@ const filteredGroups = computed(() => {
     )
   }
   return result
+})
+
+const hasProtocolSections = computed(() => {
+  return props.protocols && props.protocols.length > 0
+})
+
+const protocolSections = computed<ProtocolSection[]>(() => {
+  if (!props.protocols || props.protocols.length === 0) return []
+  const groups = filteredGroups.value
+  const sorted = [...props.protocols].sort((a, b) => a.sort_order - b.sort_order)
+  const sections: ProtocolSection[] = []
+  for (const proto of sorted) {
+    const matched = groups.filter((g) => g.protocol_id === proto.id)
+    if (matched.length > 0) {
+      sections.push({
+        protocolId: proto.id,
+        label: proto.display_name,
+        themeColor: proto.theme_color || null,
+        groups: matched
+      })
+    }
+  }
+  const unmatched = groups.filter(
+    (g) => !g.protocol_id || !sorted.some((p) => p.id === g.protocol_id)
+  )
+  if (unmatched.length > 0) {
+    sections.push({
+      protocolId: null,
+      label: t('common.other'),
+      themeColor: null,
+      groups: unmatched
+    })
+  }
+  return sections
 })
 
 const handleChange = (groupId: number, checked: boolean) => {

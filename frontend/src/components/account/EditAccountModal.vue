@@ -2137,6 +2137,7 @@
         v-model="form.group_ids"
         :groups="groups"
         :platform="account?.platform"
+        :protocols="platformProtocols"
         :mixed-scheduling="mixedScheduling"
         data-tour="account-form-groups"
       />
@@ -2201,7 +2202,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { adminAPI } from '@/api/admin'
 import { useQuotaNotifyState } from '@/composables/useQuotaNotifyState'
-import type { Account, Proxy, AdminGroup, CheckMixedChannelResponse, OpenAICompactMode } from '@/types'
+import type { Account, Proxy, AdminGroup, Protocol, CheckMixedChannelResponse, OpenAICompactMode } from '@/types'
 import BaseDialog from '@/components/common/BaseDialog.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
 import Select from '@/components/common/Select.vue'
@@ -2302,6 +2303,7 @@ const selectedErrorCodes = ref<number[]>([])
 const customErrorCodeInput = ref<number | null>(null)
 const interceptWarmupRequests = ref(false)
 const autoPauseOnExpired = ref(false)
+const platformProtocols = ref<Protocol[]>([])
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityModelRestrictionMode = ref<'whitelist' | 'mapping'>('whitelist')
@@ -2911,6 +2913,11 @@ watch(
     if (!wasShow || newAccount !== previousAccount) {
       syncFormFromAccount(newAccount)
       loadTLSProfiles()
+      adminAPI.protocols.list(newAccount.platform).then((p) => {
+        platformProtocols.value = p
+      }).catch(() => {
+        platformProtocols.value = []
+      })
     }
   },
   { immediate: true }

@@ -216,6 +216,7 @@ type CreateGroupInput struct {
 	RPMLimit int
 	// 从指定分组复制账号（创建分组后在同一事务内绑定）
 	CopyAccountsFromGroupIDs []int64
+	ProtocolID               *int64
 }
 
 type UpdateGroupInput struct {
@@ -256,6 +257,7 @@ type UpdateGroupInput struct {
 	RPMLimit *int
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64
+	ProtocolID               *int64
 }
 
 type CreateAccountInput struct {
@@ -1689,6 +1691,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 		DefaultMappedModel:              input.DefaultMappedModel,
 		MessagesDispatchModelConfig:     normalizeOpenAIMessagesDispatchModelConfig(input.MessagesDispatchModelConfig),
 		RPMLimit:                        input.RPMLimit,
+		ProtocolID:                      input.ProtocolID,
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 	if err := s.groupRepo.Create(ctx, group); err != nil {
@@ -1937,6 +1940,13 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 	}
 	if input.RPMLimit != nil {
 		group.RPMLimit = *input.RPMLimit
+	}
+	if input.ProtocolID != nil {
+		if *input.ProtocolID > 0 {
+			group.ProtocolID = input.ProtocolID
+		} else {
+			group.ProtocolID = nil
+		}
 	}
 	sanitizeGroupMessagesDispatchFields(group)
 

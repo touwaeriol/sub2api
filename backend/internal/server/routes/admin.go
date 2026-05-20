@@ -100,6 +100,9 @@ func RegisterAdminRoutes(
 
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
+
+		// 协议管理
+		registerProtocolRoutes(admin, h)
 	}
 }
 
@@ -642,6 +645,13 @@ func registerChannelMonitorRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		templates.DELETE("/:id", h.Admin.ChannelMonitorTemplate.Delete)
 		templates.GET("/:id/monitors", h.Admin.ChannelMonitorTemplate.AssociatedMonitors)
 		templates.POST("/:id/apply", h.Admin.ChannelMonitorTemplate.Apply)
+	}
+}
+
+func registerProtocolRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	protocols := admin.Group("/protocols")
+	{
+		protocols.GET("", h.Admin.Protocol.List)
 	}
 }
 

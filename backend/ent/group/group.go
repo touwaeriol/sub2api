@@ -84,6 +84,8 @@ const (
 	FieldMessagesDispatchModelConfig = "messages_dispatch_model_config"
 	// FieldRpmLimit holds the string denoting the rpm_limit field in the database.
 	FieldRpmLimit = "rpm_limit"
+	// FieldProtocolID holds the string denoting the protocol_id field in the database.
+	FieldProtocolID = "protocol_id"
 	// EdgeAPIKeys holds the string denoting the api_keys edge name in mutations.
 	EdgeAPIKeys = "api_keys"
 	// EdgeRedeemCodes holds the string denoting the redeem_codes edge name in mutations.
@@ -92,6 +94,8 @@ const (
 	EdgeSubscriptions = "subscriptions"
 	// EdgeUsageLogs holds the string denoting the usage_logs edge name in mutations.
 	EdgeUsageLogs = "usage_logs"
+	// EdgeProtocol holds the string denoting the protocol edge name in mutations.
+	EdgeProtocol = "protocol"
 	// EdgeAccounts holds the string denoting the accounts edge name in mutations.
 	EdgeAccounts = "accounts"
 	// EdgeAllowedUsers holds the string denoting the allowed_users edge name in mutations.
@@ -130,6 +134,13 @@ const (
 	UsageLogsInverseTable = "usage_logs"
 	// UsageLogsColumn is the table column denoting the usage_logs relation/edge.
 	UsageLogsColumn = "group_id"
+	// ProtocolTable is the table that holds the protocol relation/edge.
+	ProtocolTable = "groups"
+	// ProtocolInverseTable is the table name for the Protocol entity.
+	// It exists in this package in order to avoid circular dependency with the "protocol" package.
+	ProtocolInverseTable = "protocols"
+	// ProtocolColumn is the table column denoting the protocol relation/edge.
+	ProtocolColumn = "protocol_id"
 	// AccountsTable is the table that holds the accounts relation/edge. The primary key declared below.
 	AccountsTable = "account_groups"
 	// AccountsInverseTable is the table name for the Account entity.
@@ -193,6 +204,7 @@ var Columns = []string{
 	FieldDefaultMappedModel,
 	FieldMessagesDispatchModelConfig,
 	FieldRpmLimit,
+	FieldProtocolID,
 }
 
 var (
@@ -443,6 +455,11 @@ func ByRpmLimit(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRpmLimit, opts...).ToFunc()
 }
 
+// ByProtocolID orders the results by the protocol_id field.
+func ByProtocolID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProtocolID, opts...).ToFunc()
+}
+
 // ByAPIKeysCount orders the results by api_keys count.
 func ByAPIKeysCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -496,6 +513,13 @@ func ByUsageLogsCount(opts ...sql.OrderTermOption) OrderOption {
 func ByUsageLogs(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	return func(s *sql.Selector) {
 		sqlgraph.OrderByNeighborTerms(s, newUsageLogsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
+// ByProtocolField orders the results by protocol field.
+func ByProtocolField(field string, opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newProtocolStep(), sql.OrderByField(field, opts...))
 	}
 }
 
@@ -580,6 +604,13 @@ func newUsageLogsStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(UsageLogsInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, UsageLogsTable, UsageLogsColumn),
+	)
+}
+func newProtocolStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ProtocolInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.M2O, true, ProtocolTable, ProtocolColumn),
 	)
 }
 func newAccountsStep() *sqlgraph.Step {

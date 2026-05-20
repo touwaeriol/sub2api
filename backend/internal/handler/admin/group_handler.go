@@ -129,6 +129,7 @@ type CreateGroupRequest struct {
 	RPMLimit int `json:"rpm_limit"`
 	// 从指定分组复制账号（创建后自动绑定）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
+	ProtocolID               *int64  `json:"protocol_id"`
 }
 
 // UpdateGroupRequest represents update group request
@@ -169,6 +170,7 @@ type UpdateGroupRequest struct {
 	RPMLimit *int `json:"rpm_limit"`
 	// 从指定分组复制账号（同步操作：先清空当前分组的账号绑定，再绑定源分组的账号）
 	CopyAccountsFromGroupIDs []int64 `json:"copy_accounts_from_group_ids"`
+	ProtocolID               *int64  `json:"protocol_id"`
 }
 
 // List handles listing all groups with pagination
@@ -289,6 +291,7 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
+		ProtocolID:                      req.ProtocolID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)
@@ -344,6 +347,7 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		MessagesDispatchModelConfig:     req.MessagesDispatchModelConfig,
 		RPMLimit:                        req.RPMLimit,
 		CopyAccountsFromGroupIDs:        req.CopyAccountsFromGroupIDs,
+		ProtocolID:                      req.ProtocolID,
 	})
 	if err != nil {
 		response.ErrorFrom(c, err)

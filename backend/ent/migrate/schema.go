@@ -658,12 +658,21 @@ var (
 		{Name: "default_mapped_model", Type: field.TypeString, Size: 100, Default: ""},
 		{Name: "messages_dispatch_model_config", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
 		{Name: "rpm_limit", Type: field.TypeInt, Default: 0},
+		{Name: "protocol_id", Type: field.TypeInt64, Nullable: true},
 	}
 	// GroupsTable holds the schema information for the "groups" table.
 	GroupsTable = &schema.Table{
 		Name:       "groups",
 		Columns:    GroupsColumns,
 		PrimaryKey: []*schema.Column{GroupsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "groups_protocols_groups",
+				Columns:    []*schema.Column{GroupsColumns[35]},
+				RefColumns: []*schema.Column{ProtocolsColumns[0]},
+				OnDelete:   schema.SetNull,
+			},
+		},
 		Indexes: []*schema.Index{
 			{
 				Name:    "group_status",
@@ -694,6 +703,11 @@ var (
 				Name:    "group_sort_order",
 				Unique:  false,
 				Columns: []*schema.Column{GroupsColumns[28]},
+			},
+			{
+				Name:    "group_protocol_id",
+				Unique:  false,
+				Columns: []*schema.Column{GroupsColumns[35]},
 			},
 		},
 	}
@@ -1075,6 +1089,43 @@ var (
 				Name:    "promocodeusage_promo_code_id_user_id",
 				Unique:  true,
 				Columns: []*schema.Column{PromoCodeUsagesColumns[3], PromoCodeUsagesColumns[4]},
+			},
+		},
+	}
+	// ProtocolsColumns holds the columns for the "protocols" table.
+	ProtocolsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "created_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "updated_at", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "timestamptz"}},
+		{Name: "name", Type: field.TypeString, Unique: true, Size: 50},
+		{Name: "display_name", Type: field.TypeString, Size: 100},
+		{Name: "platform", Type: field.TypeString, Size: 50},
+		{Name: "gateway_endpoint", Type: field.TypeString, Size: 200},
+		{Name: "icon_svg", Type: field.TypeString, Nullable: true, SchemaType: map[string]string{"postgres": "text"}},
+		{Name: "theme_color", Type: field.TypeString, Size: 20, Default: ""},
+		{Name: "sort_order", Type: field.TypeInt, Default: 0},
+		{Name: "status", Type: field.TypeString, Size: 20, Default: "active"},
+	}
+	// ProtocolsTable holds the schema information for the "protocols" table.
+	ProtocolsTable = &schema.Table{
+		Name:       "protocols",
+		Columns:    ProtocolsColumns,
+		PrimaryKey: []*schema.Column{ProtocolsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "protocol_platform",
+				Unique:  false,
+				Columns: []*schema.Column{ProtocolsColumns[5]},
+			},
+			{
+				Name:    "protocol_status",
+				Unique:  false,
+				Columns: []*schema.Column{ProtocolsColumns[10]},
+			},
+			{
+				Name:    "protocol_sort_order",
+				Unique:  false,
+				Columns: []*schema.Column{ProtocolsColumns[9]},
 			},
 		},
 	}
@@ -1702,6 +1753,7 @@ var (
 		PendingAuthSessionsTable,
 		PromoCodesTable,
 		PromoCodeUsagesTable,
+		ProtocolsTable,
 		ProxiesTable,
 		RedeemCodesTable,
 		SecuritySecretsTable,
@@ -1767,6 +1819,7 @@ func init() {
 	ErrorPassthroughRulesTable.Annotation = &entsql.Annotation{
 		Table: "error_passthrough_rules",
 	}
+	GroupsTable.ForeignKeys[0].RefTable = ProtocolsTable
 	GroupsTable.Annotation = &entsql.Annotation{
 		Table: "groups",
 	}
@@ -1799,6 +1852,9 @@ func init() {
 	PromoCodeUsagesTable.ForeignKeys[1].RefTable = UsersTable
 	PromoCodeUsagesTable.Annotation = &entsql.Annotation{
 		Table: "promo_code_usages",
+	}
+	ProtocolsTable.Annotation = &entsql.Annotation{
+		Table: "protocols",
 	}
 	ProxiesTable.Annotation = &entsql.Annotation{
 		Table: "proxies",

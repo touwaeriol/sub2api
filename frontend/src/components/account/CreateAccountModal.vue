@@ -2760,6 +2760,7 @@
           v-model="form.group_ids"
           :groups="groups"
           :platform="form.platform"
+          :protocols="platformProtocols"
           :mixed-scheduling="mixedScheduling"
           data-tour="account-form-groups"
         />
@@ -3134,6 +3135,7 @@ import { useAntigravityOAuth } from '@/composables/useAntigravityOAuth'
 import type {
   Proxy,
   AdminGroup,
+  Protocol,
   AccountPlatform,
   AccountType,
   CheckMixedChannelResponse,
@@ -3314,6 +3316,7 @@ adminAPI.settings.getWebSearchEmulationConfig().then(cfg => {
 }).catch(() => { webSearchGlobalEnabled.value = false })
 
 loadQuotaNotifyGlobal()
+const platformProtocols = ref<Protocol[]>([])
 const mixedScheduling = ref(false) // For antigravity accounts: enable mixed scheduling
 const allowOverages = ref(false) // For antigravity accounts: enable AI Credits overages
 const antigravityAccountType = ref<'oauth' | 'upstream'>('oauth') // For antigravity: oauth or upstream
@@ -3568,6 +3571,9 @@ watch(
           }))
         })
         .catch(() => { tlsFingerprintProfiles.value = [] })
+      adminAPI.protocols.list(form.platform).then((p) => {
+        platformProtocols.value = p
+      }).catch(() => { platformProtocols.value = [] })
       // Modal opened - fill related models
       allowedModels.value = [...getModelsByPlatform(form.platform)]
       // Antigravity: 默认使用映射模式并填充默认映射
@@ -3617,6 +3623,9 @@ watch(
 watch(
   () => form.platform,
   (newPlatform) => {
+    adminAPI.protocols.list(newPlatform).then((p) => {
+      platformProtocols.value = p
+    }).catch(() => { platformProtocols.value = [] })
     // Reset base URL based on platform
     apiKeyBaseUrl.value =
       (newPlatform === 'openai')

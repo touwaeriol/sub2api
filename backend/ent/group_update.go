@@ -16,6 +16,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/apikey"
 	"github.com/Wei-Shaw/sub2api/ent/group"
 	"github.com/Wei-Shaw/sub2api/ent/predicate"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/usagelog"
 	"github.com/Wei-Shaw/sub2api/ent/user"
@@ -637,6 +638,26 @@ func (_u *GroupUpdate) AddRpmLimit(v int) *GroupUpdate {
 	return _u
 }
 
+// SetProtocolID sets the "protocol_id" field.
+func (_u *GroupUpdate) SetProtocolID(v int64) *GroupUpdate {
+	_u.mutation.SetProtocolID(v)
+	return _u
+}
+
+// SetNillableProtocolID sets the "protocol_id" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableProtocolID(v *int64) *GroupUpdate {
+	if v != nil {
+		_u.SetProtocolID(*v)
+	}
+	return _u
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (_u *GroupUpdate) ClearProtocolID() *GroupUpdate {
+	_u.mutation.ClearProtocolID()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdate) AddAPIKeyIDs(ids ...int64) *GroupUpdate {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -695,6 +716,11 @@ func (_u *GroupUpdate) AddUsageLogs(v ...*UsageLog) *GroupUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.AddUsageLogIDs(ids...)
+}
+
+// SetProtocol sets the "protocol" edge to the Protocol entity.
+func (_u *GroupUpdate) SetProtocol(v *Protocol) *GroupUpdate {
+	return _u.SetProtocolID(v.ID)
 }
 
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
@@ -814,6 +840,12 @@ func (_u *GroupUpdate) RemoveUsageLogs(v ...*UsageLog) *GroupUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveUsageLogIDs(ids...)
+}
+
+// ClearProtocol clears the "protocol" edge to the Protocol entity.
+func (_u *GroupUpdate) ClearProtocol() *GroupUpdate {
+	_u.mutation.ClearProtocol()
+	return _u
 }
 
 // ClearAccounts clears all "accounts" edges to the Account entity.
@@ -1291,6 +1323,35 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ProtocolCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   group.ProtocolTable,
+			Columns: []string{group.ProtocolColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(protocol.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ProtocolIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   group.ProtocolTable,
+			Columns: []string{group.ProtocolColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(protocol.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -2033,6 +2094,26 @@ func (_u *GroupUpdateOne) AddRpmLimit(v int) *GroupUpdateOne {
 	return _u
 }
 
+// SetProtocolID sets the "protocol_id" field.
+func (_u *GroupUpdateOne) SetProtocolID(v int64) *GroupUpdateOne {
+	_u.mutation.SetProtocolID(v)
+	return _u
+}
+
+// SetNillableProtocolID sets the "protocol_id" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableProtocolID(v *int64) *GroupUpdateOne {
+	if v != nil {
+		_u.SetProtocolID(*v)
+	}
+	return _u
+}
+
+// ClearProtocolID clears the value of the "protocol_id" field.
+func (_u *GroupUpdateOne) ClearProtocolID() *GroupUpdateOne {
+	_u.mutation.ClearProtocolID()
+	return _u
+}
+
 // AddAPIKeyIDs adds the "api_keys" edge to the APIKey entity by IDs.
 func (_u *GroupUpdateOne) AddAPIKeyIDs(ids ...int64) *GroupUpdateOne {
 	_u.mutation.AddAPIKeyIDs(ids...)
@@ -2091,6 +2172,11 @@ func (_u *GroupUpdateOne) AddUsageLogs(v ...*UsageLog) *GroupUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.AddUsageLogIDs(ids...)
+}
+
+// SetProtocol sets the "protocol" edge to the Protocol entity.
+func (_u *GroupUpdateOne) SetProtocol(v *Protocol) *GroupUpdateOne {
+	return _u.SetProtocolID(v.ID)
 }
 
 // AddAccountIDs adds the "accounts" edge to the Account entity by IDs.
@@ -2210,6 +2296,12 @@ func (_u *GroupUpdateOne) RemoveUsageLogs(v ...*UsageLog) *GroupUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveUsageLogIDs(ids...)
+}
+
+// ClearProtocol clears the "protocol" edge to the Protocol entity.
+func (_u *GroupUpdateOne) ClearProtocol() *GroupUpdateOne {
+	_u.mutation.ClearProtocol()
+	return _u
 }
 
 // ClearAccounts clears all "accounts" edges to the Account entity.
@@ -2717,6 +2809,35 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(usagelog.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ProtocolCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   group.ProtocolTable,
+			Columns: []string{group.ProtocolColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(protocol.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ProtocolIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.M2O,
+			Inverse: true,
+			Table:   group.ProtocolTable,
+			Columns: []string{group.ProtocolColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(protocol.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

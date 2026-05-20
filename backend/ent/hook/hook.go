@@ -261,6 +261,18 @@ func (f PromoCodeUsageFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Val
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PromoCodeUsageMutation", m)
 }
 
+// The ProtocolFunc type is an adapter to allow the use of ordinary
+// function as Protocol mutator.
+type ProtocolFunc func(context.Context, *ent.ProtocolMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ProtocolFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ProtocolMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProtocolMutation", m)
+}
+
 // The ProxyFunc type is an adapter to allow the use of ordinary
 // function as Proxy mutator.
 type ProxyFunc func(context.Context, *ent.ProxyMutation) (ent.Value, error)

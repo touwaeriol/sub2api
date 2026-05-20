@@ -36,6 +36,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/ent/pendingauthsession"
 	"github.com/Wei-Shaw/sub2api/ent/promocode"
 	"github.com/Wei-Shaw/sub2api/ent/promocodeusage"
+	"github.com/Wei-Shaw/sub2api/ent/protocol"
 	"github.com/Wei-Shaw/sub2api/ent/proxy"
 	"github.com/Wei-Shaw/sub2api/ent/redeemcode"
 	"github.com/Wei-Shaw/sub2api/ent/securitysecret"
@@ -100,6 +101,8 @@ type Client struct {
 	PromoCode *PromoCodeClient
 	// PromoCodeUsage is the client for interacting with the PromoCodeUsage builders.
 	PromoCodeUsage *PromoCodeUsageClient
+	// Protocol is the client for interacting with the Protocol builders.
+	Protocol *ProtocolClient
 	// Proxy is the client for interacting with the Proxy builders.
 	Proxy *ProxyClient
 	// RedeemCode is the client for interacting with the RedeemCode builders.
@@ -158,6 +161,7 @@ func (c *Client) init() {
 	c.PendingAuthSession = NewPendingAuthSessionClient(c.config)
 	c.PromoCode = NewPromoCodeClient(c.config)
 	c.PromoCodeUsage = NewPromoCodeUsageClient(c.config)
+	c.Protocol = NewProtocolClient(c.config)
 	c.Proxy = NewProxyClient(c.config)
 	c.RedeemCode = NewRedeemCodeClient(c.config)
 	c.SecuritySecret = NewSecuritySecretClient(c.config)
@@ -284,6 +288,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
 		PromoCode:                     NewPromoCodeClient(cfg),
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
+		Protocol:                      NewProtocolClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
 		RedeemCode:                    NewRedeemCodeClient(cfg),
 		SecuritySecret:                NewSecuritySecretClient(cfg),
@@ -337,6 +342,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		PendingAuthSession:            NewPendingAuthSessionClient(cfg),
 		PromoCode:                     NewPromoCodeClient(cfg),
 		PromoCodeUsage:                NewPromoCodeUsageClient(cfg),
+		Protocol:                      NewProtocolClient(cfg),
 		Proxy:                         NewProxyClient(cfg),
 		RedeemCode:                    NewRedeemCodeClient(cfg),
 		SecuritySecret:                NewSecuritySecretClient(cfg),
@@ -385,10 +391,10 @@ func (c *Client) Use(hooks ...Hook) {
 		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserSubscription,
+		c.PromoCodeUsage, c.Protocol, c.Proxy, c.RedeemCode, c.SecuritySecret,
+		c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask,
+		c.UsageLog, c.User, c.UserAllowedGroup, c.UserAttributeDefinition,
+		c.UserAttributeValue, c.UserSubscription,
 	} {
 		n.Use(hooks...)
 	}
@@ -404,10 +410,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 		c.ChannelMonitorRequestTemplate, c.ErrorPassthroughRule, c.Group,
 		c.IdempotencyRecord, c.IdentityAdoptionDecision, c.PaymentAuditLog,
 		c.PaymentOrder, c.PaymentProviderInstance, c.PendingAuthSession, c.PromoCode,
-		c.PromoCodeUsage, c.Proxy, c.RedeemCode, c.SecuritySecret, c.Setting,
-		c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask, c.UsageLog,
-		c.User, c.UserAllowedGroup, c.UserAttributeDefinition, c.UserAttributeValue,
-		c.UserSubscription,
+		c.PromoCodeUsage, c.Protocol, c.Proxy, c.RedeemCode, c.SecuritySecret,
+		c.Setting, c.SubscriptionPlan, c.TLSFingerprintProfile, c.UsageCleanupTask,
+		c.UsageLog, c.User, c.UserAllowedGroup, c.UserAttributeDefinition,
+		c.UserAttributeValue, c.UserSubscription,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -458,6 +464,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.PromoCode.mutate(ctx, m)
 	case *PromoCodeUsageMutation:
 		return c.PromoCodeUsage.mutate(ctx, m)
+	case *ProtocolMutation:
+		return c.Protocol.mutate(ctx, m)
 	case *ProxyMutation:
 		return c.Proxy.mutate(ctx, m)
 	case *RedeemCodeMutation:
@@ -2564,6 +2572,22 @@ func (c *GroupClient) QueryUsageLogs(_m *Group) *UsageLogQuery {
 	return query
 }
 
+// QueryProtocol queries the protocol edge of a Group.
+func (c *GroupClient) QueryProtocol(_m *Group) *ProtocolQuery {
+	query := (&ProtocolClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(group.Table, group.FieldID, id),
+			sqlgraph.To(protocol.Table, protocol.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, group.ProtocolTable, group.ProtocolColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // QueryAccounts queries the accounts edge of a Group.
 func (c *GroupClient) QueryAccounts(_m *Group) *AccountQuery {
 	query := (&AccountClient{config: c.config}).Query()
@@ -3844,6 +3868,155 @@ func (c *PromoCodeUsageClient) mutate(ctx context.Context, m *PromoCodeUsageMuta
 		return (&PromoCodeUsageDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown PromoCodeUsage mutation op: %q", m.Op())
+	}
+}
+
+// ProtocolClient is a client for the Protocol schema.
+type ProtocolClient struct {
+	config
+}
+
+// NewProtocolClient returns a client for the Protocol from the given config.
+func NewProtocolClient(c config) *ProtocolClient {
+	return &ProtocolClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `protocol.Hooks(f(g(h())))`.
+func (c *ProtocolClient) Use(hooks ...Hook) {
+	c.hooks.Protocol = append(c.hooks.Protocol, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `protocol.Intercept(f(g(h())))`.
+func (c *ProtocolClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Protocol = append(c.inters.Protocol, interceptors...)
+}
+
+// Create returns a builder for creating a Protocol entity.
+func (c *ProtocolClient) Create() *ProtocolCreate {
+	mutation := newProtocolMutation(c.config, OpCreate)
+	return &ProtocolCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Protocol entities.
+func (c *ProtocolClient) CreateBulk(builders ...*ProtocolCreate) *ProtocolCreateBulk {
+	return &ProtocolCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ProtocolClient) MapCreateBulk(slice any, setFunc func(*ProtocolCreate, int)) *ProtocolCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ProtocolCreateBulk{err: fmt.Errorf("calling to ProtocolClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ProtocolCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ProtocolCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Protocol.
+func (c *ProtocolClient) Update() *ProtocolUpdate {
+	mutation := newProtocolMutation(c.config, OpUpdate)
+	return &ProtocolUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ProtocolClient) UpdateOne(_m *Protocol) *ProtocolUpdateOne {
+	mutation := newProtocolMutation(c.config, OpUpdateOne, withProtocol(_m))
+	return &ProtocolUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ProtocolClient) UpdateOneID(id int64) *ProtocolUpdateOne {
+	mutation := newProtocolMutation(c.config, OpUpdateOne, withProtocolID(id))
+	return &ProtocolUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Protocol.
+func (c *ProtocolClient) Delete() *ProtocolDelete {
+	mutation := newProtocolMutation(c.config, OpDelete)
+	return &ProtocolDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ProtocolClient) DeleteOne(_m *Protocol) *ProtocolDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ProtocolClient) DeleteOneID(id int64) *ProtocolDeleteOne {
+	builder := c.Delete().Where(protocol.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ProtocolDeleteOne{builder}
+}
+
+// Query returns a query builder for Protocol.
+func (c *ProtocolClient) Query() *ProtocolQuery {
+	return &ProtocolQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeProtocol},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Protocol entity by its id.
+func (c *ProtocolClient) Get(ctx context.Context, id int64) (*Protocol, error) {
+	return c.Query().Where(protocol.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ProtocolClient) GetX(ctx context.Context, id int64) *Protocol {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryGroups queries the groups edge of a Protocol.
+func (c *ProtocolClient) QueryGroups(_m *Protocol) *GroupQuery {
+	query := (&GroupClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(protocol.Table, protocol.FieldID, id),
+			sqlgraph.To(group.Table, group.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, protocol.GroupsTable, protocol.GroupsColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *ProtocolClient) Hooks() []Hook {
+	return c.hooks.Protocol
+}
+
+// Interceptors returns the client interceptors.
+func (c *ProtocolClient) Interceptors() []Interceptor {
+	return c.inters.Protocol
+}
+
+func (c *ProtocolClient) mutate(ctx context.Context, m *ProtocolMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ProtocolCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ProtocolUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ProtocolUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ProtocolDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Protocol mutation op: %q", m.Op())
 	}
 }
 
@@ -6023,9 +6196,10 @@ type (
 		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserSubscription []ent.Hook
+		PromoCodeUsage, Protocol, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserSubscription []ent.Hook
 	}
 	inters struct {
 		APIKey, Account, AccountGroup, Announcement, AnnouncementRead, AuthIdentity,
@@ -6033,9 +6207,10 @@ type (
 		ChannelMonitorHistory, ChannelMonitorRequestTemplate, ErrorPassthroughRule,
 		Group, IdempotencyRecord, IdentityAdoptionDecision, PaymentAuditLog,
 		PaymentOrder, PaymentProviderInstance, PendingAuthSession, PromoCode,
-		PromoCodeUsage, Proxy, RedeemCode, SecuritySecret, Setting, SubscriptionPlan,
-		TLSFingerprintProfile, UsageCleanupTask, UsageLog, User, UserAllowedGroup,
-		UserAttributeDefinition, UserAttributeValue, UserSubscription []ent.Interceptor
+		PromoCodeUsage, Protocol, Proxy, RedeemCode, SecuritySecret, Setting,
+		SubscriptionPlan, TLSFingerprintProfile, UsageCleanupTask, UsageLog, User,
+		UserAllowedGroup, UserAttributeDefinition, UserAttributeValue,
+		UserSubscription []ent.Interceptor
 	}
 )
 

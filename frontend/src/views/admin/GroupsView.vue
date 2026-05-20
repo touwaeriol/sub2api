@@ -392,9 +392,19 @@
             v-model="createForm.platform"
             :options="platformOptions"
             data-tour="group-form-platform"
-            @change="createForm.copy_accounts_from_group_ids = []"
+            @change="handleCreatePlatformChange"
           />
           <p class="input-hint">{{ t("admin.groups.platformHint") }}</p>
+        </div>
+        <div v-if="createProtocols.length > 0">
+          <label class="input-label">{{ t("admin.groups.form.protocol") }}</label>
+          <select v-model="createForm.protocol_id" class="input">
+            <option :value="null">{{ t("admin.groups.form.protocolNone") }}</option>
+            <option v-for="p in createProtocols" :key="p.id" :value="p.id">
+              {{ p.display_name }}
+            </option>
+          </select>
+          <p class="input-hint">{{ t("admin.groups.form.protocolHint") }}</p>
         </div>
         <!-- 从分组复制账号 -->
         <div v-if="copyAccountsGroupOptions.length > 0">
@@ -1577,6 +1587,16 @@
             data-tour="group-form-platform"
           />
           <p class="input-hint">{{ t("admin.groups.platformNotEditable") }}</p>
+        </div>
+        <div v-if="editProtocols.length > 0">
+          <label class="input-label">{{ t("admin.groups.form.protocol") }}</label>
+          <select v-model="editForm.protocol_id" class="input">
+            <option :value="null">{{ t("admin.groups.form.protocolNone") }}</option>
+            <option v-for="p in editProtocols" :key="p.id" :value="p.id">
+              {{ p.display_name }}
+            </option>
+          </select>
+          <p class="input-hint">{{ t("admin.groups.form.protocolHint") }}</p>
         </div>
         <!-- 从分组复制账号（编辑时） -->
         <div v-if="copyAccountsGroupOptionsForEdit.length > 0">
@@ -2840,7 +2860,7 @@ import { useAppStore } from "@/stores/app";
 import { extractI18nErrorMessage } from "@/utils/apiError";
 import { useOnboardingStore } from "@/stores/onboarding";
 import { adminAPI } from "@/api/admin";
-import type { AdminGroup, GroupPlatform, SubscriptionType } from "@/types";
+import type { AdminGroup, GroupPlatform, Protocol, SubscriptionType } from "@/types";
 import type { Column } from "@/components/common/types";
 import AppLayout from "@/components/layout/AppLayout.vue";
 import TablePageLayout from "@/components/layout/TablePageLayout.vue";
@@ -3099,11 +3119,14 @@ const rpmOverridesGroup = ref<AdminGroup | null>(null);
 const sortableGroups = ref<AdminGroup[]>([]);
 const createMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
 const editMessagesDispatchDefaults = createDefaultMessagesDispatchFormState();
+const createProtocols = ref<Protocol[]>([]);
+const editProtocols = ref<Protocol[]>([]);
 
 const createForm = reactive({
   name: "",
   description: "",
   platform: "anthropic" as GroupPlatform,
+  protocol_id: null as number | null,
   rate_multiplier: 1.0,
   is_exclusive: false,
   subscription_type: "standard" as SubscriptionType,
@@ -3388,6 +3411,7 @@ const editForm = reactive({
   name: "",
   description: "",
   platform: "anthropic" as GroupPlatform,
+  protocol_id: null as number | null,
   rate_multiplier: 1.0,
   is_exclusive: false,
   status: "active" as "active" | "inactive",
@@ -3639,6 +3663,7 @@ const closeCreateModal = () => {
   createForm.name = "";
   createForm.description = "";
   createForm.platform = "anthropic";
+  createForm.protocol_id = null;
   createForm.rate_multiplier = 1.0;
   createForm.is_exclusive = false;
   createForm.subscription_type = "standard";
@@ -3681,6 +3706,21 @@ const normalizeOptionalLimit = (
 
   return Number.isFinite(value) && value > 0 ? value : null;
 };
+
+const handleCreatePlatformChange = () => {
+  createForm.copy_accounts_from_group_ids = [];
+  createForm.protocol_id = null;
+  adminAPI.protocols.list(createForm.platform).then((p) => {
+    createProtocols.value = p;
+  }).catch(() => { createProtocols.value = []; });
+};
+
+const loadCreateProtocols = () => {
+  adminAPI.protocols.list(createForm.platform).then((p) => {
+    createProtocols.value = p;
+  }).catch(() => { createProtocols.value = []; });
+};
+loadCreateProtocols();
 
 const normalizeImageRateMultiplier = (
   value: number | string | null | undefined,
@@ -3757,6 +3797,10 @@ const handleEdit = async (group: AdminGroup) => {
   editForm.name = group.name;
   editForm.description = group.description || "";
   editForm.platform = group.platform;
+  editForm.protocol_id = group.protocol_id ?? null;
+  adminAPI.protocols.list(group.platform).then((p) => {
+    editProtocols.value = p;
+  }).catch(() => { editProtocols.value = []; });
   editForm.rate_multiplier = group.rate_multiplier;
   editForm.is_exclusive = group.is_exclusive;
   editForm.status = group.status;
@@ -3812,6 +3856,8 @@ const closeEditModal = () => {
   editingGroup.value = null;
   editModelRoutingRules.value = [];
   editForm.copy_accounts_from_group_ids = [];
+  editForm.protocol_id = null;
+  editProtocols.value = [];
   resetMessagesDispatchFormState(editForm);
 };
 

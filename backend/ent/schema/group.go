@@ -151,6 +151,11 @@ func (Group) Fields() []ent.Field {
 		field.Int("rpm_limit").
 			Default(0).
 			Comment("分组 RPM 上限，0 表示不限制；设置后接管该分组用户的限流"),
+
+		field.Int64("protocol_id").
+			Optional().
+			Nillable().
+			Comment("关联的协议 ID，决定该分组走哪个网关端点"),
 	}
 }
 
@@ -160,6 +165,10 @@ func (Group) Edges() []ent.Edge {
 		edge.To("redeem_codes", RedeemCode.Type),
 		edge.To("subscriptions", UserSubscription.Type),
 		edge.To("usage_logs", UsageLog.Type),
+		edge.From("protocol", Protocol.Type).
+			Ref("groups").
+			Field("protocol_id").
+			Unique(),
 		edge.From("accounts", Account.Type).
 			Ref("groups").
 			Through("account_groups", AccountGroup.Type),
@@ -177,5 +186,6 @@ func (Group) Indexes() []ent.Index {
 		index.Fields("is_exclusive"),
 		index.Fields("deleted_at"),
 		index.Fields("sort_order"),
+		index.Fields("protocol_id"),
 	}
 }
