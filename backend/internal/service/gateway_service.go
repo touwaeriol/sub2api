@@ -5679,6 +5679,18 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 	}
 }
 
+// isBedrockCCCompatEnabled 检查渠道是否启用了 Bedrock CC 兼容模式
+func (s *GatewayService) isBedrockCCCompatEnabled(ctx context.Context, account *Account, groupID *int64) bool {
+	if groupID == nil || s.channelService == nil {
+		return false
+	}
+	ch, err := s.channelService.GetChannelForGroup(ctx, *groupID)
+	if err != nil || ch == nil {
+		return false
+	}
+	return ch.IsBedrockCCCompatEnabled(account.Platform)
+}
+
 // forwardBedrock 转发请求到 AWS Bedrock
 func (s *GatewayService) forwardBedrock(
 	ctx context.Context,
@@ -5711,7 +5723,8 @@ func (s *GatewayService) forwardBedrock(
 		return nil, err
 	}
 
-	bedrockBody, err := PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens)
+	ccCompat := s.isBedrockCCCompatEnabled(ctx, account, parsed.GroupID)
+	bedrockBody, err := PrepareBedrockRequestBodyWithTokens(body, mappedModel, betaTokens, ccCompat)
 	if err != nil {
 		return nil, fmt.Errorf("prepare bedrock request body: %w", err)
 	}
