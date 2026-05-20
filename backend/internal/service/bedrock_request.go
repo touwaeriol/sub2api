@@ -458,17 +458,17 @@ func parseAnthropicBetaHeader(header string) []string {
 }
 
 // bedrockSupportedBetaTokens 是 Bedrock Invoke 支持的 beta 头白名单
-// 参考: litellm/litellm/llms/bedrock/common_utils.py (anthropic_beta_headers_config.json)
+// 参考: AWS Bedrock 官方文档 + litellm anthropic_beta_headers_config.json
 // 更新策略: 当 AWS Bedrock 新增支持的 beta token 时需同步更新此白名单
 var bedrockSupportedBetaTokens = map[string]bool{
-	"computer-use-2025-01-24":         true,
-	"computer-use-2025-11-24":         true,
-	"context-1m-2025-08-07":           true,
-	// "context-management-2025-06-27": false, // Bedrock 不支持 context_management 功能
-	"compact-2026-01-12":              true,
-	"interleaved-thinking-2025-05-14": true,
-	"tool-search-tool-2025-10-19":     true,
-	"tool-examples-2025-10-29":        true,
+	"computer-use-2025-01-24": true,
+	"computer-use-2025-11-24": true,
+	"context-1m-2025-08-07":   true,
+	// "context-management-2025-06-27": false, // 无官方文档支持
+	"compact-2026-01-12": true, // 官方支持，仅 InvokeModel API（Opus 4.6+）
+	// "interleaved-thinking-2025-05-14": false, // 无官方文档支持
+	"tool-search-tool-2025-10-19": true,
+	"tool-examples-2025-10-29":    true,
 }
 
 // bedrockBetaTokenTransforms 定义 Bedrock Invoke 特有的 beta 头转换规则
@@ -496,11 +496,8 @@ func autoInjectBedrockBetaTokens(tokens []string, body []byte, modelID string) [
 		}
 	}
 
-	// 检测 thinking / interleaved thinking
-	// 请求体中有 "thinking" 字段 → 需要 interleaved-thinking beta
-	if gjson.GetBytes(body, "thinking").Exists() {
-		inject("interleaved-thinking-2025-05-14")
-	}
+	// 注意：thinking 字段不再自动注入 interleaved-thinking-2025-05-14
+	// 因为该 beta token 未在 AWS Bedrock 官方文档中确认支持
 
 	// 检测 computer_use 工具
 	// tools 中有 type="computer_20xxxxxx" 的工具 → 需要 computer-use beta

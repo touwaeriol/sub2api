@@ -216,7 +216,7 @@ func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
 		]
 	}`
 
-	betaHeader := "interleaved-thinking-2025-05-14, context-1m-2025-08-07, compact-2026-01-12"
+	betaHeader := "context-1m-2025-08-07, compact-2026-01-12"
 	result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", betaHeader)
 	require.NoError(t, err)
 
@@ -228,10 +228,9 @@ func TestPrepareBedrockRequestBody_FullIntegration(t *testing.T) {
 
 	// anthropic_beta 应包含所有 beta tokens
 	betaArr := gjson.GetBytes(result, "anthropic_beta").Array()
-	require.Len(t, betaArr, 3)
-	assert.Equal(t, "interleaved-thinking-2025-05-14", betaArr[0].String())
-	assert.Equal(t, "context-1m-2025-08-07", betaArr[1].String())
-	assert.Equal(t, "compact-2026-01-12", betaArr[2].String())
+	require.Len(t, betaArr, 2)
+	assert.Equal(t, "context-1m-2025-08-07", betaArr[0].String())
+	assert.Equal(t, "compact-2026-01-12", betaArr[1].String())
 
 	// output_format 应被移除，schema 内联到最后一条 user message
 	assert.False(t, gjson.GetBytes(result, "output_format").Exists())
@@ -264,29 +263,29 @@ func TestPrepareBedrockRequestBody_BetaHeader(t *testing.T) {
 	})
 
 	t.Run("single beta token", func(t *testing.T) {
-		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "interleaved-thinking-2025-05-14")
+		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "context-1m-2025-08-07")
 		require.NoError(t, err)
 		arr := gjson.GetBytes(result, "anthropic_beta").Array()
 		require.Len(t, arr, 1)
-		assert.Equal(t, "interleaved-thinking-2025-05-14", arr[0].String())
+		assert.Equal(t, "context-1m-2025-08-07", arr[0].String())
 	})
 
 	t.Run("multiple beta tokens with spaces", func(t *testing.T) {
-		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "interleaved-thinking-2025-05-14 , context-1m-2025-08-07 ")
+		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "context-1m-2025-08-07 , compact-2026-01-12 ")
 		require.NoError(t, err)
 		arr := gjson.GetBytes(result, "anthropic_beta").Array()
 		require.Len(t, arr, 2)
-		assert.Equal(t, "interleaved-thinking-2025-05-14", arr[0].String())
-		assert.Equal(t, "context-1m-2025-08-07", arr[1].String())
+		assert.Equal(t, "context-1m-2025-08-07", arr[0].String())
+		assert.Equal(t, "compact-2026-01-12", arr[1].String())
 	})
 
 	t.Run("json array beta header", func(t *testing.T) {
-		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", `["interleaved-thinking-2025-05-14","context-1m-2025-08-07"]`)
+		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", `["context-1m-2025-08-07","compact-2026-01-12"]`)
 		require.NoError(t, err)
 		arr := gjson.GetBytes(result, "anthropic_beta").Array()
 		require.Len(t, arr, 2)
-		assert.Equal(t, "interleaved-thinking-2025-05-14", arr[0].String())
-		assert.Equal(t, "context-1m-2025-08-07", arr[1].String())
+		assert.Equal(t, "context-1m-2025-08-07", arr[0].String())
+		assert.Equal(t, "compact-2026-01-12", arr[1].String())
 	})
 }
 
@@ -301,15 +300,15 @@ func TestParseAnthropicBetaHeader(t *testing.T) {
 
 func TestFilterBedrockBetaTokens(t *testing.T) {
 	t.Run("supported tokens pass through", func(t *testing.T) {
-		tokens := []string{"interleaved-thinking-2025-05-14", "context-1m-2025-08-07", "compact-2026-01-12"}
+		tokens := []string{"context-1m-2025-08-07", "compact-2026-01-12", "computer-use-2025-11-24"}
 		result := filterBedrockBetaTokens(tokens)
 		assert.Equal(t, tokens, result)
 	})
 
 	t.Run("unsupported tokens are filtered out", func(t *testing.T) {
-		tokens := []string{"interleaved-thinking-2025-05-14", "output-128k-2025-02-19", "files-api-2025-04-14", "structured-outputs-2025-11-13"}
+		tokens := []string{"context-1m-2025-08-07", "output-128k-2025-02-19", "files-api-2025-04-14", "structured-outputs-2025-11-13"}
 		result := filterBedrockBetaTokens(tokens)
-		assert.Equal(t, []string{"interleaved-thinking-2025-05-14"}, result)
+		assert.Equal(t, []string{"context-1m-2025-08-07"}, result)
 	})
 
 	t.Run("advanced-tool-use transforms to tool-search-tool", func(t *testing.T) {
@@ -361,11 +360,11 @@ func TestPrepareBedrockRequestBody_BetaFiltering(t *testing.T) {
 
 	t.Run("unsupported beta tokens are filtered", func(t *testing.T) {
 		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1",
-			"interleaved-thinking-2025-05-14, output-128k-2025-02-19, files-api-2025-04-14")
+			"compact-2026-01-12, output-128k-2025-02-19, files-api-2025-04-14")
 		require.NoError(t, err)
 		arr := gjson.GetBytes(result, "anthropic_beta").Array()
 		require.Len(t, arr, 1)
-		assert.Equal(t, "interleaved-thinking-2025-05-14", arr[0].String())
+		assert.Equal(t, "compact-2026-01-12", arr[0].String())
 	})
 
 	t.Run("advanced-tool-use transformed in full pipeline", func(t *testing.T) {
@@ -498,22 +497,17 @@ func TestResolveBedrockModelID(t *testing.T) {
 }
 
 func TestAutoInjectBedrockBetaTokens(t *testing.T) {
-	t.Run("inject interleaved-thinking when thinking present", func(t *testing.T) {
+	t.Run("no auto-inject for thinking (interleaved-thinking not supported)", func(t *testing.T) {
 		body := []byte(`{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[{"role":"user","content":"hi"}]}`)
 		result := autoInjectBedrockBetaTokens(nil, body, "us.anthropic.claude-opus-4-6-v1")
-		assert.Contains(t, result, "interleaved-thinking-2025-05-14")
+		// interleaved-thinking-2025-05-14 已从白名单移除，不应自动注入
+		assert.Empty(t, result)
 	})
 
 	t.Run("no duplicate when already present", func(t *testing.T) {
 		body := []byte(`{"thinking":{"type":"enabled","budget_tokens":10000},"messages":[{"role":"user","content":"hi"}]}`)
-		result := autoInjectBedrockBetaTokens([]string{"interleaved-thinking-2025-05-14"}, body, "us.anthropic.claude-opus-4-6-v1")
-		count := 0
-		for _, t := range result {
-			if t == "interleaved-thinking-2025-05-14" {
-				count++
-			}
-		}
-		assert.Equal(t, 1, count)
+		result := autoInjectBedrockBetaTokens([]string{"context-1m-2025-08-07"}, body, "us.anthropic.claude-opus-4-6-v1")
+		assert.Equal(t, []string{"context-1m-2025-08-07"}, result)
 	})
 
 	t.Run("inject computer-use when computer tool present", func(t *testing.T) {
@@ -574,7 +568,8 @@ func TestAutoInjectBedrockBetaTokens(t *testing.T) {
 		result := autoInjectBedrockBetaTokens(existing, body, "us.anthropic.claude-opus-4-6-v1")
 		assert.Contains(t, result, "context-1m-2025-08-07")
 		assert.Contains(t, result, "compact-2026-01-12")
-		assert.Contains(t, result, "interleaved-thinking-2025-05-14")
+		// interleaved-thinking 不再自动注入
+		assert.NotContains(t, result, "interleaved-thinking-2025-05-14")
 	})
 }
 
@@ -588,27 +583,21 @@ func TestResolveBedrockBetaTokens(t *testing.T) {
 
 	t.Run("unsupported client beta tokens are filtered out", func(t *testing.T) {
 		body := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
-		result := ResolveBedrockBetaTokens("interleaved-thinking-2025-05-14,files-api-2025-04-14", body, "us.anthropic.claude-opus-4-6-v1")
-		assert.Equal(t, []string{"interleaved-thinking-2025-05-14"}, result)
+		result := ResolveBedrockBetaTokens("context-1m-2025-08-07,files-api-2025-04-14", body, "us.anthropic.claude-opus-4-6-v1")
+		assert.Equal(t, []string{"context-1m-2025-08-07"}, result)
 	})
 }
 
 func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
-	t.Run("thinking in body auto-injects beta without header", func(t *testing.T) {
+	t.Run("thinking in body does not auto-inject beta (not supported)", func(t *testing.T) {
 		input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100,"thinking":{"type":"enabled","budget_tokens":10000}}`
 		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "")
 		require.NoError(t, err)
-		arr := gjson.GetBytes(result, "anthropic_beta").Array()
-		found := false
-		for _, v := range arr {
-			if v.String() == "interleaved-thinking-2025-05-14" {
-				found = true
-			}
-		}
-		assert.True(t, found, "interleaved-thinking should be auto-injected")
+		// interleaved-thinking 已从白名单移除，不应自动注入
+		assert.False(t, gjson.GetBytes(result, "anthropic_beta").Exists())
 	})
 
-	t.Run("header tokens merged with auto-injected tokens", func(t *testing.T) {
+	t.Run("header tokens preserved without auto-injection", func(t *testing.T) {
 		input := `{"messages":[{"role":"user","content":"hi"}],"max_tokens":100,"thinking":{"type":"enabled","budget_tokens":10000}}`
 		result, err := PrepareBedrockRequestBody([]byte(input), "us.anthropic.claude-opus-4-6-v1", "context-1m-2025-08-07")
 		require.NoError(t, err)
@@ -618,7 +607,8 @@ func TestPrepareBedrockRequestBody_AutoBetaInjection(t *testing.T) {
 			names[i] = v.String()
 		}
 		assert.Contains(t, names, "context-1m-2025-08-07")
-		assert.Contains(t, names, "interleaved-thinking-2025-05-14")
+		// interleaved-thinking 不再自动注入
+		assert.NotContains(t, names, "interleaved-thinking-2025-05-14")
 	})
 }
 
@@ -959,14 +949,14 @@ func TestSanitizeBedrockCCFields(t *testing.T) {
 
 func TestSanitizeBedrockCCBetaTokens(t *testing.T) {
 	t.Run("filters unsupported beta tokens", func(t *testing.T) {
-		input := `{"anthropic_beta":["prompt-caching-2024-07-31","interleaved-thinking-2025-05-14","unsupported-feature"],"messages":[]}`
+		input := `{"anthropic_beta":["prompt-caching-2024-07-31","context-1m-2025-08-07","unsupported-feature"],"messages":[]}`
 		result := sanitizeBedrockCCBetaTokens([]byte(input), "claude-opus-4-6")
 		beta := gjson.GetBytes(result, "anthropic_beta")
 		assert.True(t, beta.Exists())
 		assert.True(t, beta.IsArray())
 		tokens := beta.Array()
 		assert.Equal(t, 1, len(tokens))
-		assert.Equal(t, "interleaved-thinking-2025-05-14", tokens[0].String())
+		assert.Equal(t, "context-1m-2025-08-07", tokens[0].String())
 	})
 
 	t.Run("removes anthropic_beta if all tokens filtered", func(t *testing.T) {
