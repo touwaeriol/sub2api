@@ -80,6 +80,9 @@ export { createStableObjectKeyResolver } from './utils/stableObjectKey'
 // Utilities used by account usage display
 export { formatCompactNumber } from './utils/formatCompact'
 
+// SVG sanitization (used by PlatformIcon, exposed for plugin reuse)
+export { sanitizeSvg } from './utils/sanitizeSvg'
+
 export * from './host-sdk'
 
 // Group config shared components

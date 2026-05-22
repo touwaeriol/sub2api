@@ -25,6 +25,11 @@ const txAutoRollbackTimeout = 30 * time.Second
 // txCleanupInterval is the polling interval for the transaction cleanup goroutine.
 const txCleanupInterval = 10 * time.Second
 
+// maxQueryRows caps the number of rows returned to a plugin per Query/TxQuery call.
+// Prevents a misbehaving plugin from streaming an unbounded result set into memory.
+// Plugins that need to scan large tables must paginate explicitly.
+const maxQueryRows = 10000
+
 // SDKServer implements SQLProxy / RedisProxy gRPC services and exposes the
 // EventBus service via the eventBusAdapter wrapper.
 //
@@ -189,6 +194,10 @@ func (s *SDKServer) BeginTx(ctx context.Context, req *pluginsdk.BeginTxRequest) 
 	if s.db == nil {
 		return nil, status.Error(codes.FailedPrecondition, "sql db not configured")
 	}
+	name, err := pluginNameFromContext(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "plugin identity: %v", err)
+	}
 	opts, err := parseTxOptions(req)
 	if err != nil {
 		return nil, err
@@ -199,7 +208,7 @@ func (s *SDKServer) BeginTx(ctx context.Context, req *pluginsdk.BeginTxRequest) 
 	}
 	id := uuid.NewString()
 	s.txMu.Lock()
-	s.txs[id] = &activeTx{tx: tx, startedAt: time.Now()}
+	s.txs[id] = &activeTx{tx: tx, startedAt: time.Now(), pluginID: name}
 	s.txMu.Unlock()
 	return &pluginsdk.TxResponse{TxId: id}, nil
 }
@@ -224,7 +233,7 @@ func parseTxOptions(req *pluginsdk.BeginTxRequest) (*sql.TxOptions, error) {
 }
 
 func (s *SDKServer) TxQuery(ctx context.Context, req *pluginsdk.TxSQLRequest) (*pluginsdk.SQLResponse, error) {
-	tx, err := s.lookupTx(req.GetTxId())
+	tx, err := s.lookupTx(ctx, req.GetTxId())
 	if err != nil {
 		return nil, err
 	}
@@ -241,7 +250,7 @@ func (s *SDKServer) TxQuery(ctx context.Context, req *pluginsdk.TxSQLRequest) (*
 }
 
 func (s *SDKServer) TxExec(ctx context.Context, req *pluginsdk.TxSQLRequest) (*pluginsdk.ExecResponse, error) {
-	tx, err := s.lookupTx(req.GetTxId())
+	tx, err := s.lookupTx(ctx, req.GetTxId())
 	if err != nil {
 		return nil, err
 	}
@@ -256,8 +265,8 @@ func (s *SDKServer) TxExec(ctx context.Context, req *pluginsdk.TxSQLRequest) (*p
 	return execResultToResponse(res), nil
 }
 
-func (s *SDKServer) CommitTx(_ context.Context, req *pluginsdk.TxIDRequest) (*emptypb.Empty, error) {
-	tx, err := s.popTx(req.GetTxId())
+func (s *SDKServer) CommitTx(ctx context.Context, req *pluginsdk.TxIDRequest) (*emptypb.Empty, error) {
+	tx, err := s.popTx(ctx, req.GetTxId())
 	if err != nil {
 		return nil, err
 	}
@@ -267,8 +276,8 @@ func (s *SDKServer) CommitTx(_ context.Context, req *pluginsdk.TxIDRequest) (*em
 	return &emptypb.Empty{}, nil
 }
 
-func (s *SDKServer) RollbackTx(_ context.Context, req *pluginsdk.TxIDRequest) (*emptypb.Empty, error) {
-	tx, err := s.popTx(req.GetTxId())
+func (s *SDKServer) RollbackTx(ctx context.Context, req *pluginsdk.TxIDRequest) (*emptypb.Empty, error) {
+	tx, err := s.popTx(ctx, req.GetTxId())
 	if err != nil {
 		return nil, err
 	}
@@ -278,21 +287,29 @@ func (s *SDKServer) RollbackTx(_ context.Context, req *pluginsdk.TxIDRequest) (*
 	return &emptypb.Empty{}, nil
 }
 
-func (s *SDKServer) lookupTx(id string) (*sql.Tx, error) {
+func (s *SDKServer) lookupTx(ctx context.Context, id string) (*sql.Tx, error) {
+	name, err := pluginNameFromContext(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "plugin identity: %v", err)
+	}
 	s.txMu.Lock()
 	defer s.txMu.Unlock()
 	t, ok := s.txs[id]
-	if !ok {
+	if !ok || t.pluginID != name {
 		return nil, status.Errorf(codes.NotFound, "unknown tx_id: %s", id)
 	}
 	return t.tx, nil
 }
 
-func (s *SDKServer) popTx(id string) (*sql.Tx, error) {
+func (s *SDKServer) popTx(ctx context.Context, id string) (*sql.Tx, error) {
+	name, err := pluginNameFromContext(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "plugin identity: %v", err)
+	}
 	s.txMu.Lock()
 	defer s.txMu.Unlock()
 	t, ok := s.txs[id]
-	if !ok {
+	if !ok || t.pluginID != name {
 		return nil, status.Errorf(codes.NotFound, "unknown tx_id: %s", id)
 	}
 	delete(s.txs, id)
@@ -381,17 +398,13 @@ func scanRowsToResponse(rows *sql.Rows) (*pluginsdk.SQLResponse, error) {
 
 	resp := &pluginsdk.SQLResponse{Columns: cols}
 	for rows.Next() {
-		holders := make([]any, len(cols))
-		ptrs := make([]any, len(cols))
-		for i := range holders {
-			ptrs[i] = &holders[i]
+		if len(resp.Rows) >= maxQueryRows {
+			return nil, status.Errorf(codes.ResourceExhausted,
+				"plugin sql result exceeds %d rows; use pagination", maxQueryRows)
 		}
-		if err := rows.Scan(ptrs...); err != nil {
-			return nil, toGRPCError("plugin sql scan", err)
-		}
-		row := &pluginsdk.SQLRow{Values: make([]*pluginsdk.SQLValue, len(cols))}
-		for i, v := range holders {
-			row.Values[i] = interfaceToSQLValue(v)
+		row, err := scanOneRow(rows, cols)
+		if err != nil {
+			return nil, err
 		}
 		resp.Rows = append(resp.Rows, row)
 	}
@@ -399,6 +412,24 @@ func scanRowsToResponse(rows *sql.Rows) (*pluginsdk.SQLResponse, error) {
 		return nil, toGRPCError("plugin sql iterate", err)
 	}
 	return resp, nil
+}
+
+// scanOneRow reads a single row into protobuf form, isolating the per-row
+// allocation/scan logic so scanRowsToResponse stays focused on the row-cap loop.
+func scanOneRow(rows *sql.Rows, cols []string) (*pluginsdk.SQLRow, error) {
+	holders := make([]any, len(cols))
+	ptrs := make([]any, len(cols))
+	for i := range holders {
+		ptrs[i] = &holders[i]
+	}
+	if err := rows.Scan(ptrs...); err != nil {
+		return nil, toGRPCError("plugin sql scan", err)
+	}
+	row := &pluginsdk.SQLRow{Values: make([]*pluginsdk.SQLValue, len(cols))}
+	for i, v := range holders {
+		row.Values[i] = interfaceToSQLValue(v)
+	}
+	return row, nil
 }
 
 func execResultToResponse(res sql.Result) *pluginsdk.ExecResponse {

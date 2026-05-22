@@ -37,11 +37,16 @@ func NewHealthMonitor(interval time.Duration, failThreshold int) *HealthMonitor 
 // Monitor 启动监控循环,直到 ctx 取消。
 // onFail 在连续 failThreshold 次失败后被调用一次,然后循环退出。
 // 如果 inst 或其 LifecycleStub 为 nil,函数立即返回。
+//
+// LifecycleStub 在 inst.mu 下读取一次,后续循环使用本地 stub 副本,
+// 避免与 CloseGRPC（在锁内将 LifecycleStub 置 nil）发生 data race。
 func (m *HealthMonitor) Monitor(ctx context.Context, inst *PluginInstance, onFail func()) {
 	if inst == nil {
 		return
 	}
+	inst.mu.Lock()
 	stub := inst.LifecycleStub
+	inst.mu.Unlock()
 	if stub == nil {
 		slog.Warn("health monitor: nil lifecycle stub", "plugin", inst.Name)
 		return

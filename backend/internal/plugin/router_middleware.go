@@ -2,6 +2,7 @@ package plugin
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -127,6 +128,13 @@ func (r *PluginRouter) CurrentTable() *RouteTable {
 
 // ServeHTTP 实现 http.Handler 接口。
 func (r *PluginRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	// 拒绝带有路径穿越或重复斜杠的请求，避免攻击者用 "/api/v1/plugins/foo/../../admin"
+	// 这类构造绕过插件前缀匹配。这里在路由匹配前直接拦截，最简单也最不易遗漏。
+	if strings.Contains(req.URL.Path, "..") || strings.Contains(req.URL.Path, "//") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
 	table := r.routeTable.Load()
 	entry, ok := table.Match(req.Method, req.URL.Path)
 	if !ok {
@@ -187,7 +195,11 @@ func (r *PluginRouter) proxyTo(w http.ResponseWriter, req *http.Request, authCtx
 }
 
 // injectPluginHeaders 注入用户上下文头,使插件不必再次解析 JWT/APIKey。
+// 先清空所有 X-Plugin-* 头防止外部请求伪造。
 func injectPluginHeaders(req *http.Request, authCtx *gin.Context, pluginName string) {
+	req.Header.Del("X-Plugin-User-ID")
+	req.Header.Del("X-Plugin-User-Role")
+	req.Header.Del("X-Plugin-Name")
 	if authCtx != nil {
 		if subject, ok := middleware.GetAuthSubjectFromContext(authCtx); ok && subject.UserID > 0 {
 			req.Header.Set("X-Plugin-User-ID", strconv.FormatInt(subject.UserID, 10))
@@ -204,6 +216,11 @@ func (r *PluginRouter) getOrCreateProxy(key string, target *url.URL) *httputil.R
 		return v.(*httputil.ReverseProxy)
 	}
 	proxy := httputil.NewSingleHostReverseProxy(target)
+	proxy.FlushInterval = -1
+	proxy.ErrorHandler = func(w http.ResponseWriter, req *http.Request, err error) {
+		slog.Warn("plugin proxy error", "url", target.String(), "error", err)
+		http.Error(w, "plugin upstream error", http.StatusBadGateway)
+	}
 	original := proxy.Director
 	proxy.Director = func(req *http.Request) {
 		original(req)

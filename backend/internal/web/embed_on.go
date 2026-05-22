@@ -212,13 +212,15 @@ func (s *FrontendServer) serveIndexHTML(c *gin.Context) {
 }
 
 func (s *FrontendServer) injectSettings(settingsJSON []byte) []byte {
-	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__APP_CONFIG__=` + string(settingsJSON) + `;</script>`)
+	safeSettings := bytes.ReplaceAll(settingsJSON, []byte("</"), []byte("<\/"))
+	script := []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__APP_CONFIG__=` + string(safeSettings) + `;</script>`)
 
 	// Inject plugin manifests if available
 	var pluginScript []byte
 	if s.pluginManifests != nil {
 		if manifestJSON := s.pluginManifests.GetPluginManifestsJSON(); len(manifestJSON) > 0 {
-			pluginScript = []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__PLUGIN_MANIFESTS__=` + string(manifestJSON) + `;</script>`)
+			safeManifest := bytes.ReplaceAll(manifestJSON, []byte("</"), []byte("<\\/"))
+			pluginScript = []byte(`<script nonce="` + NonceHTMLPlaceholder + `">window.__PLUGIN_MANIFESTS__=` + string(safeManifest) + `;</script>`)
 		}
 	}
 

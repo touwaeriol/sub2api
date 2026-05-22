@@ -37,7 +37,10 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const HOST_SDK_VERSION = '1.0.0'
+// IMPORTANT: Must match HOST_SDK_VERSION in @sub2api/plugin-sdk/src/host-sdk.ts.
+// Not imported directly because the host intentionally keeps plugin-sdk out of
+// its dependency tree (see host-bridge-types.ts header).
+const HOST_SDK_VERSION = '1.1.0'
 const HOST_SDK_GLOBAL_KEY = '__SUB2API_HOST_SDK__'
 const THEME_STORAGE_KEY = 'theme'
 const DEFAULT_PRIMARY_COLOR = '#3b82f6'

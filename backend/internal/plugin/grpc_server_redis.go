@@ -1,4 +1,4 @@
-﻿package plugin
+package plugin
 
 import (
 	"context"
@@ -50,15 +50,24 @@ func (s *SDKServer) Set(ctx context.Context, req *pluginsdk.RedisSetRequest) (*e
 	return &emptypb.Empty{}, nil
 }
 
+const (
+	minTTLSeconds = 1
+	maxTTLSeconds = 30 * 24 * 3600 // 30 days
+)
+
 func (s *SDKServer) SetEx(ctx context.Context, req *pluginsdk.RedisSetExRequest) (*emptypb.Empty, error) {
 	if s.redis == nil {
 		return nil, status.Error(codes.FailedPrecondition, "redis not configured")
+	}
+	ttlSec := req.GetTtlSeconds()
+	if ttlSec < minTTLSeconds || ttlSec > maxTTLSeconds {
+		return nil, status.Errorf(codes.InvalidArgument, "ttl_seconds must be in [%d, %d]", minTTLSeconds, maxTTLSeconds)
 	}
 	pfx, err := s.redisPrefixer(ctx)
 	if err != nil {
 		return nil, err
 	}
-	ttl := time.Duration(req.GetTtlSeconds()) * time.Second
+	ttl := time.Duration(ttlSec) * time.Second
 	if err := s.redis.Set(ctx, pfx.PrefixKey(req.GetKey()), req.GetValue(), ttl).Err(); err != nil {
 		return nil, toGRPCError("plugin redis setex", err)
 	}
@@ -221,13 +230,18 @@ type eventBusAdapter struct {
 	srv *SDKServer
 }
 
-// Publish sends an event on the shared eventbus. EventBus topics are shared
-// across plugins (no per-plugin prefix) to enable inter-plugin communication.
+// Publish sends an event on the calling plugin's eventbus namespace. Topics are
+// scoped per plugin: a plugin can only publish to its own namespace, identified
+// by the plugin name extracted from gRPC metadata.
 func (a *eventBusAdapter) Publish(ctx context.Context, req *pluginsdk.EventRequest) (*emptypb.Empty, error) {
 	if a.srv.redis == nil {
 		return nil, status.Error(codes.FailedPrecondition, "redis not configured")
 	}
-	channel := eventBusChannelPrefix + req.GetTopic()
+	pluginName, err := pluginNameFromContext(ctx)
+	if err != nil {
+		return nil, status.Errorf(codes.Unauthenticated, "plugin identity: %v", err)
+	}
+	channel := eventBusChannelPrefix + pluginName + ":" + req.GetTopic()
 	if err := a.srv.redis.Publish(ctx, channel, req.GetPayload()).Err(); err != nil {
 		return nil, toGRPCError("plugin eventbus publish", err)
 	}
@@ -238,24 +252,34 @@ func (a *eventBusAdapter) Subscribe(req *pluginsdk.EventFilter, stream grpc.Serv
 	return a.srv.eventBusSubscribe(req, stream)
 }
 
+// eventBusSubscribe streams events from the calling plugin's namespace. By
+// default a plugin subscribes to its own topics; cross-plugin subscription is
+// supported only by namespacing under the caller's name (see PluginNamespace
+// override in EventFilter for future cross-plugin extensions).
 func (s *SDKServer) eventBusSubscribe(req *pluginsdk.EventFilter, stream grpc.ServerStreamingServer[pluginsdk.Event]) error {
 	if s.redis == nil {
 		return status.Error(codes.FailedPrecondition, "redis not configured")
+	}
+	pluginName, err := pluginNameFromContext(stream.Context())
+	if err != nil {
+		return status.Errorf(codes.Unauthenticated, "plugin identity: %v", err)
 	}
 	topics := req.GetTopics()
 	if len(topics) == 0 {
 		return status.Error(codes.InvalidArgument, "at least one topic is required")
 	}
-	channels, chMap := buildEventBusChannelMap(topics)
+	channels, chMap := buildEventBusChannelMap(pluginName, topics)
+	// TODO(proto): inject from_plugin into Event message once the proto adds the field.
 	return s.streamEventBus(stream, channels, chMap)
 }
 
-// buildEventBusChannelMap maps eventbus topic names to prefixed Redis channel names.
-func buildEventBusChannelMap(topics []string) ([]string, map[string]string) {
+// buildEventBusChannelMap maps eventbus topic names to prefixed Redis channel
+// names scoped under the given plugin name.
+func buildEventBusChannelMap(pluginName string, topics []string) ([]string, map[string]string) {
 	channels := make([]string, 0, len(topics))
 	chMap := make(map[string]string, len(topics))
 	for _, t := range topics {
-		ch := eventBusChannelPrefix + t
+		ch := eventBusChannelPrefix + pluginName + ":" + t
 		channels = append(channels, ch)
 		chMap[ch] = t
 	}

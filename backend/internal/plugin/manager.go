@@ -122,6 +122,15 @@ func (m *PluginManager) BindRouter(router *PluginRouter) {
 	m.router = router
 }
 
+// getRouter 在持有 m.mu 读锁的前提下返回当前 router。
+// 虽然 BindRouter 在 Start 之前调用、之后不再变更,但任何
+// 跨 goroutine 读取共享字段都应走锁,避免合约违反与 race detector 报警。
+func (m *PluginManager) getRouter() *PluginRouter {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.router
+}
+
 // startSDKServer 监听 SDK gRPC 端口并启动 grpc.Server。
 func (m *PluginManager) startSDKServer() error {
 	ln, err := net.Listen("tcp", m.cfg.SDKListenAddr)
@@ -631,6 +640,11 @@ func (m *PluginManager) startPluginProcess(inst *PluginInstance) (*pluginProcess
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("read handshake: %w", err)
 	}
+	if err := validatePluginHTTPAddr(hs.HTTPAddr); err != nil {
+		cancelProc()
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("invalid handshake: %w", err)
+	}
 	return &pluginProcess{cmd: cmd, cancelCtx: cancelProc, hs: hs}, nil
 }
 
@@ -695,14 +709,22 @@ func (m *PluginManager) registerAndMonitor(
 	lifecycle pluginsdk.PluginLifecycleClient,
 	manifest *pluginsdk.ManifestResponse,
 ) {
-	entries := buildRouteEntries(inst.Name, manifest, proc.hs.HTTPAddr)
-	newTable := m.router.CurrentTable().AddPlugin(inst.Name, entries)
-	m.router.SwapRouteTable(newTable)
-
 	healthCtx, healthCancel := context.WithCancel(context.Background())
 	monitor := NewHealthMonitor(m.cfg.HealthInterval, m.cfg.HealthFailThreshold)
 
 	inst.mu.Lock()
+	// spawn/handshake/init/manifest 是耗时序列,期间 DisablePlugin 可能已经
+	// 把 inst 置回 StateRegistered。此时若继续注册路由/写字段,会留下
+	// 孤儿子进程 + 路由表里残留条目。检测到 state 漂移就清理资源直接返回。
+	if inst.State != StateStarting {
+		inst.mu.Unlock()
+		healthCancel()
+		_ = conn.Close()
+		proc.cleanup()
+		m.logger.Warn("plugin registration aborted: state changed during spawn",
+			"plugin", inst.Name, "current_state", inst.State.String())
+		return
+	}
 	inst.ResetWait()
 	inst.Cmd = proc.cmd
 	inst.CancelFunc = proc.cancelCtx
@@ -715,6 +737,11 @@ func (m *PluginManager) registerAndMonitor(
 	inst.HealthCancel = healthCancel
 	_ = inst.transitionTo(StateRunning)
 	inst.mu.Unlock()
+
+	entries := buildRouteEntries(inst.Name, manifest, proc.hs.HTTPAddr)
+	router := m.getRouter()
+	newTable := router.CurrentTable().AddPlugin(inst.Name, entries)
+	router.SwapRouteTable(newTable)
 
 	go monitor.Monitor(healthCtx, inst, func() { m.handleUnhealthy(inst) })
 	go m.waitProcessExit(inst)
@@ -769,8 +796,9 @@ func (m *PluginManager) stopInstance(ctx context.Context, name string, markRegis
 	}
 
 	// 移除路由,关闭连接,更新状态。
-	newTable := m.router.CurrentTable().RemovePlugin(name)
-	m.router.SwapRouteTable(newTable)
+	router := m.getRouter()
+	newTable := router.CurrentTable().RemovePlugin(name)
+	router.SwapRouteTable(newTable)
 
 	inst.mu.Lock()
 	inst.CloseGRPC()
@@ -1002,10 +1030,47 @@ func buildRouteEntries(pluginName string, manifest *pluginsdk.ManifestResponse, 
 	return entries
 }
 
+// coreReservedPrefixes 是核心系统保留的路径前缀。插件不允许将 gateway_endpoints
+// 注册到这些前缀下，否则可绕过鉴权或覆盖核心业务路由。
+var coreReservedPrefixes = []string{
+	"/api/v1/admin",
+	"/api/v1/auth",
+	"/api/v1/users",
+	"/api/v1/settings",
+	"/api/v1/payment",
+	"/health",
+	"/v1/messages",
+	"/v1/chat",
+	"/v1beta/",
+	"/responses",
+	"/setup",
+}
+
+// isReservedPath 判断 path 是否落在核心保留前缀内。
+func isReservedPath(path string) bool {
+	for _, prefix := range coreReservedPrefixes {
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func expandEndpoints(pluginName string, decls []*pluginsdk.EndpointDeclaration, proxyURL string, isGateway bool) []RouteEntry {
+	requiredPrefix := "/api/v1/plugins/" + pluginName + "/"
 	out := make([]RouteEntry, 0, len(decls))
 	for _, ep := range decls {
 		if ep == nil || ep.GetPath() == "" {
+			continue
+		}
+		if !isGateway && !strings.HasPrefix(ep.GetPath(), requiredPrefix) {
+			slog.Warn("plugin endpoint rejected: path must start with plugin prefix",
+				"plugin", pluginName, "path", ep.GetPath(), "required_prefix", requiredPrefix)
+			continue
+		}
+		if isGateway && isReservedPath(ep.GetPath()) {
+			slog.Warn("plugin gateway endpoint rejected: reserved path",
+				"plugin", pluginName, "path", ep.GetPath())
 			continue
 		}
 		methods := ep.GetMethods()
@@ -1031,9 +1096,28 @@ func expandEndpoints(pluginName string, decls []*pluginsdk.EndpointDeclaration, 
 }
 
 // normalizeProxyURL 把 host:port 形式补成 http://host:port。
+// 同时校验 host 必须是 loopback 地址，防止 SSRF。
 func normalizeProxyURL(addr string) string {
 	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
 		return addr
 	}
 	return "http://" + addr
+}
+
+// validatePluginHTTPAddr 校验插件提供的 HTTP 地址必须是 loopback。
+func validatePluginHTTPAddr(addr string) error {
+	if addr == "" {
+		return nil
+	}
+	host := addr
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		host = addr[:idx]
+	}
+	host = strings.Trim(host, "[]")
+	switch host {
+	case "127.0.0.1", "localhost", "::1", "":
+		return nil
+	default:
+		return fmt.Errorf("plugin http_addr host must be loopback, got %q", host)
+	}
 }

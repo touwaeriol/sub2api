@@ -3,10 +3,13 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"regexp"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
+
+var validPluginNamePattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 
 // pluginNameMDKey is the gRPC metadata key that carries the calling plugin's name.
 // Plugins inject this via a client-side interceptor; the SDK server extracts it.
@@ -60,7 +63,8 @@ func sdkStreamInterceptor(
 	return handler(srv, &wrappedStream{ServerStream: ss, ctx: ctx})
 }
 
-// extractPluginName reads the plugin name from incoming gRPC metadata.
+// extractPluginName reads the plugin name from incoming gRPC metadata
+// and validates it against the allowed character set.
 func extractPluginName(ctx context.Context) (string, error) {
 	md, ok := metadata.FromIncomingContext(ctx)
 	if !ok {
@@ -70,7 +74,11 @@ func extractPluginName(ctx context.Context) (string, error) {
 	if len(values) == 0 || values[0] == "" {
 		return "", fmt.Errorf("missing %s in gRPC metadata", pluginNameMDKey)
 	}
-	return values[0], nil
+	name := values[0]
+	if !validPluginNamePattern.MatchString(name) {
+		return "", fmt.Errorf("invalid plugin name %q: must match [a-z][a-z0-9-]{0,63}", name)
+	}
+	return name, nil
 }
 
 // wrappedStream overrides Context() to return the enriched context.

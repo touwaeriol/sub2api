@@ -1,6 +1,7 @@
 <template>
-  <!-- Plugin-provided SVG icon (explicit prop) -->
-  <span v-if="iconSvg" :class="sizeClass" v-html="iconSvg"></span>
+  <!-- Plugin-provided SVG icon (explicit prop). Sanitized to strip <script>,
+       on*= event handlers, foreignObject and javascript: URLs before render. -->
+  <span v-if="iconSvg" :class="sizeClass" v-html="sanitizedIconSvg"></span>
   <!-- Claude/Anthropic logo -->
   <svg v-else-if="platform === 'anthropic'" :class="sizeClass" viewBox="0 0 16 16" fill="currentColor">
     <path
@@ -31,6 +32,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { sanitizeSvg } from '../utils/sanitizeSvg'
 
 // Inline GroupPlatform type (business string union, no host type dependency in SDK)
 type GroupPlatform = string
@@ -44,6 +46,8 @@ interface Props {
 const props = withDefaults(defineProps<Props>(), {
   size: 'sm'
 })
+
+const sanitizedIconSvg = computed(() => sanitizeSvg(props.iconSvg ?? ''))
 
 const sizeClass = computed(() => {
   const sizes = {
