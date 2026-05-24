@@ -611,9 +611,25 @@ func (s *SettingService) SetProxyRepository(repo ProxyRepository) {
 }
 
 // SetRectifierSettingsCache injects the Redis-backed rectifier settings cache.
-// 未注入时 GetRectifierSettings 退化为每次直查 DB，保持向后兼容。
 func (s *SettingService) SetRectifierSettingsCache(cache RectifierSettingsCache) {
 	s.rectifierCache = cache
+}
+
+func (s *SettingService) LoadAPIKeyACLTrustForwardedIPSetting(ctx context.Context) error {
+	if s == nil || s.cfg == nil || s.settingRepo == nil {
+		return nil
+	}
+	value, err := s.settingRepo.GetValue(ctx, SettingKeyAPIKeyACLTrustForwardedIP)
+	if err != nil {
+		if errors.Is(err, ErrSettingNotFound) {
+			s.cfg.SetTrustForwardedIPForAPIKeyACL(s.cfg.Security.TrustForwardedIPForAPIKeyACL)
+			return nil
+		}
+		return fmt.Errorf("get api key acl forwarded ip setting: %w", err)
+	}
+	enabled := value == "true"
+	s.cfg.SetTrustForwardedIPForAPIKeyACL(enabled)
+	return nil
 }
 
 // GetAllSettings 获取所有系统设置
@@ -652,6 +668,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyLoginAgreementDocuments,
 		SettingKeyTurnstileEnabled,
 		SettingKeyTurnstileSiteKey,
+		SettingKeyAPIKeyACLTrustForwardedIP,
 		SettingKeySiteName,
 		SettingKeySiteLogo,
 		SettingKeySiteSubtitle,
@@ -1628,6 +1645,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	u.SetBool(SettingKeyTurnstileEnabled, settings.TurnstileEnabled)
 	u.SetString(SettingKeyTurnstileSiteKey, settings.TurnstileSiteKey)
 	u.SetStringIfNotEmpty(SettingKeyTurnstileSecretKey, settings.TurnstileSecretKey)
+	u.SetBool(SettingKeyAPIKeyACLTrustForwardedIP, settings.APIKeyACLTrustForwardedIP)
 
 	// LinuxDo Connect OAuth 登录
 	u.SetBool(SettingKeyLinuxDoConnectEnabled, settings.LinuxDoConnectEnabled)
@@ -1837,6 +1855,7 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	u.SetBool(SettingKeyBalanceLowNotifyEnabled, settings.BalanceLowNotifyEnabled)
 	u.SetFloat(SettingKeyBalanceLowNotifyThreshold, settings.BalanceLowNotifyThreshold)
 	u.SetString(SettingKeyBalanceLowNotifyRechargeURL, settings.BalanceLowNotifyRechargeURL)
+	u.SetBool(SettingKeySubscriptionExpiryNotifyEnabled, settings.SubscriptionExpiryNotifyEnabled)
 	u.SetBool(SettingKeyAccountQuotaNotifyEnabled, settings.AccountQuotaNotifyEnabled)
 	u.SetString(SettingKeyAccountQuotaNotifyEmails, MarshalNotifyEmails(settings.AccountQuotaNotifyEmails))
 
@@ -1923,6 +1942,9 @@ func (s *SettingService) refreshCachedSettings(settings *SystemSettings) {
 		enabled:   settings.OpenAIAdvancedSchedulerEnabled,
 		expiresAt: time.Now().Add(openAIAdvancedSchedulerSettingCacheTTL).UnixNano(),
 	})
+	if s.cfg != nil {
+		s.cfg.SetTrustForwardedIPForAPIKeyACL(settings.APIKeyACLTrustForwardedIP)
+	}
 	if s.onUpdate != nil {
 		s.onUpdate() // Invalidate cache after settings update
 	}
@@ -2549,6 +2571,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyLoginAgreementMode:                        defaultLoginAgreementMode,
 		SettingKeyLoginAgreementUpdatedAt:                   defaultLoginAgreementDate,
 		SettingKeyLoginAgreementDocuments:                   loginAgreementDocumentsJSON,
+		SettingKeyAPIKeyACLTrustForwardedIP:                 "false",
 		SettingKeySiteName:                                  "Sub2API",
 		SettingKeySiteLogo:                                  "",
 		SettingKeyPurchaseSubscriptionEnabled:               "false",
@@ -2709,6 +2732,12 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	if loginAgreementUpdatedAt == "" {
 		loginAgreementUpdatedAt = defaultLoginAgreementDate
 	}
+	apiKeyACLTrustForwardedIP := false
+	if value, ok := settings[SettingKeyAPIKeyACLTrustForwardedIP]; ok {
+		apiKeyACLTrustForwardedIP = value == "true"
+	} else if s != nil && s.cfg != nil {
+		apiKeyACLTrustForwardedIP = s.cfg.Security.TrustForwardedIPForAPIKeyACL
+	}
 	result := &SystemSettings{
 		RegistrationEnabled:              settings[SettingKeyRegistrationEnabled] == "true",
 		EmailVerifyEnabled:               emailVerifyEnabled,
@@ -2731,6 +2760,7 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 		TurnstileEnabled:                 settings[SettingKeyTurnstileEnabled] == "true",
 		TurnstileSiteKey:                 settings[SettingKeyTurnstileSiteKey],
 		TurnstileSecretKeyConfigured:     settings[SettingKeyTurnstileSecretKey] != "",
+		APIKeyACLTrustForwardedIP:        apiKeyACLTrustForwardedIP,
 		SiteName:                         s.getStringOrDefault(settings, SettingKeySiteName, "Sub2API"),
 		SiteLogo:                         settings[SettingKeySiteLogo],
 		SiteSubtitle:                     s.getStringOrDefault(settings, SettingKeySiteSubtitle, "Subscription to API Conversion Platform"),
@@ -3219,14 +3249,15 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	result.PaymentVisibleMethodWxpayEnabled = settings[SettingPaymentVisibleMethodWxpayEnabled] == "true"
 	result.OpenAIAdvancedSchedulerEnabled = settings[openAIAdvancedSchedulerSettingKey] == "true"
 
-	// Balance low notification
+	// 余额、订阅到期与账号限额通知
 	result.BalanceLowNotifyEnabled = settings[SettingKeyBalanceLowNotifyEnabled] == "true"
 	if v, err := strconv.ParseFloat(settings[SettingKeyBalanceLowNotifyThreshold], 64); err == nil && v >= 0 {
 		result.BalanceLowNotifyThreshold = v
 	}
 	result.BalanceLowNotifyRechargeURL = settings[SettingKeyBalanceLowNotifyRechargeURL]
+	result.SubscriptionExpiryNotifyEnabled = !isFalseSettingValue(settings[SettingKeySubscriptionExpiryNotifyEnabled])
 
-	// Account quota notification
+	// 账号限额通知
 	result.AccountQuotaNotifyEnabled = settings[SettingKeyAccountQuotaNotifyEnabled] == "true"
 	if raw := strings.TrimSpace(settings[SettingKeyAccountQuotaNotifyEmails]); raw != "" {
 		result.AccountQuotaNotifyEmails = ParseNotifyEmails(raw)

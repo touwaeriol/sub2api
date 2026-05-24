@@ -59,6 +59,9 @@
     "vue-tsc": "^2.2.0"
   },
   "pnpm": {
-    "onlyBuiltDependencies": ["esbuild", "vue-demi"]
+    "onlyBuiltDependencies": ["esbuild", "vue-demi"],
+    "overrides": {
+      "js-cookie": "3.0.7"
+    }
   }
 }
