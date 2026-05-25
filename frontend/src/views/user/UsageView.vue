@@ -574,7 +574,6 @@ import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
-  BILLING_MODE_IMAGE,
   BILLING_MODE_TOKEN,
   getBillingModeBadgeClass,
   getBillingModeLabel,

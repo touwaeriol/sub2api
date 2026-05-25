@@ -384,7 +384,7 @@ import { formatCacheTokens, formatMultiplier } from '@/utils/formatters'
 import { formatTokenPricePerMillion } from '@/utils/usagePricing'
 import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
-import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN, BILLING_MODE_IMAGE } from '@/utils/billingMode'
+import { getBillingModeLabel, getBillingModeBadgeClass, BILLING_MODE_TOKEN } from '@/utils/billingMode'
 import {
   formatImageBillingSize,
   formatImageInputSize,
