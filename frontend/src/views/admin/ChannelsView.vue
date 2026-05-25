@@ -1142,15 +1142,16 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
     delete featuresConfig.codex_image_generation_bridge
   }
 
-  const bedrockCCCompat: Record<string, boolean> = {}
+  // bedrock_cc_compat: 保存为简单 bool（后端期望 true/false）
+  let bedrockCCCompatEnabled = false
   for (const section of form.platforms) {
     if (!section.enabled) continue
-    if (section.platform === 'anthropic') {
-      bedrockCCCompat[section.platform] = !!section.bedrock_cc_compat
+    if (section.platform === 'anthropic' && section.bedrock_cc_compat) {
+      bedrockCCCompatEnabled = true
     }
   }
-  if (Object.keys(bedrockCCCompat).length > 0) {
-    featuresConfig.bedrock_cc_compat = bedrockCCCompat
+  if (bedrockCCCompatEnabled) {
+    featuresConfig.bedrock_cc_compat = true
   } else {
     delete featuresConfig.bedrock_cc_compat
   }
