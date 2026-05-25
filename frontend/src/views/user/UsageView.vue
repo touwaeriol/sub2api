@@ -472,10 +472,6 @@
                 <span class="text-gray-400">{{ t('usage.outputTokenPrice') }}</span>
                 <span class="font-medium text-violet-300">{{ formatTokenPricePerMillion(tooltipData.output_cost, tooltipData.output_tokens) }} {{ t('usage.perMillionTokens') }}</span>
               </div>
-              <div v-if="tooltipData && (tooltipData.image_output_tokens ?? 0) > 0" class="flex items-center justify-between gap-4">
-                <span class="text-gray-400">{{ t('admin.usage.imageOutputTokens') }}</span>
-                <span class="font-medium text-pink-300">{{ tooltipData.image_output_tokens?.toLocaleString() }}</span>
-              </div>
             </template>
             <!-- Per-image billing: show image metadata and unit price -->
             <template v-else-if="tooltipData && isImageUsage(tooltipData)">
