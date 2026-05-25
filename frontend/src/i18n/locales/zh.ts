@@ -4806,6 +4806,7 @@ export default {
       allTypes: '全部类型',
       inputCost: '输入成本',
       outputCost: '输出成本',
+      imageOutputTokens: '图片输出 Token',
       cacheCreationCost: '缓存创建成本',
       cacheReadCost: '缓存读取成本',
       inputTokens: '输入 Token',

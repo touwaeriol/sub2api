@@ -4644,6 +4644,7 @@ export default {
       allTypes: 'All Types',
       inputCost: 'Input Cost',
       outputCost: 'Output Cost',
+      imageOutputTokens: 'Image Output Tokens',
       cacheCreationCost: 'Cache Creation Cost',
       cacheReadCost: 'Cache Read Cost',
       inputTokens: 'Input Tokens',
