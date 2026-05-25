@@ -412,9 +412,6 @@ function isImageUsage(row: Pick<AdminUsageLog, 'image_count'> | null | undefined
 }
 
 function getDisplayBillingMode(row: Pick<AdminUsageLog, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined {
-  if (isImageUsage(row)) {
-    return BILLING_MODE_IMAGE
-  }
   return row?.billing_mode
 }
 

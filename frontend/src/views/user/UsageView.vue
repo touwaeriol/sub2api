@@ -711,9 +711,6 @@ const isImageUsage = (row: Pick<UsageLog, 'image_count'> | null | undefined): bo
 }
 
 const getDisplayBillingMode = (row: Pick<UsageLog, 'billing_mode' | 'image_count'> | null | undefined): string | null | undefined => {
-  if (isImageUsage(row)) {
-    return BILLING_MODE_IMAGE
-  }
   return row?.billing_mode
 }
 
