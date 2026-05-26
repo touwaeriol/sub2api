@@ -727,3 +727,64 @@ func TestApplyTokenOverrides_IntervalSetsImageOutputPriceExplicit(t *testing.T) 
 	require.True(t, pricing.ImageOutputPriceExplicit)
 	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
 }
+
+func TestApplyTokenOverrides_IntervalNoMatchFallsBackToChannelFlatPrice(t *testing.T) {
+	r := newResolverWithChannel(t, []ChannelModelPricing{{
+		Platform:         "anthropic",
+		Models:           []string{"claude-sonnet-4"},
+		BillingMode:      BillingModeToken,
+		InputPrice:       testPtrFloat64(5e-6),
+		OutputPrice:      testPtrFloat64(20e-6),
+		CacheWritePrice:  testPtrFloat64(6e-6),
+		CacheReadPrice:   testPtrFloat64(0.5e-6),
+		ImageOutputPrice: testPtrFloat64(40e-6),
+		Intervals: []PricingInterval{
+			{MinTokens: 50000, MaxTokens: testPtrInt(200000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)},
+		},
+	}})
+	resolved := r.Resolve(context.Background(), PricingInput{
+		Model:   "claude-sonnet-4",
+		GroupID: groupIDPtr(),
+	})
+
+	// Token count 1000 doesn't match interval (min 50000) → falls back to BasePricing
+	pricing := r.GetIntervalPricing(resolved, 1000)
+	require.Equal(t, resolved.BasePricing, pricing)
+
+	// BasePricing should use channel flat prices, NOT LiteLLM defaults
+	require.InDelta(t, 5e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 20e-6, pricing.OutputPricePerToken, 1e-12)
+	require.InDelta(t, 6e-6, pricing.CacheCreationPricePerToken, 1e-12)
+	require.InDelta(t, 0.5e-6, pricing.CacheReadPricePerToken, 1e-12)
+	require.InDelta(t, 40e-6, pricing.ImageOutputPricePerToken, 1e-12)
+	require.True(t, pricing.ImageOutputPriceExplicit)
+}
+
+func TestApplyTokenOverrides_IntervalNoMatchFallsBackToChannelFlatPrice_NilImageOutput(t *testing.T) {
+	r := newResolverWithChannel(t, []ChannelModelPricing{{
+		Platform:    "anthropic",
+		Models:      []string{"claude-sonnet-4"},
+		BillingMode: BillingModeToken,
+		InputPrice:  testPtrFloat64(5e-6),
+		OutputPrice: testPtrFloat64(20e-6),
+		// ImageOutputPrice intentionally nil
+		Intervals: []PricingInterval{
+			{MinTokens: 50000, MaxTokens: testPtrInt(200000), InputPrice: testPtrFloat64(3e-6), OutputPrice: testPtrFloat64(15e-6)},
+		},
+	}})
+	resolved := r.Resolve(context.Background(), PricingInput{
+		Model:   "claude-sonnet-4",
+		GroupID: groupIDPtr(),
+	})
+
+	// Token count 1000 doesn't match → falls back to BasePricing
+	pricing := r.GetIntervalPricing(resolved, 1000)
+	require.Equal(t, resolved.BasePricing, pricing)
+
+	// Channel flat prices applied
+	require.InDelta(t, 5e-6, pricing.InputPricePerToken, 1e-12)
+	require.InDelta(t, 20e-6, pricing.OutputPricePerToken, 1e-12)
+	// ImageOutputPrice nil → 0 with explicit mark
+	require.Equal(t, 0.0, pricing.ImageOutputPricePerToken)
+	require.True(t, pricing.ImageOutputPriceExplicit)
+}
