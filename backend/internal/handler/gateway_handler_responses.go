@@ -144,11 +144,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	}
 
 	// 2. Re-check billing
-	// billingTicket：两阶段计费检查的入场票，handler 必须在所有返回路径 defer Close。
-	// 选定 account 后 Consume 才会按 channel/account scope 抢 service quota concurrency。
 	billingTicket, err := h.billingCacheService.PrepareBillingCheckForRequest(
 		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
 		service.ServiceQuotaCheckRequest{Model: reqModel, ChannelID: channelMapping.ChannelID},
+		service.QuotaPlatform(c.Request.Context(), apiKey),
 	)
 	if err != nil {
 		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
@@ -281,9 +280,11 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
+		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:              result,
+				QuotaPlatform:       quotaPlatform,
 				APIKey:              apiKey,
 				User:                apiKey.User,
 				Account:             account,

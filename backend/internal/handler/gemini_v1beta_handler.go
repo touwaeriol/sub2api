@@ -246,11 +246,10 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	}
 
 	// 2) billing eligibility check (after wait)
-	// billingTicket：两阶段计费检查。Prepare 仅做 channel/account 无关检查；
-	// 选定 account 后通过 Consume 才按 channel/account scope 抢 service quota concurrency。
 	billingTicket, err := h.billingCacheService.PrepareBillingCheckForRequest(
 		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
 		service.ServiceQuotaCheckRequest{Model: reqModel, ChannelID: channelMapping.ChannelID},
+		service.QuotaPlatform(c.Request.Context(), apiKey),
 	)
 	if err != nil {
 		reqLog.Info("gemini.billing_eligibility_check_failed", zap.Error(err))
@@ -542,9 +541,11 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		requestPayloadHash := service.HashUsageRequestPayload(body)
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
+		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsageWithLongContext(ctx, &service.RecordUsageLongContextInput{
 				Result:                result,
+				QuotaPlatform:         quotaPlatform,
 				APIKey:                apiKey,
 				User:                  apiKey.User,
 				Account:               account,

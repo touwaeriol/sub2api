@@ -97,6 +97,18 @@ func (p *panickingBillingCache) IncrQuotaUsedRule(ctx context.Context, userID, r
 func (p *panickingBillingCache) InvalidateQuotaConfig(ctx context.Context, userID int64) error {
 	return nil
 }
+func (p *panickingBillingCache) GetUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) (*UserPlatformQuotaCacheEntry, bool, error) {
+	return nil, false, nil
+}
+func (p *panickingBillingCache) SetUserPlatformQuotaCache(ctx context.Context, userID int64, platform string, entry *UserPlatformQuotaCacheEntry, ttl time.Duration) error {
+	return nil
+}
+func (p *panickingBillingCache) DeleteUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) error {
+	return nil
+}
+func (p *panickingBillingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration) error {
+	return nil
+}
 
 // TestCacheWriteWorker_PanicRecovery 验证 runCacheWriteTask 的 recover：
 // 1) 入队一个 panic 任务 → worker 吞掉 panic 继续消费
@@ -109,7 +121,7 @@ func (p *panickingBillingCache) InvalidateQuotaConfig(ctx context.Context, userI
 // 为此用 cacheWriteWorkerCount 次 panic 任务 + 1 次正常任务 确保所有 worker 都过一次 panic 路径。
 func TestCacheWriteWorker_PanicRecovery(t *testing.T) {
 	cache := &panickingBillingCache{}
-	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{})
+	svc := NewBillingCacheService(cache, nil, nil, nil, nil, nil, &config.Config{}, nil, nil)
 	t.Cleanup(svc.Stop)
 
 	// 第一次入队触发 panic（DeductUserBalance 只 panic 一次）。

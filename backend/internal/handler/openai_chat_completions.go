@@ -105,11 +105,10 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		defer userReleaseFunc()
 	}
 
-	// billingTicket：两阶段计费检查（详见 service.BillingTicket 注释），caller 必须 defer Close。
-	// 选定 account 后 Consume 才按 channel/account scope 抢 service quota concurrency。
 	billingTicket, err := h.billingCacheService.PrepareBillingCheckForRequest(
 		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
 		service.ServiceQuotaCheckRequest{Model: reqModel, ChannelID: channelMapping.ChannelID},
+		service.QuotaPlatform(c.Request.Context(), apiKey),
 	)
 	if err != nil {
 		reqLog.Info("openai_chat_completions.billing_eligibility_check_failed", zap.Error(err))

@@ -139,12 +139,10 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	// 2. Re-check billing
-	// billingTicket 持有 service quota concurrency 槽位（若规则匹配）。Prepare 仅做 channel/account
-	// 无关的检查；选定 account 后通过 ticket.Consume 才真正按 channel/account scope 抢槽位。
-	// 协议见 service.BillingTicket 注释，handler 必须在所有返回路径 defer ticket.Close()。
 	billingTicket, err := h.billingCacheService.PrepareBillingCheckForRequest(
 		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
 		service.ServiceQuotaCheckRequest{Model: reqModel, ChannelID: channelMapping.ChannelID},
+		service.QuotaPlatform(c.Request.Context(), apiKey),
 	)
 	if err != nil {
 		reqLog.Info("gateway.cc.billing_check_failed", zap.Error(err))
@@ -308,9 +306,11 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 		inboundEndpoint := GetInboundEndpoint(c)
 		upstreamEndpoint := GetUpstreamEndpoint(c, account.Platform)
 
+		quotaPlatform := service.QuotaPlatform(c.Request.Context(), apiKey)
 		h.submitUsageRecordTask(func(ctx context.Context) {
 			if err := h.gatewayService.RecordUsage(ctx, &service.RecordUsageInput{
 				Result:              result,
+				QuotaPlatform:       quotaPlatform,
 				APIKey:              apiKey,
 				User:                apiKey.User,
 				Account:             account,
