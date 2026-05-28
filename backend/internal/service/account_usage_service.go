@@ -1056,6 +1056,65 @@ func windowStatsFromAccountStats(stats *usagestats.AccountStats) *WindowStats {
 	}
 }
 
+// GetStatsBatch 批量获取账号在指定时间窗口内的统计，优先走批量 SQL，失败时回退单账号查询。
+// startTime 为 zero time 时表示无上限（查询全部历史）。
+func (s *AccountUsageService) GetStatsBatch(ctx context.Context, accountIDs []int64, startTime time.Time) (map[int64]*WindowStats, error) {
+	uniqueIDs := make([]int64, 0, len(accountIDs))
+	seen := make(map[int64]struct{}, len(accountIDs))
+	for _, accountID := range accountIDs {
+		if accountID <= 0 {
+			continue
+		}
+		if _, exists := seen[accountID]; exists {
+			continue
+		}
+		seen[accountID] = struct{}{}
+		uniqueIDs = append(uniqueIDs, accountID)
+	}
+
+	result := make(map[int64]*WindowStats, len(uniqueIDs))
+	if len(uniqueIDs) == 0 {
+		return result, nil
+	}
+
+	if batchReader, ok := s.usageLogRepo.(accountWindowStatsBatchReader); ok {
+		statsByAccount, err := batchReader.GetAccountWindowStatsBatch(ctx, uniqueIDs, startTime)
+		if err == nil {
+			for _, accountID := range uniqueIDs {
+				result[accountID] = windowStatsFromAccountStats(statsByAccount[accountID])
+			}
+			return result, nil
+		}
+	}
+
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(8)
+
+	for _, accountID := range uniqueIDs {
+		id := accountID
+		g.Go(func() error {
+			stats, err := s.usageLogRepo.GetAccountWindowStats(gctx, id, startTime)
+			if err != nil {
+				return nil
+			}
+			mu.Lock()
+			result[id] = windowStatsFromAccountStats(stats)
+			mu.Unlock()
+			return nil
+		})
+	}
+
+	_ = g.Wait()
+
+	for _, accountID := range uniqueIDs {
+		if _, ok := result[accountID]; !ok {
+			result[accountID] = &WindowStats{}
+		}
+	}
+	return result, nil
+}
+
 func buildCodexUsageProgressFromExtra(extra map[string]any, window string, now time.Time) *UsageProgress {
 	if len(extra) == 0 {
 		return nil

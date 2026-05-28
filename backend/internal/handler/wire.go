@@ -116,27 +116,29 @@ func ProvideHandlers(
 	paymentWebhookHandler *PaymentWebhookHandler,
 	availableChannelHandler *AvailableChannelHandler,
 	userServiceQuotaHandler *UserServiceQuotaHandler,
+	monitorHandler *MonitorHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
 	return &Handlers{
-		Auth:             authHandler,
-		User:             userHandler,
-		APIKey:           apiKeyHandler,
-		Usage:            usageHandler,
-		Redeem:           redeemHandler,
-		Subscription:     subscriptionHandler,
-		Announcement:     announcementHandler,
-		ChannelMonitor:   channelMonitorUserHandler,
-		Admin:            adminHandlers,
-		Gateway:          gatewayHandler,
-		OpenAIGateway:    openaiGatewayHandler,
-		Setting:          settingHandler,
-		Totp:             totpHandler,
-		Payment:          paymentHandler,
-		PaymentWebhook:   paymentWebhookHandler,
-		AvailableChannel: availableChannelHandler,
-		UserServiceQuota: userServiceQuotaHandler,
+		Auth:              authHandler,
+		User:              userHandler,
+		APIKey:            apiKeyHandler,
+		Usage:             usageHandler,
+		Redeem:            redeemHandler,
+		Subscription:      subscriptionHandler,
+		Announcement:      announcementHandler,
+		ChannelMonitor:    channelMonitorUserHandler,
+		Admin:             adminHandlers,
+		Gateway:           gatewayHandler,
+		OpenAIGateway:     openaiGatewayHandler,
+		Setting:           settingHandler,
+		Totp:              totpHandler,
+		Payment:           paymentHandler,
+		PaymentWebhook:    paymentWebhookHandler,
+		AvailableChannel:  availableChannelHandler,
+		UserServiceQuota:  userServiceQuotaHandler,
+		Monitor:           monitorHandler,
 	}
 }
 
@@ -159,6 +161,9 @@ var ProviderSet = wire.NewSet(
 	NewPaymentWebhookHandler,
 	NewAvailableChannelHandler,
 	NewUserServiceQuotaHandler,
+
+	// Monitor handler (public, no auth)
+	NewMonitorHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
