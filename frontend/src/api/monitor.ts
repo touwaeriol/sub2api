@@ -1,5 +1,4 @@
 import { apiClient } from './client'
-import type { ApiResponse } from '@/types'
 
 export interface MonitorAccountItem {
   name: string
@@ -20,7 +19,9 @@ export interface MonitorResponse {
 }
 
 export function getGroupAccountMonitor(platform: string, groupName: string) {
-  return apiClient.get<ApiResponse<MonitorResponse>>(
-    `/monitor/${encodeURIComponent(platform)}/${encodeURIComponent(groupName)}`
-  )
+  return apiClient
+    .get<MonitorResponse>(
+      `/monitor/${encodeURIComponent(platform)}/${encodeURIComponent(groupName)}`
+    )
+    .then((res) => res.data)
 }

@@ -193,8 +193,7 @@ async function fetchData() {
 
   loading.value = true
   try {
-    const res = await getGroupAccountMonitor(platform, groupName)
-    data.value = res.data
+    data.value = await getGroupAccountMonitor(platform, groupName)
     error.value = ''
   } catch (err: unknown) {
     error.value = extractApiErrorMessage(err, '加载监控数据失败')
