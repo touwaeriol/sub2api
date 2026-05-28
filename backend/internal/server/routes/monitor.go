@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"log"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler"
@@ -10,18 +9,16 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// RegisterMonitorRoutes 注册公开监控路由（无需认证，带速率限制）
-func RegisterMonitorRoutes(v1 *gin.RouterGroup, h *handler.Handlers, redisClient *redis.Client) {
-	log.Printf("[Monitor] RegisterMonitorRoutes called, h.Monitor=%v", h.Monitor)
+// RegisterMonitorRoutes 注册公开监控路由（无需认证，带速率限制）。
+// 直接挂到 engine 上避免和 v1 RouterGroup 的路由树冲突。
+func RegisterMonitorRoutes(r *gin.Engine, h *handler.Handlers, redisClient *redis.Client) {
 	if h.Monitor == nil {
-		log.Printf("[Monitor] WARNING: h.Monitor is nil, skipping route registration")
 		return
 	}
-	log.Printf("[Monitor] Registering GET /api/v1/monitor/:platform/:group_name")
 
 	rateLimiter := middleware.NewRateLimiter(redisClient)
 
-	monitor := v1.Group("/monitor")
+	monitor := r.Group("/monitor")
 	monitor.Use(rateLimiter.LimitWithOptions("monitor", 30, time.Minute, middleware.RateLimitOptions{
 		FailureMode: middleware.RateLimitFailOpen,
 	}))

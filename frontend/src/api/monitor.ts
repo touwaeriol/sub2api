@@ -1,4 +1,4 @@
-import { apiClient } from './client'
+import axios from 'axios'
 
 export interface MonitorAccountItem {
   name: string
@@ -19,9 +19,9 @@ export interface MonitorResponse {
 }
 
 export function getGroupAccountMonitor(platform: string, groupName: string) {
-  return apiClient
-    .get<MonitorResponse>('/monitor/group', {
+  return axios
+    .get<{ code: number; data: MonitorResponse }>('/monitor/group', {
       params: { platform, group_name: groupName },
     })
-    .then((res) => res.data)
+    .then((res) => res.data.data)
 }
