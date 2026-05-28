@@ -20,7 +20,7 @@ export interface MonitorResponse {
 
 export function getGroupAccountMonitor(platform: string, groupName: string) {
   return axios
-    .get<{ code: number; data: MonitorResponse }>('/monitor/group', {
+    .get<{ code: number; data: MonitorResponse }>('/api/v1/monitor/group', {
       params: { platform, group_name: groupName },
     })
     .then((res) => res.data.data)

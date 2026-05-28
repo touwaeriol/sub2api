@@ -18,7 +18,7 @@ func RegisterMonitorRoutes(r *gin.Engine, h *handler.Handlers, redisClient *redi
 
 	rateLimiter := middleware.NewRateLimiter(redisClient)
 
-	monitor := r.Group("/monitor")
+	monitor := r.Group("/api/v1/monitor")
 	monitor.Use(rateLimiter.LimitWithOptions("monitor", 30, time.Minute, middleware.RateLimitOptions{
 		FailureMode: middleware.RateLimitFailOpen,
 	}))

@@ -83,6 +83,9 @@ func SetupRouter(
 	// 注册路由
 	registerRoutes(r, handlers, jwtAuth, adminAuth, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg, redisClient)
 
+	// 公开监控路由（挂在 engine 上，绕过 v1 RouterGroup 路由树冲突）
+	routes.RegisterMonitorRoutes(r, handlers, redisClient)
+
 	return r
 }
 
@@ -112,7 +115,5 @@ func registerRoutes(
 	routes.RegisterAdminRoutes(v1, h, adminAuth)
 	routes.RegisterGatewayRoutes(r, h, apiKeyAuth, apiKeyService, subscriptionService, opsService, settingService, cfg)
 	routes.RegisterPaymentRoutes(v1, h.Payment, h.PaymentWebhook, h.Admin.Payment, jwtAuth, adminAuth, settingService)
-	routes.RegisterMonitorRoutes(r, h, redisClient)
-
 	handler.RegisterPageRoutes(v1, cfg.Pricing.DataDir, gin.HandlerFunc(jwtAuth), gin.HandlerFunc(adminAuth), settingService)
 }
