@@ -60,6 +60,7 @@ type Handlers struct {
 	AvailableChannel *AvailableChannelHandler
 	UserServiceQuota *UserServiceQuotaHandler
 	Monitor          *MonitorHandler
+	OpusMax          *OpusMaxHandler
 }
 
 // BuildInfo contains build-time information

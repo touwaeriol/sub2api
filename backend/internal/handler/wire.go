@@ -83,6 +83,11 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 	return admin.NewSystemHandler(updateService, lockService)
 }
 
+// ProvideOpusMaxHandler creates OpusMaxHandler with AdminService
+func ProvideOpusMaxHandler(adminService service.AdminService) *OpusMaxHandler {
+	return NewOpusMaxHandler(adminService)
+}
+
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
 func ProvideSettingHandler(settingService *service.SettingService, buildInfo BuildInfo, notificationEmailService *service.NotificationEmailService) *SettingHandler {
 	h := NewSettingHandler(settingService, buildInfo.Version)
@@ -117,6 +122,7 @@ func ProvideHandlers(
 	availableChannelHandler *AvailableChannelHandler,
 	userServiceQuotaHandler *UserServiceQuotaHandler,
 	monitorHandler *MonitorHandler,
+	opusMaxHandler *OpusMaxHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -139,6 +145,7 @@ func ProvideHandlers(
 		AvailableChannel:  availableChannelHandler,
 		UserServiceQuota:  userServiceQuotaHandler,
 		Monitor:           monitorHandler,
+		OpusMax:           opusMaxHandler,
 	}
 }
 
@@ -164,6 +171,7 @@ var ProviderSet = wire.NewSet(
 
 	// Monitor handler (public, no auth)
 	NewMonitorHandler,
+	ProvideOpusMaxHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,

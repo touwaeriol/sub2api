@@ -166,7 +166,7 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
-    path: '/account-monitor',
+    path: '/account-monitor/opusmax',
     name: 'AccountMonitor',
     component: () => import('@/views/public/MonitorView.vue'),
     meta: {

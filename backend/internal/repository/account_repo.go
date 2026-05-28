@@ -1880,6 +1880,24 @@ func (r *accountRepository) FindByExtraField(ctx context.Context, key string, va
 	return r.accountsToService(ctx, accounts)
 }
 
+// ListByBaseURL 返回 credentials 中 base_url 匹配指定值的活跃账号（仅 APIKey 类型）。
+// 用于 OpusMax 等特定代理的账号查询。
+func (r *accountRepository) ListByBaseURL(ctx context.Context, baseURL string) ([]service.Account, error) {
+	accounts, err := r.client.Account.Query().
+		Where(
+			dbaccount.StatusEQ(service.StatusActive),
+			dbaccount.TypeEQ(service.AccountTypeAPIKey),
+			func(s *entsql.Selector) {
+				s.Where(sqljson.ValueEQ(dbaccount.FieldCredentials, baseURL, sqljson.Path("base_url")))
+			},
+		).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r.accountsToService(ctx, accounts)
+}
+
 // nowUTC is a SQL expression to generate a UTC RFC3339 timestamp string.
 const nowUTC = `to_char(NOW() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
 

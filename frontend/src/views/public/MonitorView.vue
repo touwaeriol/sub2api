@@ -10,7 +10,7 @@
             {{ siteName }}
           </span>
         </RouterLink>
-        <span class="text-sm text-gray-400 dark:text-dark-500">Monitor</span>
+        <span class="text-sm text-gray-400 dark:text-dark-500">OpusMax Monitor</span>
       </div>
     </header>
 
@@ -31,10 +31,10 @@
         <div class="mb-6 flex flex-wrap items-center justify-between gap-4">
           <div>
             <h1 class="text-xl font-bold text-gray-900 dark:text-white">
-              {{ data.group_name }}
+              {{ t('title') }}
             </h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              {{ t('platform') }}: {{ data.platform }} · {{ t('accountCount') }}: {{ data.accounts.length }}
+              {{ t('accountCount') }}: {{ data.accounts.length }}
             </p>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-400 dark:text-dark-500">
@@ -54,12 +54,12 @@
             <thead>
               <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800/50">
                 <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">{{ t('name') }}</th>
-                <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">{{ t('platformType') }}</th>
-                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('concurrency') }}</th>
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('status') }}</th>
-                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('schedulable') }}</th>
-                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('totalMarkedCost') }}</th>
-                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('todayStandardCost') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('plan') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('rpm') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('windowUsage') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('requests24h') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('expiresAt') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
@@ -71,31 +71,36 @@
                 <td class="px-4 py-3 font-medium text-gray-900 dark:text-white">
                   {{ account.name }}
                 </td>
-                <td class="px-4 py-3 text-gray-600 dark:text-dark-300">
-                  {{ account.platform }}/{{ account.type }}
-                </td>
-                <td class="px-4 py-3 text-center text-gray-600 dark:text-dark-300">
-                  {{ account.concurrency }}
-                </td>
                 <td class="px-4 py-3 text-center">
                   <span :class="statusClass(account.status)" class="inline-flex rounded-full px-2 py-0.5 text-xs font-medium">
                     {{ statusLabel(account.status) }}
                   </span>
                 </td>
+                <td class="px-4 py-3 text-center text-gray-600 dark:text-dark-300">
+                  {{ account.plan_name || '-' }}
+                </td>
+                <td class="px-4 py-3 text-center tabular-nums text-gray-600 dark:text-dark-300">
+                  {{ account.rpm > 0 ? account.rpm : '-' }}
+                </td>
                 <td class="px-4 py-3 text-center">
-                  <span
-                    :class="account.schedulable
-                      ? 'text-green-600 dark:text-green-400'
-                      : 'text-gray-400 dark:text-dark-500'"
-                  >
-                    {{ account.schedulable ? t('yes') : t('no') }}
-                  </span>
+                  <div class="flex items-center justify-center gap-2">
+                    <div class="h-2 w-16 overflow-hidden rounded-full bg-gray-200 dark:bg-dark-700">
+                      <div
+                        class="h-full rounded-full transition-all"
+                        :class="usageColorClass(account.usage_percent)"
+                        :style="{ width: Math.min(100, account.usage_percent) + '%' }"
+                      ></div>
+                    </div>
+                    <span class="text-xs tabular-nums text-gray-500 dark:text-dark-500">
+                      {{ account.usage_percent.toFixed(1) }}%
+                    </span>
+                  </div>
                 </td>
-                <td class="px-4 py-3 text-right tabular-nums text-gray-700 dark:text-dark-200">
-                  ${{ formatCost(account.total_marked_cost) }}
+                <td class="px-4 py-3 text-center tabular-nums text-gray-600 dark:text-dark-300">
+                  {{ account.last_24h_requests.toLocaleString() }}
                 </td>
-                <td class="px-4 py-3 text-right tabular-nums text-gray-700 dark:text-dark-200">
-                  ${{ formatCost(account.today_standard_cost) }}
+                <td class="px-4 py-3 text-center text-gray-600 dark:text-dark-300">
+                  {{ formatExpires(account.expires_at) }}
                 </td>
               </tr>
               <tr v-if="data.accounts.length === 0">
@@ -104,17 +109,6 @@
                 </td>
               </tr>
             </tbody>
-            <tfoot v-if="data.accounts.length > 0" class="border-t border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800/50">
-              <tr>
-                <td colspan="5" class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('total') }}</td>
-                <td class="px-4 py-3 text-right tabular-nums font-semibold text-gray-900 dark:text-white">
-                  ${{ formatCost(totalMarkedCost) }}
-                </td>
-                <td class="px-4 py-3 text-right tabular-nums font-semibold text-gray-900 dark:text-white">
-                  ${{ formatCost(totalTodayCost) }}
-                </td>
-              </tr>
-            </tfoot>
           </table>
         </div>
       </template>
@@ -123,14 +117,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { storeToRefs } from 'pinia'
-import { getGroupAccountMonitor, type MonitorResponse } from '@/api/monitor'
+import { getOpusMaxAccounts, type OpusMaxMonitorResponse } from '@/api/monitor'
 import { extractApiErrorMessage } from '@/utils/apiError'
 
-const route = useRoute()
 const appStore = useAppStore()
 const { siteName, siteLogo } = storeToRefs(appStore)
 
@@ -139,53 +131,45 @@ const isZh = /^zh/i.test(navigator.language)
 const messages: Record<string, Record<string, string>> = {
   zh: {
     loadFailed: '加载失败',
-    platform: '平台',
+    title: 'OpusMax 账号监控',
     accountCount: '账号数',
     updatedAt: '更新于',
     refreshing: '刷新中...',
     refresh: '刷新',
     name: '名称',
-    platformType: '平台/类型',
-    concurrency: '容量',
     status: '状态',
-    schedulable: '调度',
-    totalMarkedCost: '总标记计费',
-    todayStandardCost: '今日标准计费',
-    yes: '是',
-    no: '否',
-    noAccounts: '该分组下暂无账号',
-    total: '合计',
-    missingParams: '缺少 platform 或 group_name 参数',
-    loadError: '加载监控数据失败',
+    plan: '套餐',
+    rpm: 'RPM',
+    windowUsage: '窗口用量',
+    requests24h: '24h 请求',
+    expiresAt: '到期时间',
+    noAccounts: '暂无 OpusMax 账号',
     active: '活跃',
     disabled: '停用',
     error: '异常',
     inactive: '未激活',
+    loadError: '加载 OpusMax 监控数据失败',
   },
   en: {
     loadFailed: 'Failed to load',
-    platform: 'Platform',
+    title: 'OpusMax Account Monitor',
     accountCount: 'Accounts',
     updatedAt: 'Updated at',
     refreshing: 'Refreshing...',
     refresh: 'Refresh',
     name: 'Name',
-    platformType: 'Platform/Type',
-    concurrency: 'Concurrency',
     status: 'Status',
-    schedulable: 'Schedulable',
-    totalMarkedCost: 'Total Marked Cost',
-    todayStandardCost: 'Today Standard Cost',
-    yes: 'Yes',
-    no: 'No',
-    noAccounts: 'No accounts in this group',
-    total: 'Total',
-    missingParams: 'Missing platform or group_name parameter',
-    loadError: 'Failed to load monitor data',
+    plan: 'Plan',
+    rpm: 'RPM',
+    windowUsage: 'Window Usage',
+    requests24h: '24h Requests',
+    expiresAt: 'Expires At',
+    noAccounts: 'No OpusMax accounts',
     active: 'Active',
     disabled: 'Disabled',
     error: 'Error',
     inactive: 'Inactive',
+    loadError: 'Failed to load OpusMax monitor data',
   },
 }
 
@@ -194,18 +178,11 @@ function t(key: string): string {
   return messages[lang][key] ?? key
 }
 
-const data = ref<MonitorResponse | null>(null)
+const data = ref<OpusMaxMonitorResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
-
-const totalMarkedCost = computed(() =>
-  data.value?.accounts.reduce((sum, a) => sum + a.total_marked_cost, 0) ?? 0
-)
-const totalTodayCost = computed(() =>
-  data.value?.accounts.reduce((sum, a) => sum + a.today_standard_cost, 0) ?? 0
-)
 
 function statusLabel(status: string): string {
   return t(status)
@@ -221,8 +198,25 @@ function statusClass(status: string): string {
   return classes[status] ?? 'bg-gray-100 text-gray-600 dark:bg-dark-700 dark:text-dark-400'
 }
 
-function formatCost(cost: number): string {
-  return cost.toPrecision(10).replace(/\.?0+$/, '')
+function usageColorClass(percent: number): string {
+  if (percent >= 90) return 'bg-red-500'
+  if (percent >= 70) return 'bg-yellow-500'
+  return 'bg-green-500'
+}
+
+function formatExpires(expiresAt: string): string {
+  if (!expiresAt) return '-'
+  try {
+    const date = new Date(expiresAt)
+    if (isNaN(date.getTime())) return expiresAt
+    return date.toLocaleDateString(isZh ? 'zh-CN' : 'en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  } catch {
+    return expiresAt
+  }
 }
 
 function formatTime(iso: string): string {
@@ -238,16 +232,9 @@ function formatTime(iso: string): string {
 }
 
 async function fetchData() {
-  const platform = String(route.query.platform || '')
-  const groupName = String(route.query.group_name || '')
-  if (!platform || !groupName) {
-    error.value = t('missingParams')
-    return
-  }
-
   loading.value = true
   try {
-    data.value = await getGroupAccountMonitor(platform, groupName)
+    data.value = await getOpusMaxAccounts()
     error.value = ''
   } catch (err: unknown) {
     error.value = extractApiErrorMessage(err, t('loadError'))
@@ -259,7 +246,7 @@ async function fetchData() {
 onMounted(async () => {
   await appStore.fetchPublicSettings()
   await fetchData()
-  refreshTimer = setInterval(fetchData, 30000)
+  refreshTimer = setInterval(fetchData, 60000) // Refresh every minute
 })
 
 onUnmounted(() => {

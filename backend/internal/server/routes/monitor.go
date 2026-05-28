@@ -25,4 +25,15 @@ func RegisterMonitorRoutes(r *gin.Engine, h *handler.Handlers, redisClient *redi
 	{
 		monitor.GET("/group", h.Monitor.GetGroupAccountMonitor)
 	}
+
+	// OpusMax 监控路由
+	if h.OpusMax != nil {
+		opusmax := r.Group("/api/v1/opusmax")
+		opusmax.Use(rateLimiter.LimitWithOptions("opusmax", 30, time.Minute, middleware.RateLimitOptions{
+			FailureMode: middleware.RateLimitFailOpen,
+		}))
+		{
+			opusmax.GET("/accounts", h.OpusMax.GetOpusMaxAccounts)
+		}
+	}
 }
