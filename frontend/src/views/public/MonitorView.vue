@@ -23,7 +23,7 @@
         v-else-if="error"
         class="rounded-lg border border-red-200 bg-red-50 p-6 text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200"
       >
-        <h1 class="text-lg font-semibold">加载失败</h1>
+        <h1 class="text-lg font-semibold">{{ t('loadFailed') }}</h1>
         <p class="mt-2 text-sm">{{ error }}</p>
       </section>
 
@@ -34,17 +34,17 @@
               {{ data.group_name }}
             </h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
-              平台: {{ data.platform }} · 账号数: {{ data.accounts.length }}
+              {{ t('platform') }}: {{ data.platform }} · {{ t('accountCount') }}: {{ data.accounts.length }}
             </p>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-400 dark:text-dark-500">
-            <span v-if="data.updated_at">更新于 {{ formatTime(data.updated_at) }}</span>
+            <span v-if="data.updated_at">{{ t('updatedAt') }} {{ formatTime(data.updated_at) }}</span>
             <button
               @click="fetchData"
               :disabled="loading"
               class="rounded-md bg-gray-100 px-3 py-1.5 text-gray-600 transition hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-300 dark:hover:bg-dark-700"
             >
-              {{ loading ? '刷新中...' : '刷新' }}
+              {{ loading ? t('refreshing') : t('refresh') }}
             </button>
           </div>
         </div>
@@ -53,13 +53,13 @@
           <table class="w-full text-sm">
             <thead>
               <tr class="border-b border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800/50">
-                <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">名称</th>
-                <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">平台/类型</th>
-                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">容量</th>
-                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">状态</th>
-                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">调度</th>
-                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">总标记计费</th>
-                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">今日标准计费</th>
+                <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">{{ t('name') }}</th>
+                <th class="px-4 py-3 text-left font-medium text-gray-600 dark:text-dark-300">{{ t('platformType') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('concurrency') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('status') }}</th>
+                <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('schedulable') }}</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('totalMarkedCost') }}</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('todayStandardCost') }}</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-dark-800">
@@ -88,7 +88,7 @@
                       ? 'text-green-600 dark:text-green-400'
                       : 'text-gray-400 dark:text-dark-500'"
                   >
-                    {{ account.schedulable ? '是' : '否' }}
+                    {{ account.schedulable ? t('yes') : t('no') }}
                   </span>
                 </td>
                 <td class="px-4 py-3 text-right tabular-nums text-gray-700 dark:text-dark-200">
@@ -100,13 +100,13 @@
               </tr>
               <tr v-if="data.accounts.length === 0">
                 <td colspan="7" class="px-4 py-8 text-center text-gray-400 dark:text-dark-500">
-                  该分组下暂无账号
+                  {{ t('noAccounts') }}
                 </td>
               </tr>
             </tbody>
             <tfoot v-if="data.accounts.length > 0" class="border-t border-gray-200 bg-gray-50 dark:border-dark-700 dark:bg-dark-800/50">
               <tr>
-                <td colspan="5" class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">合计</td>
+                <td colspan="5" class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('total') }}</td>
                 <td class="px-4 py-3 text-right tabular-nums font-semibold text-gray-900 dark:text-white">
                   ${{ formatCost(totalMarkedCost) }}
                 </td>
@@ -134,6 +134,66 @@ const route = useRoute()
 const appStore = useAppStore()
 const { siteName, siteLogo } = storeToRefs(appStore)
 
+const isZh = /^zh/i.test(navigator.language)
+
+const messages: Record<string, Record<string, string>> = {
+  zh: {
+    loadFailed: '加载失败',
+    platform: '平台',
+    accountCount: '账号数',
+    updatedAt: '更新于',
+    refreshing: '刷新中...',
+    refresh: '刷新',
+    name: '名称',
+    platformType: '平台/类型',
+    concurrency: '容量',
+    status: '状态',
+    schedulable: '调度',
+    totalMarkedCost: '总标记计费',
+    todayStandardCost: '今日标准计费',
+    yes: '是',
+    no: '否',
+    noAccounts: '该分组下暂无账号',
+    total: '合计',
+    missingParams: '缺少 platform 或 group_name 参数',
+    loadError: '加载监控数据失败',
+    active: '活跃',
+    disabled: '停用',
+    error: '异常',
+    inactive: '未激活',
+  },
+  en: {
+    loadFailed: 'Failed to load',
+    platform: 'Platform',
+    accountCount: 'Accounts',
+    updatedAt: 'Updated at',
+    refreshing: 'Refreshing...',
+    refresh: 'Refresh',
+    name: 'Name',
+    platformType: 'Platform/Type',
+    concurrency: 'Concurrency',
+    status: 'Status',
+    schedulable: 'Schedulable',
+    totalMarkedCost: 'Total Marked Cost',
+    todayStandardCost: 'Today Standard Cost',
+    yes: 'Yes',
+    no: 'No',
+    noAccounts: 'No accounts in this group',
+    total: 'Total',
+    missingParams: 'Missing platform or group_name parameter',
+    loadError: 'Failed to load monitor data',
+    active: 'Active',
+    disabled: 'Disabled',
+    error: 'Error',
+    inactive: 'Inactive',
+  },
+}
+
+function t(key: string): string {
+  const lang = isZh ? 'zh' : 'en'
+  return messages[lang][key] ?? key
+}
+
 const data = ref<MonitorResponse | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -148,13 +208,7 @@ const totalTodayCost = computed(() =>
 )
 
 function statusLabel(status: string): string {
-  const labels: Record<string, string> = {
-    active: '活跃',
-    disabled: '停用',
-    error: '异常',
-    inactive: '未激活',
-  }
-  return labels[status] ?? status
+  return t(status)
 }
 
 function statusClass(status: string): string {
@@ -173,7 +227,7 @@ function formatCost(cost: number): string {
 
 function formatTime(iso: string): string {
   try {
-    return new Date(iso).toLocaleString('zh-CN', {
+    return new Date(iso).toLocaleString(isZh ? 'zh-CN' : 'en-US', {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
@@ -187,7 +241,7 @@ async function fetchData() {
   const platform = String(route.query.platform || '')
   const groupName = String(route.query.group_name || '')
   if (!platform || !groupName) {
-    error.value = '缺少 platform 或 group_name 参数'
+    error.value = t('missingParams')
     return
   }
 
@@ -196,7 +250,7 @@ async function fetchData() {
     data.value = await getGroupAccountMonitor(platform, groupName)
     error.value = ''
   } catch (err: unknown) {
-    error.value = extractApiErrorMessage(err, '加载监控数据失败')
+    error.value = extractApiErrorMessage(err, t('loadError'))
   } finally {
     loading.value = false
   }
