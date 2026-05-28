@@ -10,14 +10,14 @@ import (
 )
 
 // RegisterMonitorRoutes 注册公开监控路由（无需认证，带速率限制）
-func RegisterMonitorRoutes(r *gin.Engine, h *handler.Handlers, redisClient *redis.Client) {
+func RegisterMonitorRoutes(v1 *gin.RouterGroup, h *handler.Handlers, redisClient *redis.Client) {
 	if h.Monitor == nil {
 		return
 	}
 
 	rateLimiter := middleware.NewRateLimiter(redisClient)
 
-	monitor := r.Group("/api/v1/monitor")
+	monitor := v1.Group("/monitor")
 	monitor.Use(rateLimiter.LimitWithOptions("monitor", 30, time.Minute, middleware.RateLimitOptions{
 		FailureMode: middleware.RateLimitFailOpen,
 	}))
