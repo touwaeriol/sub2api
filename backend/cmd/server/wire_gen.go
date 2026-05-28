@@ -259,7 +259,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	availableChannelHandler := handler.NewAvailableChannelHandler(channelService, apiKeyService, settingService)
 	userServiceQuotaHandler := handler.NewUserServiceQuotaHandler(serviceQuotaMonitorService)
 	monitorHandler := handler.NewMonitorHandler(groupRepository, adminService, accountUsageService)
-	opusMaxHandler := handler.ProvideOpusMaxHandler(adminService)
+	opusMaxHandler := handler.ProvideOpusMaxHandler(adminService, accountUsageService)
 	idempotencyCoordinator := service.ProvideIdempotencyCoordinator(idempotencyRepository, configConfig)
 	idempotencyCleanupService := service.ProvideIdempotencyCleanupService(idempotencyRepository, configConfig)
 	handlers := handler.ProvideHandlers(authHandler, userHandler, apiKeyHandler, usageHandler, redeemHandler, subscriptionHandler, announcementHandler, channelMonitorUserHandler, adminHandlers, gatewayHandler, openAIGatewayHandler, handlerSettingHandler, totpHandler, handlerPaymentHandler, paymentWebhookHandler, availableChannelHandler, userServiceQuotaHandler, monitorHandler, opusMaxHandler, idempotencyCoordinator, idempotencyCleanupService)

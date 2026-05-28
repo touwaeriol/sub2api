@@ -36,6 +36,16 @@
             <p class="mt-1 text-sm text-gray-500 dark:text-dark-400">
               {{ t('accountCount') }}: {{ data.accounts.length }}
             </p>
+            <div class="mt-3 flex flex-wrap gap-x-6 gap-y-2 text-sm">
+              <div>
+                <span class="text-gray-500 dark:text-dark-400">{{ t('sumTodayStandardCost') }}:</span>
+                <span class="ml-2 font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatCost(sumTodayStandardCost) }}</span>
+              </div>
+              <div>
+                <span class="text-gray-500 dark:text-dark-400">{{ t('sumTotalStandardCost') }}:</span>
+                <span class="ml-2 font-semibold tabular-nums text-gray-900 dark:text-white">{{ formatCost(sumTotalStandardCost) }}</span>
+              </div>
+            </div>
           </div>
           <div class="flex items-center gap-3 text-xs text-gray-400 dark:text-dark-500">
             <span v-if="data.updated_at">{{ t('updatedAt') }} {{ formatTime(data.updated_at) }}</span>
@@ -58,6 +68,8 @@
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('plan') }}</th>
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('rpm') }}</th>
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('windowUsage') }}</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('todayStandardCost') }}</th>
+                <th class="px-4 py-3 text-right font-medium text-gray-600 dark:text-dark-300">{{ t('totalStandardCost') }}</th>
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('requests24h') }}</th>
                 <th class="px-4 py-3 text-center font-medium text-gray-600 dark:text-dark-300">{{ t('expiresAt') }}</th>
               </tr>
@@ -96,6 +108,12 @@
                     </span>
                   </div>
                 </td>
+                <td class="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-dark-300">
+                  {{ formatCost(account.today_standard_cost) }}
+                </td>
+                <td class="px-4 py-3 text-right tabular-nums text-gray-600 dark:text-dark-300">
+                  {{ formatCost(account.total_standard_cost) }}
+                </td>
                 <td class="px-4 py-3 text-center tabular-nums text-gray-600 dark:text-dark-300">
                   {{ account.last_24h_requests.toLocaleString() }}
                 </td>
@@ -104,7 +122,7 @@
                 </td>
               </tr>
               <tr v-if="data.accounts.length === 0">
-                <td colspan="7" class="px-4 py-8 text-center text-gray-400 dark:text-dark-500">
+                <td colspan="9" class="px-4 py-8 text-center text-gray-400 dark:text-dark-500">
                   {{ t('noAccounts') }}
                 </td>
               </tr>
@@ -117,7 +135,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAppStore } from '@/stores/app'
 import { storeToRefs } from 'pinia'
 import { getOpusMaxAccounts, type OpusMaxMonitorResponse } from '@/api/monitor'
@@ -149,6 +167,10 @@ const messages: Record<string, Record<string, string>> = {
     error: '异常',
     inactive: '未激活',
     loadError: '加载 OpusMax 监控数据失败',
+    todayStandardCost: '今日标准计费',
+    totalStandardCost: '总标准计费',
+    sumTodayStandardCost: '总今日标准计费',
+    sumTotalStandardCost: '总标准计费',
   },
   en: {
     loadFailed: 'Failed to load',
@@ -170,6 +192,10 @@ const messages: Record<string, Record<string, string>> = {
     error: 'Error',
     inactive: 'Inactive',
     loadError: 'Failed to load OpusMax monitor data',
+    todayStandardCost: 'Today Standard Cost',
+    totalStandardCost: 'Total Standard Cost',
+    sumTodayStandardCost: 'Sum Today Cost',
+    sumTotalStandardCost: 'Sum Total Cost',
   },
 }
 
@@ -183,6 +209,19 @@ const loading = ref(false)
 const error = ref('')
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
+
+const sumTodayStandardCost = computed(() =>
+  data.value?.accounts.reduce((acc, a) => acc + (a.today_standard_cost || 0), 0) ?? 0
+)
+const sumTotalStandardCost = computed(() =>
+  data.value?.accounts.reduce((acc, a) => acc + (a.total_standard_cost || 0), 0) ?? 0
+)
+
+function formatCost(v: number): string {
+  if (v == null || isNaN(v)) return '$0.00'
+  if (v >= 0.01 || v === 0) return '$' + v.toFixed(2)
+  return '$' + v.toFixed(4)
+}
 
 function statusLabel(status: string): string {
   return t(status)

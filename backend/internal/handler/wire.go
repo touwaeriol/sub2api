@@ -84,8 +84,8 @@ func ProvideSystemHandler(updateService *service.UpdateService, lockService *ser
 }
 
 // ProvideOpusMaxHandler creates OpusMaxHandler with AdminService
-func ProvideOpusMaxHandler(adminService service.AdminService) *OpusMaxHandler {
-	return NewOpusMaxHandler(adminService)
+func ProvideOpusMaxHandler(adminService service.AdminService, accountUsageService *service.AccountUsageService) *OpusMaxHandler {
+	return NewOpusMaxHandler(adminService, accountUsageService)
 }
 
 // ProvideSettingHandler creates SettingHandler with version from BuildInfo
@@ -127,25 +127,25 @@ func ProvideHandlers(
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
 	return &Handlers{
-		Auth:              authHandler,
-		User:              userHandler,
-		APIKey:            apiKeyHandler,
-		Usage:             usageHandler,
-		Redeem:            redeemHandler,
-		Subscription:      subscriptionHandler,
-		Announcement:      announcementHandler,
-		ChannelMonitor:    channelMonitorUserHandler,
-		Admin:             adminHandlers,
-		Gateway:           gatewayHandler,
-		OpenAIGateway:     openaiGatewayHandler,
-		Setting:           settingHandler,
-		Totp:              totpHandler,
-		Payment:           paymentHandler,
-		PaymentWebhook:    paymentWebhookHandler,
-		AvailableChannel:  availableChannelHandler,
-		UserServiceQuota:  userServiceQuotaHandler,
-		Monitor:           monitorHandler,
-		OpusMax:           opusMaxHandler,
+		Auth:             authHandler,
+		User:             userHandler,
+		APIKey:           apiKeyHandler,
+		Usage:            usageHandler,
+		Redeem:           redeemHandler,
+		Subscription:     subscriptionHandler,
+		Announcement:     announcementHandler,
+		ChannelMonitor:   channelMonitorUserHandler,
+		Admin:            adminHandlers,
+		Gateway:          gatewayHandler,
+		OpenAIGateway:    openaiGatewayHandler,
+		Setting:          settingHandler,
+		Totp:             totpHandler,
+		Payment:          paymentHandler,
+		PaymentWebhook:   paymentWebhookHandler,
+		AvailableChannel: availableChannelHandler,
+		UserServiceQuota: userServiceQuotaHandler,
+		Monitor:          monitorHandler,
+		OpusMax:          opusMaxHandler,
 	}
 }
 

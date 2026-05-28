@@ -7,6 +7,8 @@ export interface OpusMaxKeyStatus {
   expires_at: string
   total_requests: number
   last_24h_requests: number
+  today_standard_cost: number
+  total_standard_cost: number
 }
 
 export interface OpusMaxAccountItem {
@@ -23,6 +25,8 @@ export interface OpusMaxAccountItem {
   expires_at: string
   total_requests: number
   last_24h_requests: number
+  today_standard_cost: number
+  total_standard_cost: number
 }
 
 export interface OpusMaxMonitorResponse {
