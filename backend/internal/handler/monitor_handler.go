@@ -60,9 +60,10 @@ type monitorResponse struct {
 	UpdatedAt time.Time            `json:"updated_at"`
 }
 
+// GetGroupAccountMonitor GET /api/v1/monitor/group?platform=xxx&group_name=xxx
 func (h *MonitorHandler) GetGroupAccountMonitor(c *gin.Context) {
-	platform := strings.TrimSpace(c.Param("platform"))
-	groupName := strings.TrimSpace(c.Param("group_name"))
+	platform := strings.TrimSpace(c.Query("platform"))
+	groupName := strings.TrimSpace(c.Query("group_name"))
 	if platform == "" || groupName == "" {
 		response.BadRequest(c, "platform and group_name are required")
 		return

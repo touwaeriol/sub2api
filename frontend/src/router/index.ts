@@ -166,6 +166,15 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/account-monitor',
+    name: 'AccountMonitor',
+    component: () => import('@/views/public/MonitorView.vue'),
+    meta: {
+      requiresAuth: false,
+      title: 'Account Monitor'
+    }
+  },
+  {
     path: '/legal/:documentId',
     name: 'LegalDocument',
     component: () => import('@/views/public/LegalDocumentView.vue'),

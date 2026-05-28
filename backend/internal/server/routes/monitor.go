@@ -26,11 +26,6 @@ func RegisterMonitorRoutes(v1 *gin.RouterGroup, h *handler.Handlers, redisClient
 		FailureMode: middleware.RateLimitFailOpen,
 	}))
 	{
-		monitor.GET("/:platform/:group_name", h.Monitor.GetGroupAccountMonitor)
+		monitor.GET("/group", h.Monitor.GetGroupAccountMonitor)
 	}
-
-	// 调试：注册一个简单的固定路径端点
-	v1.GET("/monitor-ping", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "pong"})
-	})
 }

@@ -184,8 +184,8 @@ function formatTime(iso: string): string {
 }
 
 async function fetchData() {
-  const platform = String(route.params.platform || '')
-  const groupName = String(route.params.groupName || '')
+  const platform = String(route.query.platform || '')
+  const groupName = String(route.query.group_name || '')
   if (!platform || !groupName) {
     error.value = '缺少 platform 或 group_name 参数'
     return

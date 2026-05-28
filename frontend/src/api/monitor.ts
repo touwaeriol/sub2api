@@ -20,8 +20,8 @@ export interface MonitorResponse {
 
 export function getGroupAccountMonitor(platform: string, groupName: string) {
   return apiClient
-    .get<MonitorResponse>(
-      `/monitor/${encodeURIComponent(platform)}/${encodeURIComponent(groupName)}`
-    )
+    .get<MonitorResponse>('/monitor/group', {
+      params: { platform, group_name: groupName },
+    })
     .then((res) => res.data)
 }
