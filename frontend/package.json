@@ -3,10 +3,8 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "pnpm": {
-    "overrides": {
-      "js-cookie": "3.0.7"
-    }
+  "overrides": {
+    "js-cookie": "3.0.7"
   },
   "scripts": {
     "dev": "vite",
