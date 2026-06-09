@@ -5770,6 +5770,24 @@ func (s *GatewayService) ApplyBedrockCCCompat(ctx context.Context, body []byte, 
 	return body
 }
 
+// FilterBedrockBetaHeader 在 Bedrock CC 兼容模式下过滤客户端请求的 anthropic-beta header，
+// 只保留 Bedrock 支持的 beta token。防止 API Key Passthrough 路径将不支持的 token 透传给上游。
+func (s *GatewayService) FilterBedrockBetaHeader(c *gin.Context, body []byte, model string, account *Account, groupID *int64) {
+	if !s.isBedrockCCCompatEnabled(c.Request.Context(), account, groupID) {
+		return
+	}
+	betaHeader := c.GetHeader("anthropic-beta")
+	if betaHeader == "" {
+		return
+	}
+	filtered := ResolveBedrockBetaTokens(betaHeader, body, model)
+	if len(filtered) > 0 {
+		c.Request.Header.Set("anthropic-beta", strings.Join(filtered, ", "))
+	} else {
+		c.Request.Header.Del("anthropic-beta")
+	}
+}
+
 // isBedrockCCCompatEnabled 检查渠道是否启用了 Bedrock CC 兼容模式
 func (s *GatewayService) isBedrockCCCompatEnabled(ctx context.Context, account *Account, groupID *int64) bool {
 	if groupID == nil || s.channelService == nil {
