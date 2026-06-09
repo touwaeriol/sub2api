@@ -5758,34 +5758,25 @@ func writeAnthropicPassthroughResponseHeaders(dst http.Header, src http.Header, 
 }
 
 // ApplyBedrockCCCompat 应用 Bedrock CC 兼容转换（渠道级模型映射后调用）
-// 清理 Anthropic API 专有字段、注入 Bedrock 必需字段、修复 thinking/tool_use ID
-func (s *GatewayService) ApplyBedrockCCCompat(ctx context.Context, body []byte, model string, account *Account, groupID *int64) []byte {
-	if !s.isBedrockCCCompatEnabled(ctx, account, groupID) {
+// 清理 body 中 Anthropic API 专有字段、修复 thinking/tool_use ID、过滤 beta token，
+// 同时过滤 HTTP header 中的 anthropic-beta（防止 Passthrough 路径透传不支持的 token）。
+func (s *GatewayService) ApplyBedrockCCCompat(c *gin.Context, body []byte, model string, account *Account, groupID *int64) []byte {
+	if !s.isBedrockCCCompatEnabled(c.Request.Context(), account, groupID) {
 		return body
 	}
 	body = sanitizeBedrockCCFields(body)
 	body = sanitizeBedrockThinking(body, model)
 	body = sanitizeBedrockToolUseIDs(body)
 	body = sanitizeBedrockCCBetaTokens(body, model)
+	// 过滤 HTTP header 中的 anthropic-beta，只保留 Bedrock 支持的 token
+	if betaHeader := c.GetHeader("anthropic-beta"); betaHeader != "" {
+		if filtered := ResolveBedrockBetaTokens(betaHeader, body, model); len(filtered) > 0 {
+			c.Request.Header.Set("anthropic-beta", strings.Join(filtered, ", "))
+		} else {
+			c.Request.Header.Del("anthropic-beta")
+		}
+	}
 	return body
-}
-
-// FilterBedrockBetaHeader 在 Bedrock CC 兼容模式下过滤客户端请求的 anthropic-beta header，
-// 只保留 Bedrock 支持的 beta token。防止 API Key Passthrough 路径将不支持的 token 透传给上游。
-func (s *GatewayService) FilterBedrockBetaHeader(c *gin.Context, body []byte, model string, account *Account, groupID *int64) {
-	if !s.isBedrockCCCompatEnabled(c.Request.Context(), account, groupID) {
-		return
-	}
-	betaHeader := c.GetHeader("anthropic-beta")
-	if betaHeader == "" {
-		return
-	}
-	filtered := ResolveBedrockBetaTokens(betaHeader, body, model)
-	if len(filtered) > 0 {
-		c.Request.Header.Set("anthropic-beta", strings.Join(filtered, ", "))
-	} else {
-		c.Request.Header.Del("anthropic-beta")
-	}
 }
 
 // isBedrockCCCompatEnabled 检查渠道是否启用了 Bedrock CC 兼容模式

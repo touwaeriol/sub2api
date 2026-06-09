@@ -779,11 +779,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				parsedReq.Model = channelMapping.MappedModel
 				parsedReq.Body = h.gatewayService.ReplaceModelInBody(parsedReq.Body, channelMapping.MappedModel)
 			}
-			// Bedrock CC 兼容：渠道模型映射后，清理 Anthropic API 专有字段、注入 Bedrock 必需字段
-			parsedReq.Body = h.gatewayService.ApplyBedrockCCCompat(c.Request.Context(), parsedReq.Body, parsedReq.Model, account, apiKey.GroupID)
-			// Bedrock CC 兼容：过滤 anthropic-beta header 中 Bedrock 不支持的 beta token，
-			// 防止 API Key Passthrough 路径将客户端 header 原样透传给 Bedrock 中转导致 400。
-			h.gatewayService.FilterBedrockBetaHeader(c, parsedReq.Body, parsedReq.Model, account, apiKey.GroupID)
+			// Bedrock CC 兼容：清理 body 专有字段 + 过滤 anthropic-beta header，适用于所有转发路径
+			parsedReq.Body = h.gatewayService.ApplyBedrockCCCompat(c, parsedReq.Body, parsedReq.Model, account, apiKey.GroupID)
 			body = parsedReq.Body
 
 			// 转发请求 - 根据账号平台分流
