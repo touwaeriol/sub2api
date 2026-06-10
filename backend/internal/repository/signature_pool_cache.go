@@ -40,26 +40,24 @@ func (c *signaturePoolCache) Add(ctx context.Context, accountID int64, signature
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
 	}
-	// 超出容量时随机移除
 	size, err := c.rdb.SCard(ctx, key).Result()
 	if err != nil {
 		return nil
 	}
-	if size > signaturePoolMaxSize {
-		excess := size - signaturePoolMaxSize
-		for i := int64(0); i < excess; i++ {
-			_ = c.rdb.SPop(ctx, key).Err()
+	for size > signaturePoolMaxSize {
+		if err := c.rdb.SPop(ctx, key).Err(); err != nil {
+			break
 		}
+		size--
 	}
 	return nil
 }
 
 func (c *signaturePoolCache) RandomGet(ctx context.Context, accountID int64) (string, error) {
 	if c == nil || c.rdb == nil {
-		return "", fmt.Errorf("cache not initialized")
+		return "", nil
 	}
-	key := signaturePoolKey(accountID)
-	sig, err := c.rdb.SRandMember(ctx, key).Result()
+	sig, err := c.rdb.SRandMember(ctx, signaturePoolKey(accountID)).Result()
 	if err == redis.Nil {
 		return "", nil
 	}

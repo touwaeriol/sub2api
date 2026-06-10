@@ -91,40 +91,50 @@ func (s *GatewayService) isSignaturePoolError(ctx context.Context, account *Acco
 }
 
 
+// signaturePoolRetryParams 签名池重试所需的请求上下文参数
+type signaturePoolRetryParams struct {
+	C                     *gin.Context
+	Account               *Account
+	Body                  []byte
+	RespBody              []byte
+	GroupID               *int64
+	ReqStream             bool
+	Token                 string
+	TokenType             string
+	MappedModel           string
+	ShouldMimicClaudeCode bool
+	ProxyURL              string
+}
+
 // trySignaturePoolRetry 尝试用签名池中的签名替换请求中的 signature 并重试一次。
 // 成功返回 (resp, body, true)；池为空/替换无效/重试仍失败返回 (nil, nil, false)。
-func (s *GatewayService) trySignaturePoolRetry(
-	ctx context.Context, c *gin.Context, account *Account,
-	body, respBody []byte, groupID *int64,
-	reqStream bool, token, tokenType, mappedModel string,
-	shouldMimicClaudeCode bool, proxyURL string,
-) (*http.Response, []byte, bool) {
-	if s.signaturePoolCache == nil || !s.isSignaturePoolError(ctx, account, respBody, groupID) {
+func (s *GatewayService) trySignaturePoolRetry(ctx context.Context, p signaturePoolRetryParams) (*http.Response, []byte, bool) {
+	if s.signaturePoolCache == nil || !s.isSignaturePoolError(ctx, p.Account, p.RespBody, p.GroupID) {
 		return nil, nil, false
 	}
-	poolSig, err := s.signaturePoolCache.RandomGet(ctx, account.ID)
+	poolSig, err := s.signaturePoolCache.RandomGet(ctx, p.Account.ID)
 	if err != nil || poolSig == "" {
 		return nil, nil, false
 	}
-	poolBody := ReplaceThinkingSignatures(body, poolSig)
-	if bytes.Equal(poolBody, body) {
+	poolBody := ReplaceThinkingSignatures(p.Body, poolSig)
+	if bytes.Equal(poolBody, p.Body) {
 		return nil, nil, false
 	}
-	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: replacing signature from pool and retrying", account.ID)
-	upstreamCtx, releaseCtx := detachStreamUpstreamContext(ctx, reqStream)
-	poolReq, reqErr := s.buildUpstreamRequest(upstreamCtx, c, account, poolBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: replacing signature from pool and retrying", p.Account.ID)
+	upstreamCtx, releaseCtx := detachStreamUpstreamContext(ctx, p.ReqStream)
+	poolReq, reqErr := s.buildUpstreamRequest(upstreamCtx, p.C, p.Account, poolBody, p.Token, p.TokenType, p.MappedModel, p.ReqStream, p.ShouldMimicClaudeCode)
 	releaseCtx()
 	if reqErr != nil {
 		return nil, nil, false
 	}
-	poolResp, doErr := s.httpUpstream.DoWithTLS(poolReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	poolResp, doErr := s.httpUpstream.DoWithTLS(poolReq, p.ProxyURL, p.Account.ID, p.Account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(p.Account))
 	if doErr == nil && poolResp != nil && poolResp.StatusCode < 400 {
 		return poolResp, poolBody, true
 	}
 	if poolResp != nil && poolResp.Body != nil {
 		_ = poolResp.Body.Close()
 	}
-	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: pool signature retry failed, falling through to rectifier", account.ID)
+	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: pool signature retry failed, falling through to rectifier", p.Account.ID)
 	return nil, nil, false
 }
 

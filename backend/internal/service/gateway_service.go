@@ -4623,7 +4623,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				_ = resp.Body.Close()
 
 				// [优先级0] 签名池替换重试：用池中有效签名替换请求中的 signature，保留 thinking 能力
-				if poolResp, poolBody, ok := s.trySignaturePoolRetry(ctx, c, account, body, respBody, parsed.GroupID, reqStream, token, tokenType, mappedModel, shouldMimicClaudeCode, proxyURL); ok {
+				if poolResp, poolBody, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
+					C: c, Account: account, Body: body, RespBody: respBody, GroupID: parsed.GroupID,
+					ReqStream: reqStream, Token: token, TokenType: tokenType, MappedModel: mappedModel,
+					ShouldMimicClaudeCode: shouldMimicClaudeCode, ProxyURL: proxyURL,
+				}); ok {
 					resp = poolResp
 					body = poolBody
 					break
