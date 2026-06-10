@@ -1185,13 +1185,15 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
   }
 
   // signature_pool: 保存为 {enabled: bool, error_keywords: string}
+  // 关键词为空时自动填充默认值，保证后端始终从配置取值
+  const defaultSigPoolKeywords = 'signature,Invalid signature,thinking block'
   let sigPoolEnabled = false
   let sigPoolKeywords = ''
   for (const section of form.platforms) {
     if (!section.enabled) continue
     if (section.signature_pool_enabled) {
       sigPoolEnabled = true
-      sigPoolKeywords = section.signature_pool_keywords || ''
+      sigPoolKeywords = section.signature_pool_keywords.trim() || defaultSigPoolKeywords
     }
   }
   if (sigPoolEnabled) {

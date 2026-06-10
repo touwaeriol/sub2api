@@ -17,9 +17,6 @@ import (
 
 const featureKeySignaturePool = "signature_pool"
 
-// defaultSignaturePoolKeywords 用户未配置关键词时的默认值（与前端 placeholder 保持一致）
-const defaultSignaturePoolKeywords = "signature,Invalid signature,thinking block"
-
 // SignaturePoolConfig 签名池渠道级配置
 type SignaturePoolConfig struct {
 	Enabled       bool   `json:"enabled"`
@@ -73,18 +70,14 @@ func (s *GatewayService) getSignaturePoolConfig(ctx context.Context, account *Ac
 }
 
 // isSignaturePoolError 判断 400 错误是否为签名池可处理的签名错误。
-// 匹配规则完全来自渠道配置的关键词（未配置时使用默认关键词），不依赖内置模式。
+// 匹配规则完全来自渠道配置的关键词（前端保存时保证非空），不依赖内置模式。
 func (s *GatewayService) isSignaturePoolError(ctx context.Context, account *Account, respBody []byte, groupID *int64) bool {
 	cfg := s.getSignaturePoolConfig(ctx, account, groupID)
-	if cfg == nil {
+	if cfg == nil || strings.TrimSpace(cfg.ErrorKeywords) == "" {
 		return false
 	}
-	keywords := strings.TrimSpace(cfg.ErrorKeywords)
-	if keywords == "" {
-		keywords = defaultSignaturePoolKeywords
-	}
 	bodyLower := strings.ToLower(string(respBody))
-	for _, kw := range strings.Split(keywords, ",") {
+	for _, kw := range strings.Split(cfg.ErrorKeywords, ",") {
 		kw = strings.TrimSpace(strings.ToLower(kw))
 		if kw != "" && strings.Contains(bodyLower, kw) {
 			return true
