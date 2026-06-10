@@ -4623,28 +4623,10 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				_ = resp.Body.Close()
 
 				// [优先级0] 签名池替换重试：用池中有效签名替换请求中的 signature，保留 thinking 能力
-				if s.signaturePoolCache != nil && s.isSignaturePoolError(ctx, account, respBody, parsed.GroupID) {
-					if poolSig, poolErr := s.signaturePoolCache.RandomGet(ctx, account.ID); poolErr == nil && poolSig != "" {
-						poolBody := ReplaceThinkingSignatures(body, poolSig)
-						if !bytes.Equal(poolBody, body) {
-							logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: replacing signature from pool and retrying", account.ID)
-							upstreamCtx2, releaseCtx2 := detachStreamUpstreamContext(ctx, reqStream)
-							poolReq, poolReqErr := s.buildUpstreamRequest(upstreamCtx2, c, account, poolBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
-							releaseCtx2()
-							if poolReqErr == nil {
-								poolResp, poolDoErr := s.httpUpstream.DoWithTLS(poolReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
-								if poolDoErr == nil && poolResp != nil && poolResp.StatusCode < 400 {
-									resp = poolResp
-									body = poolBody
-									break
-								}
-								if poolResp != nil && poolResp.Body != nil {
-									_ = poolResp.Body.Close()
-								}
-							}
-							logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: pool signature retry failed, falling through to rectifier", account.ID)
-						}
-					}
+				if poolResp, poolBody, ok := s.trySignaturePoolRetry(ctx, c, account, body, respBody, parsed.GroupID, reqStream, token, tokenType, mappedModel, shouldMimicClaudeCode, proxyURL); ok {
+					resp = poolResp
+					body = poolBody
+					break
 				}
 
 				// [优先级1] 签名整流降级：剥离 thinking block 后重试

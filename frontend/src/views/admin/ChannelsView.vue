@@ -369,7 +369,7 @@
               </div>
 
               <!-- Signature Pool -->
-              <div class="flex items-center justify-between">
+              <div class="flex items-center justify-between gap-4">
                 <div>
                   <label class="text-xs font-medium text-gray-700 dark:text-gray-300">
                     {{ t('admin.channels.form.signaturePool', 'Signature Pool') }}

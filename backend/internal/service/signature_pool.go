@@ -1,11 +1,16 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
+	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/pkg/ctxkey"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -86,6 +91,43 @@ func (s *GatewayService) isSignaturePoolError(ctx context.Context, account *Acco
 }
 
 
+// trySignaturePoolRetry 尝试用签名池中的签名替换请求中的 signature 并重试一次。
+// 成功返回 (resp, body, true)；池为空/替换无效/重试仍失败返回 (nil, nil, false)。
+func (s *GatewayService) trySignaturePoolRetry(
+	ctx context.Context, c *gin.Context, account *Account,
+	body, respBody []byte, groupID *int64,
+	reqStream bool, token, tokenType, mappedModel string,
+	shouldMimicClaudeCode bool, proxyURL string,
+) (*http.Response, []byte, bool) {
+	if s.signaturePoolCache == nil || !s.isSignaturePoolError(ctx, account, respBody, groupID) {
+		return nil, nil, false
+	}
+	poolSig, err := s.signaturePoolCache.RandomGet(ctx, account.ID)
+	if err != nil || poolSig == "" {
+		return nil, nil, false
+	}
+	poolBody := ReplaceThinkingSignatures(body, poolSig)
+	if bytes.Equal(poolBody, body) {
+		return nil, nil, false
+	}
+	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: replacing signature from pool and retrying", account.ID)
+	upstreamCtx, releaseCtx := detachStreamUpstreamContext(ctx, reqStream)
+	poolReq, reqErr := s.buildUpstreamRequest(upstreamCtx, c, account, poolBody, token, tokenType, mappedModel, reqStream, shouldMimicClaudeCode)
+	releaseCtx()
+	if reqErr != nil {
+		return nil, nil, false
+	}
+	poolResp, doErr := s.httpUpstream.DoWithTLS(poolReq, proxyURL, account.ID, account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(account))
+	if doErr == nil && poolResp != nil && poolResp.StatusCode < 400 {
+		return poolResp, poolBody, true
+	}
+	if poolResp != nil && poolResp.Body != nil {
+		_ = poolResp.Body.Close()
+	}
+	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: pool signature retry failed, falling through to rectifier", account.ID)
+	return nil, nil, false
+}
+
 // ReplaceThinkingSignatures 用池中签名替换请求体中所有 thinking block 的 signature
 func ReplaceThinkingSignatures(body []byte, poolSignature string) []byte {
 	messages := gjson.GetBytes(body, "messages")
@@ -139,36 +181,45 @@ func ExtractSignatureFromSSEData(data string) string {
 	return strings.TrimSpace(delta.Get("signature").String())
 }
 
-// tryHarvestStreamSignature 异步从 SSE data 中提取签名存入池（全部异步，零阻塞）
+// tryHarvestStreamSignature 从 SSE data 中提取签名并异步存入池
+// 提取在调用方线程完成（纯内存操作），仅在有签名时才起 goroutine 写 Redis
 func (s *GatewayService) tryHarvestStreamSignature(ctx context.Context, accountID int64, data string) {
 	if s.signaturePoolCache == nil || data == "" || data == "[DONE]" {
 		return
 	}
+	sig := ExtractSignatureFromSSEData(data)
+	if sig == "" {
+		return
+	}
 	go func() {
-		sig := ExtractSignatureFromSSEData(data)
-		if sig == "" {
-			return
-		}
+		addCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 		groupID, _ := ctx.Value(ctxkey.SignaturePoolGroupID).(*int64)
-		if s.getSignaturePoolConfig(context.Background(), &Account{ID: accountID}, groupID) == nil {
+		if s.getSignaturePoolConfig(addCtx, &Account{ID: accountID}, groupID) == nil {
 			return
 		}
-		_ = s.signaturePoolCache.Add(context.Background(), accountID, sig)
+		_ = s.signaturePoolCache.Add(addCtx, accountID, sig)
 	}()
 }
 
-// tryHarvestResponseSignature 异步从非流式响应体中提取签名存入池（全部异步，零阻塞）
+// tryHarvestResponseSignature 从非流式响应体中提取签名并异步存入池
 func (s *GatewayService) tryHarvestResponseSignature(ctx context.Context, accountID int64, body []byte) {
 	if s.signaturePoolCache == nil {
 		return
 	}
+	sigs := extractSignaturesFromResponse(body)
+	if len(sigs) == 0 {
+		return
+	}
 	go func() {
+		addCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 		groupID, _ := ctx.Value(ctxkey.SignaturePoolGroupID).(*int64)
-		if s.getSignaturePoolConfig(context.Background(), &Account{ID: accountID}, groupID) == nil {
+		if s.getSignaturePoolConfig(addCtx, &Account{ID: accountID}, groupID) == nil {
 			return
 		}
-		for _, sig := range extractSignaturesFromResponse(body) {
-			_ = s.signaturePoolCache.Add(context.Background(), accountID, sig)
+		for _, sig := range sigs {
+			_ = s.signaturePoolCache.Add(addCtx, accountID, sig)
 		}
 	}()
 }
