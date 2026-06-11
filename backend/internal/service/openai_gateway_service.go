@@ -2862,12 +2862,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				})
 
 				s.handleFailoverSideEffects(ctx, resp, account)
-				return nil, &UpstreamFailoverError{
-					StatusCode:             resp.StatusCode,
-					ResponseBody:           respBody,
-					RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
-					MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
-				}
+				return nil, NewPoolModeFailoverErrorOpenAI(resp.StatusCode, respBody, account, upstreamMsg)
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body)
 		}
@@ -4189,11 +4184,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		Detail:             upstreamDetail,
 	})
 	if shouldDisable {
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           body,
-			
-		}
+		return nil, NewPoolModeFailoverErrorOpenAI(resp.StatusCode, body, account, upstreamMsg)
 	}
 
 	MarkResponseCommitted(c)
@@ -4330,11 +4321,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		Detail:             upstreamDetail,
 	})
 	if shouldDisable {
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           body,
-			
-		}
+		return nil, NewPoolModeFailoverErrorOpenAI(resp.StatusCode, body, account, upstreamMsg)
 	}
 
 	MarkResponseCommitted(c)

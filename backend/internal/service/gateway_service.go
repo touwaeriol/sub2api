@@ -4984,11 +4984,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					return ""
 				}(),
 			})
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				
-			}
+			return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
@@ -5018,11 +5014,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				return ""
 			}(),
 		})
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           respBody,
-			
-		}
+		return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 	}
 	if resp.StatusCode >= 400 {
 		// 可选：对部分 400 触发 failover（默认关闭以保持语义）
@@ -5298,11 +5290,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 					return ""
 				}(),
 			})
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				
-			}
+			return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
@@ -5332,11 +5320,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				return ""
 			}(),
 		})
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           respBody,
-			
-		}
+		return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 	}
 
 	if resp.StatusCode >= 400 {
@@ -6089,11 +6073,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 				Kind:               "retry_exhausted_failover",
 				Message:            extractUpstreamErrorMessage(respBody),
 			})
-			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           respBody,
-				
-			}
+			return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
@@ -6113,11 +6093,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 			Kind:               "failover",
 			Message:            extractUpstreamErrorMessage(respBody),
 		})
-		return nil, &UpstreamFailoverError{
-			StatusCode:             resp.StatusCode,
-			ResponseBody:           respBody,
-			
-		}
+		return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 	}
 
 	// other errors

@@ -931,11 +931,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				// Skipped（自定义错误码未命中/池模式）只代表"不标记账号状态"；
 				// 换号判定与标记正交，仍按全局重试策略切换账号，避免错误直接打到客户端。
 				if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
-					return nil, &UpstreamFailoverError{
-						StatusCode:             resp.StatusCode,
-						ResponseBody:           respBody,
-						
-					}
+					return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 				}
 				upstreamReqID := resp.Header.Get(requestIDHeader)
 				if upstreamReqID == "" {
@@ -1452,11 +1448,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				// Skipped（自定义错误码未命中/池模式）只代表"不标记账号状态"；
 				// 换号判定与标记正交，仍按全局重试策略切换账号，避免错误直接打到客户端。
 				if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
-					return nil, &UpstreamFailoverError{
-						StatusCode:             resp.StatusCode,
-						ResponseBody:           respBody,
-						
-					}
+					return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 				}
 				respBody = unwrapIfNeeded(isOAuth, respBody)
 				contentType := resp.Header.Get("Content-Type")

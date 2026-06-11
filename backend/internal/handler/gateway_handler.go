@@ -1509,6 +1509,13 @@ func (h *GatewayHandler) handleFailoverExhaustedSimple(c *gin.Context, statusCod
 }
 
 func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) {
+	return mapUpstreamErrorStatus(statusCode, true)
+}
+
+// mapUpstreamErrorStatus 上游错误状态码映射（单点实现）。
+// anthropicFormat=true 时 529 使用 Anthropic 规范的 "overloaded_error" 类型；
+// OpenAI 格式没有该类型，统一用 "upstream_error"。
+func mapUpstreamErrorStatus(statusCode int, anthropicFormat bool) (int, string, string) {
 	switch statusCode {
 	case 401:
 		return http.StatusBadGateway, "upstream_error", "Upstream authentication failed, please contact administrator"
@@ -1517,7 +1524,11 @@ func (h *GatewayHandler) mapUpstreamError(statusCode int) (int, string, string) 
 	case 429:
 		return http.StatusTooManyRequests, "rate_limit_error", "Upstream rate limit exceeded, please retry later"
 	case 529:
-		return http.StatusServiceUnavailable, "overloaded_error", "Upstream service overloaded, please retry later"
+		errType := "upstream_error"
+		if anthropicFormat {
+			errType = "overloaded_error"
+		}
+		return http.StatusServiceUnavailable, errType, "Upstream service overloaded, please retry later"
 	case 500, 502, 503, 504:
 		return http.StatusBadGateway, "upstream_error", "Upstream service temporarily unavailable"
 	default:
