@@ -4159,8 +4159,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           body,
-				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+				
 			}
 		}
 	}
@@ -4185,8 +4184,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			
 		}
 	}
 
@@ -4297,8 +4295,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           body,
-				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+				
 			}
 		}
 	}
@@ -4325,8 +4322,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
-			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			
 		}
 	}
 

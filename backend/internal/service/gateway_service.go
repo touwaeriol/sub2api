@@ -539,6 +539,28 @@ type UpstreamFailoverError struct {
 	MaxSameAccountRetries  int         // 同账号重试次数上限；0 表示使用 handler 默认值（池模式创建点填账号配置值）
 }
 
+// NewPoolModeFailoverError 池模式账号的 failover 错误构造（单点实现，消除创建点的二行式重复）。
+// RetryableOnSameAccount 仅对 401/403/429 为 true（换 key 池内 key 有意义）；
+// MaxSameAccountRetries 取账号配置的 pool_mode_retry_count。
+func NewPoolModeFailoverError(statusCode int, body []byte, account *Account) *UpstreamFailoverError {
+	return &UpstreamFailoverError{
+		StatusCode:             statusCode,
+		ResponseBody:           body,
+		RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(statusCode),
+		MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+	}
+}
+
+// NewPoolModeFailoverErrorOpenAI OpenAI 平台变体：额外把 isOpenAITransientProcessingError（特定
+// 400 消息体）也纳入同账号重试判定（换 key 池里的 key 可能绕过瞬态处理错误）。
+func NewPoolModeFailoverErrorOpenAI(statusCode int, body []byte, account *Account, upstreamMsg string) *UpstreamFailoverError {
+	e := NewPoolModeFailoverError(statusCode, body, account)
+	if account.IsPoolMode() && isOpenAITransientProcessingError(statusCode, upstreamMsg, body) {
+		e.RetryableOnSameAccount = true
+	}
+	return e
+}
+
 func (e *UpstreamFailoverError) Error() string {
 	return fmt.Sprintf("upstream error: %d (failover)", e.StatusCode)
 }
@@ -4965,8 +4987,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+				
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
@@ -5000,8 +5021,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
-			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			
 		}
 	}
 	if resp.StatusCode >= 400 {
@@ -5281,8 +5301,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+				
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
@@ -5316,8 +5335,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
-			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			
 		}
 	}
 
@@ -6074,8 +6092,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 			return nil, &UpstreamFailoverError{
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
-				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+				
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
@@ -6099,8 +6116,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 		return nil, &UpstreamFailoverError{
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
-			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			
 		}
 	}
 

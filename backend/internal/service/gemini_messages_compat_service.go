@@ -934,8 +934,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 					return nil, &UpstreamFailoverError{
 						StatusCode:             resp.StatusCode,
 						ResponseBody:           respBody,
-						RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-						MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+						
 					}
 				}
 				upstreamReqID := resp.Header.Get(requestIDHeader)
@@ -1456,8 +1455,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 					return nil, &UpstreamFailoverError{
 						StatusCode:             resp.StatusCode,
 						ResponseBody:           respBody,
-						RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
-						MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+						
 					}
 				}
 				respBody = unwrapIfNeeded(isOAuth, respBody)

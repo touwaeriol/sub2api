@@ -378,7 +378,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts: "+err.Error())
+				naStatus, _, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, err.Error())
+				googleError(c, naStatus, naMsg)
 				return
 			}
 			action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -426,7 +427,8 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if !selection.Acquired {
 			if selection.WaitPlan == nil {
 				markOpsRoutingCapacityLimited(c)
-				googleError(c, http.StatusServiceUnavailable, "No available Gemini accounts")
+				naStatus, _, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, "")
+				googleError(c, naStatus, naMsg)
 				return
 			}
 			accountWaitCounted := false
