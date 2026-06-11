@@ -4142,8 +4142,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 自定义错误码未命中：跳过账号标记，但仍走 failover 判定（与标记正交）。
-	// 不再写 500——交给下面的 failover/默认映射统一处理。
+	// 自定义错误码未命中：跳过账号标记，仅走 failover 判定（与标记正交）。
+	// 命中换号码则 failover；未命中则透传上游错误给客户端（不标记、不换号）。
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -4157,11 +4157,19 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		})
 		if s.shouldFailoverOpenAIUpstreamResponse(ctx, resp.StatusCode, upstreamMsg, body) {
 			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           body,
-				
+				StatusCode:   resp.StatusCode,
+				ResponseBody: body,
 			}
 		}
+		// 不在换号码集中：透传上游错误（不标记账号、不 fall-through 到下方的标记逻辑）
+		MarkResponseCommitted(c)
+		c.JSON(resp.StatusCode, gin.H{
+			"error": gin.H{
+				"type":    "upstream_error",
+				"message": upstreamMsg,
+			},
+		})
+		return nil, fmt.Errorf("upstream error: %d (not in custom error codes, passthrough)", resp.StatusCode)
 	}
 
 	// Handle upstream error (mark account status)
@@ -4279,7 +4287,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// 自定义错误码未命中：跳过账号标记，但仍走 failover 判定（与标记正交）。
+	// 自定义错误码未命中：跳过账号标记，仅走 failover 判定（与标记正交）。
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -4293,11 +4301,14 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		})
 		if s.shouldFailoverOpenAIUpstreamResponse(c.Request.Context(), resp.StatusCode, upstreamMsg, body) {
 			return nil, &UpstreamFailoverError{
-				StatusCode:             resp.StatusCode,
-				ResponseBody:           body,
-				
+				StatusCode:   resp.StatusCode,
+				ResponseBody: body,
 			}
 		}
+		// 不在换号码集中：透传上游错误（不标记账号、不 fall-through 到下方的标记逻辑）
+		MarkResponseCommitted(c)
+		writeError(c, resp.StatusCode, "upstream_error", upstreamMsg)
+		return nil, fmt.Errorf("upstream error: %d (not in custom error codes, passthrough)", resp.StatusCode)
 	}
 
 	// Track rate limits and decide whether to trigger secondary failover.
