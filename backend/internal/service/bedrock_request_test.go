@@ -894,6 +894,15 @@ func TestSanitizeBedrockCCFields(t *testing.T) {
 		assert.True(t, gjson.GetBytes(result, "messages").Exists())
 	})
 
+	t.Run("removes output_config and output_format", func(t *testing.T) {
+		// CC v2.1.116+ Structured Outputs：Bedrock 报 "output_config.format: Extra inputs are not permitted"
+		body := []byte(`{"model":"claude-opus-4-6","output_config":{"format":{"type":"json_schema"},"effort":"high"},"output_format":{"type":"json_schema"},"messages":[]}`)
+		result := sanitizeBedrockCCFields(body)
+		assert.False(t, gjson.GetBytes(result, "output_config").Exists())
+		assert.False(t, gjson.GetBytes(result, "output_format").Exists())
+		assert.True(t, gjson.GetBytes(result, "messages").Exists())
+	})
+
 	t.Run("injects max_tokens when missing", func(t *testing.T) {
 		body := []byte(`{"model":"claude-opus-4-6","messages":[]}`)
 		result := sanitizeBedrockCCFields(body)

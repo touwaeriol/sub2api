@@ -711,21 +711,29 @@ func sanitizeIDField(body []byte, id, path string) []byte {
 
 const defaultCCMaxTokens = 81920
 
+// bedrockCCUnsupportedFields Claude Code 发送但 Bedrock InvokeModel 不支持的 Anthropic API 专有字段，
+// 命中即整体删除（保留会触发 ValidationException: Extra inputs are not permitted）。
+//   - service_tier / interface_geo：Anthropic API 专有
+//   - context_management：CC v2.1.87+ 默认携带
+//   - output_config：CC v2.1.116+ Structured Outputs GA 后携带（output_config.format / .effort）
+//   - output_format：output_config 的旧字段名，一并防御
+var bedrockCCUnsupportedFields = []string{
+	"service_tier",
+	"interface_geo",
+	"context_management",
+	"output_config",
+	"output_format",
+}
+
 // sanitizeBedrockCCFields 处理 Claude Code 发送的 Bedrock 不兼容字段：
-//   - 移除 service_tier（Anthropic API 专有，Bedrock 不支持）
-//   - 移除 interface_geo（Anthropic API 专有，Bedrock 不支持）
-//   - 移除 context_management（Anthropic API 专有，Bedrock 不支持，CC v2.1.87+ 默认携带）
+//   - 移除 bedrockCCUnsupportedFields 中的所有字段
 //   - 注入 max_tokens 默认值 81920（CC 可能省略，Bedrock 要求必须提供）
 //   - 注入 anthropic_version（CC 通过 HTTP 头发送，Bedrock 需要放在请求体中）
 func sanitizeBedrockCCFields(body []byte) []byte {
-	if gjson.GetBytes(body, "service_tier").Exists() {
-		body, _ = sjson.DeleteBytes(body, "service_tier")
-	}
-	if gjson.GetBytes(body, "interface_geo").Exists() {
-		body, _ = sjson.DeleteBytes(body, "interface_geo")
-	}
-	if gjson.GetBytes(body, "context_management").Exists() {
-		body, _ = sjson.DeleteBytes(body, "context_management")
+	for _, field := range bedrockCCUnsupportedFields {
+		if gjson.GetBytes(body, field).Exists() {
+			body, _ = sjson.DeleteBytes(body, field)
+		}
 	}
 	if !gjson.GetBytes(body, "max_tokens").Exists() {
 		body, _ = sjson.SetBytes(body, "max_tokens", defaultCCMaxTokens)
