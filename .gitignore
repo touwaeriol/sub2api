@@ -119,6 +119,7 @@ backend/.installed
 tests
 CLAUDE.md
 .claude
+.mcp.json
 scripts
 .code-review-state
 #openspec/
