@@ -95,6 +95,10 @@ func (s *accountRepoStub) ListActive(ctx context.Context) ([]Account, error) {
 	panic("unexpected ListActive call")
 }
 
+func (s *accountRepoStub) ListByBaseURL(ctx context.Context, baseURL string) ([]Account, error) {
+	panic("unexpected ListByBaseURL call")
+}
+
 func (s *accountRepoStub) ListByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	panic("unexpected ListByPlatform call")
 }

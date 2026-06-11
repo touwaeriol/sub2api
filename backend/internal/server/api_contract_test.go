@@ -588,6 +588,8 @@ func TestAPIContracts(t *testing.T) {
 							"image_size": null,
 							"image_input_size": null,
 							"image_output_size": null,
+							"image_output_cost": 0,
+							"image_output_tokens": 0,
 							"image_size_source": null,
 							"image_size_breakdown": null,
 							"media_type": null,
@@ -1676,6 +1678,10 @@ func (s *stubAccountRepo) ListByGroup(ctx context.Context, groupID int64) ([]ser
 }
 
 func (s *stubAccountRepo) ListActive(ctx context.Context) ([]service.Account, error) {
+	return nil, errors.New("not implemented")
+}
+
+func (s *stubAccountRepo) ListByBaseURL(ctx context.Context, baseURL string) ([]service.Account, error) {
 	return nil, errors.New("not implemented")
 }
 

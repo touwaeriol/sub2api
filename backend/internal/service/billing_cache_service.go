@@ -1,4 +1,4 @@
-﻿package service
+package service
 
 // BillingCacheService 计费缓存服务：余额 / 订阅 / 限速 / 配额 的统一缓存入口。
 // 职责拆分参见兄弟文件：

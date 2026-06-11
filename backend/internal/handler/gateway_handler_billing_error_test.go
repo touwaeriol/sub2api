@@ -116,12 +116,16 @@ func TestBillingErrorDetails_T10_QuotaExhaustedReturns429WithRetryAfter(t *testi
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			status, code, _, retryAfter := billingErrorDetails(tc.err)
+			status, code, _, metadata := billingErrorDetails(tc.err)
 			if status != http.StatusTooManyRequests {
 				t.Errorf("status = %d, want 429", status)
 			}
 			if code != "rate_limit_exceeded" {
 				t.Errorf("code = %q, want rate_limit_exceeded", code)
+			}
+			retryAfter, err := strconv.Atoi(metadata["retry_after"])
+			if err != nil {
+				t.Fatalf("metadata retry_after = %q, want integer seconds", metadata["retry_after"])
 			}
 			if retryAfter < 3599 || retryAfter > 3601 {
 				t.Errorf("retryAfter = %d, want ~3600", retryAfter)

@@ -223,7 +223,6 @@ func TestOpenAIGatewayServiceRecordUsage_ZeroUsageStillWritesUsageLog(t *testing
 	require.Equal(t, 0, quotaSvc.rateLimitCalls)
 }
 
-
 func TestOpenAIGatewayServiceRecordUsage_MissingPricingRecordsZeroCostUsageLog(t *testing.T) {
 	usageRepo := &openAIRecordUsageLogRepoStub{inserted: true}
 	billingRepo := &openAIRecordUsageBillingRepoStub{result: &UsageBillingApplyResult{Applied: true}}
@@ -1844,4 +1843,3 @@ func TestOpenAIGatewayServiceRecordUsage_NonZeroTokenRecordsBoth(t *testing.T) {
 	require.Equal(t, 100, usageRepo.lastLog.InputTokens)
 	require.Equal(t, 50, usageRepo.lastLog.OutputTokens)
 }
-

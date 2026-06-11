@@ -92,6 +92,9 @@ func (m *mockAccountRepoForGemini) ListByGroup(ctx context.Context, groupID int6
 func (m *mockAccountRepoForGemini) ListActive(ctx context.Context) ([]Account, error) {
 	return nil, nil
 }
+func (m *mockAccountRepoForGemini) ListByBaseURL(ctx context.Context, baseURL string) ([]Account, error) {
+	return nil, nil
+}
 func (m *mockAccountRepoForGemini) ListByPlatform(ctx context.Context, platform string) ([]Account, error) {
 	return nil, nil
 }

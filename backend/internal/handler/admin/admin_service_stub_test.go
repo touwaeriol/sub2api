@@ -613,5 +613,9 @@ func (s *stubAdminService) ReplaceUserGroup(ctx context.Context, userID, oldGrou
 	return &service.ReplaceUserGroupResult{MigratedKeys: 0}, nil
 }
 
+func (s *stubAdminService) ListActiveByBaseURL(ctx context.Context, baseURL string) ([]service.Account, error) {
+	return nil, nil
+}
+
 // Ensure stub implements interface.
 var _ service.AdminService = (*stubAdminService)(nil)

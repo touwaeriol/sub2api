@@ -16,8 +16,8 @@ import (
 
 // ChannelHandler handles admin channel management
 type ChannelHandler struct {
-	channelService *service.ChannelService
-	billingService *service.BillingService
+	channelService  *service.ChannelService
+	billingService  *service.BillingService
 	serviceQuotaSvc service.ServiceQuotaService
 	pricingService  *service.PricingService
 }
