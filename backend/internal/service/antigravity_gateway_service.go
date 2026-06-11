@@ -96,11 +96,30 @@ type AntigravityAccountSwitchError struct {
 	OriginalAccountID int64
 	RateLimitedModel  string
 	IsStickySession   bool // 是否为粘性会话切换（决定是否缓存计费）
+	// UpstreamStatusCode/UpstreamBody 保留触发切换的原始上游错误（如 429 及其响应体），
+	// 供 failover 耗尽后的错误透传规则按真实状态码匹配；0/nil 表示本地预检查触发（无上游响应）。
+	UpstreamStatusCode int
+	UpstreamBody       []byte
 }
 
 func (e *AntigravityAccountSwitchError) Error() string {
 	return fmt.Sprintf("account %d model %s rate limited, need switch",
 		e.OriginalAccountID, e.RateLimitedModel)
+}
+
+// ToUpstreamFailoverError 把账号切换信号转为 handler 层 failover 错误（单点实现）。
+// 保留触发切换的原始上游状态码与响应体，让 failover 耗尽后的错误透传规则能按真实
+// 状态码（如 429）匹配；本地预检查触发（无上游响应）时回退 503。
+func (e *AntigravityAccountSwitchError) ToUpstreamFailoverError() *UpstreamFailoverError {
+	statusCode := e.UpstreamStatusCode
+	if statusCode == 0 {
+		statusCode = http.StatusServiceUnavailable
+	}
+	return &UpstreamFailoverError{
+		StatusCode:        statusCode,
+		ResponseBody:      e.UpstreamBody,
+		ForceCacheBilling: e.IsStickySession,
+	}
 }
 
 // IsAntigravityAccountSwitchError 检查错误是否为账号切换信号
@@ -239,9 +258,11 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
 			switchError: &AntigravityAccountSwitchError{
-				OriginalAccountID: p.account.ID,
-				RateLimitedModel:  modelName,
-				IsStickySession:   p.isStickySession,
+				OriginalAccountID:  p.account.ID,
+				RateLimitedModel:   modelName,
+				IsStickySession:    p.isStickySession,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamBody:       respBody,
 			},
 		}
 	}
@@ -411,9 +432,11 @@ func (s *AntigravityGatewayService) handleSmartRetry(p antigravityRetryLoopParam
 		return &smartRetryResult{
 			action: smartRetryActionBreakWithResp,
 			switchError: &AntigravityAccountSwitchError{
-				OriginalAccountID: p.account.ID,
-				RateLimitedModel:  modelName,
-				IsStickySession:   p.isStickySession,
+				OriginalAccountID:  p.account.ID,
+				RateLimitedModel:   modelName,
+				IsStickySession:    p.isStickySession,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamBody:       respBody,
 			},
 		}
 	}
@@ -934,11 +957,13 @@ func (s *AntigravityGatewayService) checkErrorPolicy(ctx context.Context, accoun
 }
 
 // applyErrorPolicy 应用错误策略结果，返回是否应终止当前循环及应返回的状态码。
-// ErrorPolicySkipped 时 outStatus 为 500（前端约定：未命中的错误返回 500）。
+// ErrorPolicySkipped（自定义错误码未命中/池模式）只代表"不标记账号状态"，
+// 必须保留原始状态码——改写成 500 会污染后续 failover 判定与错误透传规则匹配
+// （透传规则按状态码匹配，429 被改写成 500 后用户配置的 429 透传规则永远失效）。
 func (s *AntigravityGatewayService) applyErrorPolicy(p antigravityRetryLoopParams, statusCode int, headers http.Header, respBody []byte) (handled bool, outStatus int, retErr error) {
 	switch s.checkErrorPolicy(p.ctx, p.account, statusCode, respBody) {
 	case ErrorPolicySkipped:
-		return true, http.StatusInternalServerError, nil
+		return true, statusCode, nil
 	case ErrorPolicyMatched:
 		_ = p.handleError(p.ctx, p.prefix, p.account, statusCode, headers, respBody,
 			p.requestedModel, p.groupID, p.sessionHash, p.isStickySession)
@@ -946,7 +971,13 @@ func (s *AntigravityGatewayService) applyErrorPolicy(p antigravityRetryLoopParam
 	case ErrorPolicyTempUnscheduled:
 		slog.Info("temp_unschedulable_matched",
 			"prefix", p.prefix, "status_code", statusCode, "account_id", p.account.ID)
-		return true, statusCode, &AntigravityAccountSwitchError{OriginalAccountID: p.account.ID, RateLimitedModel: p.requestedModel, IsStickySession: p.isStickySession}
+		return true, statusCode, &AntigravityAccountSwitchError{
+			OriginalAccountID:  p.account.ID,
+			RateLimitedModel:   p.requestedModel,
+			IsStickySession:    p.isStickySession,
+			UpstreamStatusCode: statusCode,
+			UpstreamBody:       respBody,
+		}
 	}
 	return false, statusCode, nil
 }
@@ -1339,7 +1370,7 @@ func isModelNotFoundError(statusCode int, body []byte) bool {
 //	      └─ retryDelay <  7s → 等待后重试 1 次
 //	          ├─ 成功 → 正常返回
 //	          └─ 失败 → 设置模型限流 + 清除粘性绑定 → 切换账号
-func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte, isStickySession bool) (*ForwardResult, error) {
+func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context, account *Account, body []byte, isStickySession bool, groupID *int64, sessionHash string) (*ForwardResult, error) {
 	// 上游透传账号直接转发，不走 OAuth token 刷新
 	if account.Type == AccountTypeUpstream {
 		return s.ForwardUpstream(ctx, c, account, body)
@@ -1420,17 +1451,14 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		accountRepo:     s.accountRepo,
 		handleError:     s.handleUpstreamError,
 		requestedModel:  originalModel,
-		isStickySession: isStickySession, // Forward 由上层判断粘性会话
-		groupID:         0,               // Forward 方法没有 groupID，由上层处理粘性会话清除
-		sessionHash:     "",              // Forward 方法没有 sessionHash，由上层处理粘性会话清除
+		isStickySession: isStickySession,       // Forward 由上层判断粘性会话
+		groupID:         DerefGroupID(groupID), // 模型级限流时清除粘性绑定用
+		sessionHash:     sessionHash,           // 模型级限流时清除粘性绑定用
 	})
 	if err != nil {
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
-			return nil, &UpstreamFailoverError{
-				StatusCode:        http.StatusServiceUnavailable,
-				ForceCacheBilling: switchErr.IsStickySession,
-			}
+			return nil, switchErr.ToUpstreamFailoverError()
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
 		if c.Request.Context().Err() != nil {
@@ -1705,7 +1733,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				}
 			}
 
-			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+			if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
 				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
 				upstreamDetail := s.getUpstreamErrorDetail(respBody)
@@ -2072,7 +2100,7 @@ func stripSignatureSensitiveBlocksFromClaudeRequest(req *antigravity.ClaudeReque
 //	      └─ retryDelay <  7s → 等待后重试 1 次
 //	          ├─ 成功 → 正常返回
 //	          └─ 失败 → 设置模型限流 + 清除粘性绑定 → 切换账号
-func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool) (*ForwardResult, error) {
+func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Context, account *Account, originalModel string, action string, stream bool, body []byte, isStickySession bool, groupID *int64, sessionHash string) (*ForwardResult, error) {
 	startTime := time.Now()
 
 	sessionID := getSessionID(c)
@@ -2176,17 +2204,14 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 		accountRepo:     s.accountRepo,
 		handleError:     s.handleUpstreamError,
 		requestedModel:  originalModel,
-		isStickySession: isStickySession, // ForwardGemini 由上层判断粘性会话
-		groupID:         0,               // ForwardGemini 方法没有 groupID，由上层处理粘性会话清除
-		sessionHash:     "",              // ForwardGemini 方法没有 sessionHash，由上层处理粘性会话清除
+		isStickySession: isStickySession,       // ForwardGemini 由上层判断粘性会话
+		groupID:         DerefGroupID(groupID), // 模型级限流时清除粘性绑定用
+		sessionHash:     sessionHash,           // 模型级限流时清除粘性绑定用
 	})
 	if err != nil {
 		// 检查是否是账号切换信号，转换为 UpstreamFailoverError 让 Handler 切换账号
 		if switchErr, ok := IsAntigravityAccountSwitchError(err); ok {
-			return nil, &UpstreamFailoverError{
-				StatusCode:        http.StatusServiceUnavailable,
-				ForceCacheBilling: switchErr.IsStickySession,
-			}
+			return nil, switchErr.ToUpstreamFailoverError()
 		}
 		// 区分客户端取消和真正的上游失败，返回更准确的错误消息
 		if c.Request.Context().Err() != nil {
@@ -2377,7 +2402,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: unwrappedForOps, RetryableOnSameAccount: true}
 		}
 
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 				Platform:           account.Platform,
 				AccountID:          account.ID,
@@ -2466,13 +2491,9 @@ handleSuccess:
 	}, nil
 }
 
-func (s *AntigravityGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 403, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
-	}
+// shouldFailoverUpstreamError 判定规则由全局"网关请求重试"设置驱动（GatewayRetryPolicy 单点实现）。
+func (s *AntigravityGatewayService) shouldFailoverUpstreamError(ctx context.Context, statusCode int) bool {
+	return resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailover(statusCode)
 }
 
 // isGoogleProjectConfigError 判断（已提取的小写）错误消息是否属于 Google 服务端配置类问题。
@@ -2804,9 +2825,11 @@ func (s *AntigravityGatewayService) handleModelRateLimit(p *handleModelRateLimit
 	return &handleModelRateLimitResult{
 		Handled: true,
 		SwitchError: &AntigravityAccountSwitchError{
-			OriginalAccountID: p.account.ID,
-			RateLimitedModel:  info.ModelName,
-			IsStickySession:   p.isStickySession,
+			OriginalAccountID:  p.account.ID,
+			RateLimitedModel:   info.ModelName,
+			IsStickySession:    p.isStickySession,
+			UpstreamStatusCode: p.statusCode,
+			UpstreamBody:       p.body,
 		},
 	}
 }
@@ -2885,9 +2908,12 @@ func (s *AntigravityGatewayService) handleUpstreamError(
 		return result
 	}
 
-	// 503 仅处理模型限流（MODEL_CAPACITY_EXHAUSTED），非模型限流不做额外处理
-	// 避免将普通的 503 错误误判为账号问题
+	// 非模型容量类 503（容量类已在上方 Handled 分支处理）：重试耗尽后短时停调，
+	// 避免持续 503 的账号反复被调度。
 	if statusCode == 503 {
+		if s.accountRepo != nil && account != nil {
+			_ = s.accountRepo.SetTempUnschedulable(ctx, account.ID, time.Now().Add(upstream5xxCooldown), upstream5xxCooldownReason)
+		}
 		return nil
 	}
 
@@ -4256,6 +4282,10 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
 		logger.LegacyPrintf("service.antigravity_gateway", "%s upstream request failed: %v", prefix, err)
+		// 网络层错误（连接失败/超时）：按全局重试策略换号，避免有可用账号时直接报错。
+		if resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailoverOnNetworkError() {
+			return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+		}
 		return nil, fmt.Errorf("upstream request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -4264,12 +4294,26 @@ func (s *AntigravityGatewayService) ForwardUpstream(ctx context.Context, c *gin.
 	if resp.StatusCode >= 400 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 
-		// 429 错误时标记账号限流
-		if resp.StatusCode == http.StatusTooManyRequests {
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", false)
+		// 标记账号状态（429 限流、401/403 凭据错误等），与换号判定正交。
+		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, originalModel, 0, "", false)
+
+		// 按全局重试策略换号；未写响应，由 handler 层 failover 循环接管。
+		if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
+			upstreamMsg := sanitizeUpstreamErrorMessage(strings.TrimSpace(extractAntigravityErrorMessage(respBody)))
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				AccountName:        account.Name,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				Kind:               "failover",
+				Message:            upstreamMsg,
+				Detail:             s.getUpstreamErrorDetail(respBody),
+			})
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody}
 		}
 
-		// 透传上游错误
+		// 非换号错误：保持透传上游原始响应
 		c.Header("Content-Type", resp.Header.Get("Content-Type"))
 		c.Status(resp.StatusCode)
 		_, _ = c.Writer.Write(respBody)

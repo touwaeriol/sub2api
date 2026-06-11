@@ -419,8 +419,8 @@ type GatewayCache interface {
 	DeleteSessionAccountID(ctx context.Context, groupID int64, sessionHash string) error
 }
 
-// derefGroupID safely dereferences *int64 to int64, returning 0 if nil
-func derefGroupID(groupID *int64) int64 {
+// DerefGroupID 安全解引用 *int64 GroupID（nil = 未分组 → 0）。单点实现，handler/service 共用。
+func DerefGroupID(groupID *int64) int64 {
 	if groupID == nil {
 		return 0
 	}
@@ -442,7 +442,7 @@ func resolveModelsListCacheTTL(cfg *config.Config) time.Duration {
 }
 
 func modelsListCacheKey(groupID *int64, platform string) string {
-	return fmt.Sprintf("%d|%s", derefGroupID(groupID), strings.TrimSpace(platform))
+	return fmt.Sprintf("%d|%s", DerefGroupID(groupID), strings.TrimSpace(platform))
 }
 
 func prefetchedStickyGroupIDFromContext(ctx context.Context) (int64, bool) {
@@ -451,7 +451,7 @@ func prefetchedStickyGroupIDFromContext(ctx context.Context) (int64, bool) {
 
 func prefetchedStickyAccountIDFromContext(ctx context.Context, groupID *int64) int64 {
 	prefetchedGroupID, ok := prefetchedStickyGroupIDFromContext(ctx)
-	if !ok || prefetchedGroupID != derefGroupID(groupID) {
+	if !ok || prefetchedGroupID != DerefGroupID(groupID) {
 		return 0
 	}
 	if accountID, ok := PrefetchedStickyAccountIDFromContext(ctx); ok && accountID > 0 {
@@ -536,6 +536,7 @@ type UpstreamFailoverError struct {
 	ResponseHeaders        http.Header // 上游响应头，用于透传 cf-ray/cf-mitigated/content-type 等诊断信息
 	ForceCacheBilling      bool        // Antigravity 粘性会话切换时设为 true
 	RetryableOnSameAccount bool        // 临时性错误（如 Google 间歇性 400、空响应），应在同一账号上重试 N 次再切换
+	MaxSameAccountRetries  int         // 同账号重试次数上限；0 表示使用 handler 默认值（池模式创建点填账号配置值）
 }
 
 func (e *UpstreamFailoverError) Error() string {
@@ -770,7 +771,7 @@ func (s *GatewayService) BindStickySession(ctx context.Context, groupID *int64, 
 	if sessionHash == "" || accountID <= 0 || s.cache == nil {
 		return nil
 	}
-	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, accountID, stickySessionTTL)
+	return s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, accountID, stickySessionTTL)
 }
 
 // GetCachedSessionAccountID retrieves the account ID bound to a sticky session.
@@ -779,7 +780,7 @@ func (s *GatewayService) GetCachedSessionAccountID(ctx context.Context, groupID 
 	if sessionHash == "" || s.cache == nil {
 		return 0, nil
 	}
-	accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+	accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 	if err != nil {
 		return 0, err
 	}
@@ -1402,7 +1403,7 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	// 渠道限制预检查必须使用解析后的分组。
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"model", requestedModel)
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
@@ -1436,7 +1437,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		excludedIDsList = append(excludedIDsList, id)
 	}
 	slog.Debug("account_scheduling_starting",
-		"group_id", derefGroupID(groupID),
+		"group_id", DerefGroupID(groupID),
 		"model", requestedModel,
 		"session", shortSessionHash(sessionHash),
 		"excluded_ids", excludedIDsList)
@@ -1454,7 +1455,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	// 渠道限制预检查必须使用解析后的分组。
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"model", requestedModel)
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
@@ -1465,7 +1466,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		stickyAccountID = prefetch
 		stickySource = "prefetch"
 	} else if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash); err == nil {
+		if accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash); err == nil {
 			stickyAccountID = accountID
 			stickySource = "cache"
 		}
@@ -1473,7 +1474,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	// [DEBUG-STICKY] 调度器入口日志
 	slog.Info("sticky.scheduler_entry",
-		"group_id", derefGroupID(groupID),
+		"group_id", DerefGroupID(groupID),
 		"session_hash", shortSessionHash(sessionHash),
 		"sticky_account_id", stickyAccountID,
 		"sticky_source", stickySource,
@@ -1489,7 +1490,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			groupPlatform = group.Platform
 		}
 		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] select entry: group_id=%v group_platform=%s model=%s session=%s sticky_account=%d load_batch=%v concurrency=%v",
-			derefGroupID(groupID), groupPlatform, requestedModel, shortSessionHash(sessionHash), stickyAccountID, cfg.LoadBatchEnabled, s.concurrencyService != nil)
+			DerefGroupID(groupID), groupPlatform, requestedModel, shortSessionHash(sessionHash), stickyAccountID, cfg.LoadBatchEnabled, s.concurrencyService != nil)
 	}
 
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
@@ -1548,7 +1549,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	}
 	preferOAuth := platform == PlatformGemini
 	if s.debugModelRoutingEnabled() && platform == PlatformAnthropic && requestedModel != "" {
-		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
+		logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] load-aware enabled: group_id=%v model=%s session=%s platform=%s", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), platform)
 	}
 
 	accounts, useMixed, err := s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
@@ -1567,7 +1568,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 			base := ServiceQuotaCheckRequest{
 				UserID:   plan.Req.UserID,
 				Platform: platform,
-				GroupID:  derefGroupID(groupID),
+				GroupID:  DerefGroupID(groupID),
 				Model:    requestedModel,
 			}
 			accounts = s.billingCacheService.FilterAccountsByServiceQuotaSchedulability(ctx, ticket, base, accounts)
@@ -1665,11 +1666,11 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 		if s.debugModelRoutingEnabled() {
 			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed candidates: group_id=%v model=%s routed=%d candidates=%d filtered(excluded=%d missing=%d unsched=%d platform=%d model_scope=%d model_mapping=%d window_cost=%d)",
-				derefGroupID(groupID), requestedModel, len(routingAccountIDs), len(routingCandidates),
+				DerefGroupID(groupID), requestedModel, len(routingAccountIDs), len(routingCandidates),
 				filteredExcluded, filteredMissing, filteredUnsched, filteredPlatform, filteredModelScope, filteredModelMapping, filteredWindowCost)
 			if len(modelScopeSkippedIDs) > 0 {
 				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] model_rate_limited accounts skipped: group_id=%v model=%s account_ids=%v",
-					derefGroupID(groupID), requestedModel, modelScopeSkippedIDs)
+					DerefGroupID(groupID), requestedModel, modelScopeSkippedIDs)
 			}
 		}
 
@@ -1712,7 +1713,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 										"result", "slot_acquired",
 									)
 									if s.debugModelRoutingEnabled() {
-										logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), stickyAccountID)
+										logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed sticky hit: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), stickyAccountID)
 									}
 									return s.newSelectionResult(ctx, stickyAccount, true, result.ReleaseFunc, nil)
 								}
@@ -1758,7 +1759,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 								stickyCacheMissReason, stickyAccountID, shortSessionHash(sessionHash), currentRPM, baseRPM)
 						}
 					} else {
-						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+						_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 						logger.LegacyPrintf("service.gateway", "[StickyCacheMiss] reason=account_cleared account_id=%d session=%s current_rpm=0 base_rpm=0",
 							stickyAccountID, shortSessionHash(sessionHash))
 					}
@@ -1820,10 +1821,10 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 							continue
 						}
 						if sessionHash != "" && s.cache != nil {
-							_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, item.account.ID, stickySessionTTL)
+							_ = s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, item.account.ID, stickySessionTTL)
 						}
 						if s.debugModelRoutingEnabled() {
-							logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
+							logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed select: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
 						}
 						return s.newSelectionResult(ctx, item.account, true, result.ReleaseFunc, nil)
 					}
@@ -1836,7 +1837,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						continue // 会话限制已满，尝试下一个
 					}
 					if s.debugModelRoutingEnabled() {
-						logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed wait: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
+						logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] routed wait: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), item.account.ID)
 					}
 					return s.newSelectionResult(ctx, item.account, false, nil, &AccountWaitPlan{
 						AccountID:      item.account.ID,
@@ -1866,7 +1867,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 						"reason", "should_clear_sticky_session",
 						"session", shortSessionHash(sessionHash),
 					)
-					_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+					_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 				}
 
 				// 注意：不再检查 isAccountInGroup，因为 accountByID 已经从按分组过滤的
@@ -1911,7 +1912,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 								"result", "slot_acquired",
 							)
 							if s.cache != nil {
-								_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL)
+								_ = s.cache.RefreshSessionTTL(ctx, DerefGroupID(groupID), sessionHash, stickySessionTTL)
 							}
 							return s.newSelectionResult(ctx, account, true, result.ReleaseFunc, nil)
 						}
@@ -2066,7 +2067,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 					result.ReleaseFunc() // 释放槽位，继续尝试下一个账号
 				} else {
 					if sessionHash != "" && s.cache != nil {
-						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
+						_ = s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, selected.account.ID, stickySessionTTL)
 					}
 					return s.newSelectionResult(ctx, selected.account, true, result.ReleaseFunc, nil)
 				}
@@ -2114,7 +2115,7 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 				continue
 			}
 			if sessionHash != "" && s.cache != nil {
-				_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, acc.ID, stickySessionTTL)
+				_ = s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, acc.ID, stickySessionTTL)
 			}
 			selection, err := s.newSelectionResult(ctx, acc, true, result.ReleaseFunc, nil)
 			if err != nil {
@@ -2180,7 +2181,7 @@ func (s *GatewayService) routingAccountIDsForRequest(ctx context.Context, groupI
 	group, err := s.resolveGroupByID(ctx, *groupID)
 	if err != nil || group == nil {
 		if s.debugModelRoutingEnabled() {
-			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] resolve group failed: group_id=%v model=%s platform=%s err=%v", derefGroupID(groupID), requestedModel, platform, err)
+			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] resolve group failed: group_id=%v model=%s platform=%s err=%v", DerefGroupID(groupID), requestedModel, platform, err)
 		}
 		return nil
 	}
@@ -2273,7 +2274,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		accounts, useMixed, err := s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 		if err == nil {
 			slog.Debug("account_scheduling_list_snapshot",
-				"group_id", derefGroupID(groupID),
+				"group_id", DerefGroupID(groupID),
 				"platform", platform,
 				"use_mixed", useMixed,
 				"count", len(accounts))
@@ -2303,7 +2304,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 		}
 		if err != nil {
 			slog.Debug("account_scheduling_list_failed",
-				"group_id", derefGroupID(groupID),
+				"group_id", DerefGroupID(groupID),
 				"platform", platform,
 				"error", err)
 			return nil, useMixed, err
@@ -2316,7 +2317,7 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 			filtered = append(filtered, acc)
 		}
 		slog.Debug("account_scheduling_list_mixed",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"platform", platform,
 			"raw_count", len(accounts),
 			"filtered_count", len(filtered))
@@ -2344,13 +2345,13 @@ func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *i
 	}
 	if err != nil {
 		slog.Debug("account_scheduling_list_failed",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"platform", platform,
 			"error", err)
 		return nil, useMixed, err
 	}
 	slog.Debug("account_scheduling_list_single",
-		"group_id", derefGroupID(groupID),
+		"group_id", DerefGroupID(groupID),
 		"platform", platform,
 		"count", len(accounts))
 	for _, acc := range accounts {
@@ -3056,11 +3057,11 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	if len(routingAccountIDs) > 0 {
 		if s.debugModelRoutingEnabled() {
 			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed begin: group_id=%v model=%s platform=%s session=%s routed_ids=%v",
-				derefGroupID(groupID), requestedModel, platform, shortSessionHash(sessionHash), routingAccountIDs)
+				DerefGroupID(groupID), requestedModel, platform, shortSessionHash(sessionHash), routingAccountIDs)
 		}
 		// 1) Sticky session only applies if the bound account is within the routing set.
 		if sessionHash != "" && s.cache != nil {
-			accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+			accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 			if err == nil && accountID > 0 && containsInt64(routingAccountIDs, accountID) {
 				if _, excluded := excludedIDs[accountID]; !excluded {
 					account, err := s.getSchedulableAccount(ctx, accountID)
@@ -3068,11 +3069,11 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 					if err == nil {
 						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
-							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+							_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 						}
 						if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
 							if s.debugModelRoutingEnabled() {
-								logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
+								logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed sticky hit: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
 							}
 							return account, nil
 						}
@@ -3165,12 +3166,12 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 		if selected != nil {
 			if sessionHash != "" && s.cache != nil {
-				if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
+				if err := s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 					logger.LegacyPrintf("service.gateway", "set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 				}
 			}
 			if s.debugModelRoutingEnabled() {
-				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
+				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed select: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
 			}
 			return selected, nil
 		}
@@ -3179,7 +3180,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 	// 1. 查询粘性会话
 	if sessionHash != "" && s.cache != nil {
-		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 		if err == nil && accountID > 0 {
 			if _, excluded := excludedIDs[accountID]; !excluded {
 				account, err := s.getSchedulableAccount(ctx, accountID)
@@ -3187,7 +3188,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 				if err == nil {
 					clearSticky := shouldClearStickySession(account, requestedModel)
 					if clearSticky {
-						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+						_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 					}
 					if !clearSticky && s.isAccountInGroup(account, groupID) && account.Platform == platform && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
 						return account, nil
@@ -3287,7 +3288,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 	// 4. 建立粘性绑定
 	if sessionHash != "" && s.cache != nil {
-		if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
+		if err := s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 			logger.LegacyPrintf("service.gateway", "set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 		}
 	}
@@ -3314,11 +3315,11 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	if len(routingAccountIDs) > 0 {
 		if s.debugModelRoutingEnabled() {
 			logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed begin: group_id=%v model=%s platform=%s session=%s routed_ids=%v",
-				derefGroupID(groupID), requestedModel, nativePlatform, shortSessionHash(sessionHash), routingAccountIDs)
+				DerefGroupID(groupID), requestedModel, nativePlatform, shortSessionHash(sessionHash), routingAccountIDs)
 		}
 		// 1) Sticky session only applies if the bound account is within the routing set.
 		if sessionHash != "" && s.cache != nil {
-			accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+			accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 			if err == nil && accountID > 0 && containsInt64(routingAccountIDs, accountID) {
 				if _, excluded := excludedIDs[accountID]; !excluded {
 					account, err := s.getSchedulableAccount(ctx, accountID)
@@ -3326,12 +3327,12 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 					if err == nil {
 						clearSticky := shouldClearStickySession(account, requestedModel)
 						if clearSticky {
-							_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+							_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 						}
 						if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) {
 							if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
 								if s.debugModelRoutingEnabled() {
-									logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed sticky hit: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
+									logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed sticky hit: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), accountID)
 								}
 								return account, nil
 							}
@@ -3425,12 +3426,12 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 		if selected != nil {
 			if sessionHash != "" && s.cache != nil {
-				if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
+				if err := s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 					logger.LegacyPrintf("service.gateway", "set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 				}
 			}
 			if s.debugModelRoutingEnabled() {
-				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
+				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed select: group_id=%v model=%s session=%s account=%d", DerefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
 			}
 			return selected, nil
 		}
@@ -3439,7 +3440,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 	// 1. 查询粘性会话
 	if sessionHash != "" && s.cache != nil {
-		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 		if err == nil && accountID > 0 {
 			if _, excluded := excludedIDs[accountID]; !excluded {
 				account, err := s.getSchedulableAccount(ctx, accountID)
@@ -3447,7 +3448,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 				if err == nil {
 					clearSticky := shouldClearStickySession(account, requestedModel)
 					if clearSticky {
-						_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
+						_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), sessionHash)
 					}
 					if !clearSticky && s.isAccountInGroup(account, groupID) && (requestedModel == "" || s.isModelSupportedByAccountWithContext(ctx, account, requestedModel)) && s.isAccountSchedulableForModelSelection(ctx, account, requestedModel) && s.isAccountSchedulableForQuota(account) && s.isAccountSchedulableForWindowCost(ctx, account, true) && s.isAccountSchedulableForRPM(ctx, account, true) && !s.isStickyAccountUpstreamRestricted(ctx, groupID, account, requestedModel) {
 						if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
@@ -3548,7 +3549,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 	// 4. 建立粘性绑定
 	if sessionHash != "" && s.cache != nil {
-		if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
+		if err := s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 			logger.LegacyPrintf("service.gateway", "set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 		}
 	}
@@ -3588,7 +3589,7 @@ func (s *GatewayService) logDetailedSelectionFailure(
 	logger.LegacyPrintf(
 		"service.gateway",
 		"[SelectAccountDetailed] group_id=%v model=%s platform=%s session=%s total=%d eligible=%d excluded=%d unschedulable=%d platform_filtered=%d model_unsupported=%d model_rate_limited=%d sample_platform_filtered=%v sample_model_unsupported=%v sample_model_rate_limited=%v",
-		derefGroupID(groupID),
+		DerefGroupID(groupID),
 		requestedModel,
 		platform,
 		shortSessionHash(sessionHash),
@@ -3856,13 +3857,14 @@ func (s *GatewayService) shouldRetryUpstreamError(account *Account, statusCode i
 }
 
 // shouldFailoverUpstreamError determines whether an upstream error should trigger account failover.
-func (s *GatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 403, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
-	}
+// 判定规则由全局"网关请求重试"设置驱动（GatewayRetryPolicy 单点实现，四平台共用）。
+func (s *GatewayService) shouldFailoverUpstreamError(ctx context.Context, statusCode int) bool {
+	return resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailover(statusCode)
+}
+
+// shouldFailoverOnNetworkError 网络层错误（连接失败/超时）是否按全局重试策略换号。
+func (s *GatewayService) shouldFailoverOnNetworkError(ctx context.Context) bool {
+	return resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailoverOnNetworkError()
 }
 
 func retryBackoffDelay(attempt int) time.Duration {
@@ -4594,7 +4596,6 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -4606,6 +4607,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
+			// 网络层错误（连接失败/超时）：按全局重试策略换号。
+			// 注意此分支不能先写响应，否则 handler 的 Writer.Size 守卫会拦截换号。
+			if s.shouldFailoverOnNetworkError(ctx) {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+			}
+			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			c.JSON(http.StatusBadGateway, gin.H{
 				"type": "error",
 				"error": gin.H{
@@ -4623,13 +4630,12 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				_ = resp.Body.Close()
 
 				// [优先级0] 签名池替换重试：用池中有效签名替换请求中的 signature，保留 thinking 能力
-				if poolResp, poolBody, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
+				if poolResp, _, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
 					C: c, Account: account, Body: body, RespBody: respBody, GroupID: parsed.GroupID,
 					ReqStream: reqStream, Token: token, TokenType: tokenType, MappedModel: mappedModel,
 					ShouldMimicClaudeCode: shouldMimicClaudeCode, ProxyURL: proxyURL,
 				}); ok {
 					resp = poolResp
-					body = poolBody
 					break
 				}
 
@@ -4931,7 +4937,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 处理重试耗尽的情况
 	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -4960,13 +4966,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
 
 	// 处理可切换账号的错误
-	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
+	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -4994,6 +5001,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
 			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 		}
 	}
 	if resp.StatusCode >= 400 {
@@ -5177,6 +5185,10 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
+			// 网络层错误：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+			if s.shouldFailoverOnNetworkError(ctx) {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"type": "error",
 				"error": gin.H{
@@ -5241,7 +5253,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -5270,12 +5282,13 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
 
-	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
+	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -5304,6 +5317,7 @@ func (s *GatewayService) forwardAnthropicAPIKeyPassthroughWithInput(
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
 			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 		}
 	}
 
@@ -5966,6 +5980,10 @@ func (s *GatewayService) executeBedrockUpstream(
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
+			// 网络层错误：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+			if s.shouldFailoverOnNetworkError(ctx) {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+			}
 			c.JSON(http.StatusBadGateway, gin.H{
 				"type": "error",
 				"error": gin.H{
@@ -6036,7 +6054,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 ) (*ForwardResult, error) {
 	// retry exhausted + failover
 	if s.shouldRetryUpstreamError(account, resp.StatusCode) {
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 			_ = resp.Body.Close()
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -6057,13 +6075,14 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 				StatusCode:             resp.StatusCode,
 				ResponseBody:           respBody,
 				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 			}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
 	}
 
 	// non-retryable failover
-	if s.shouldFailoverUpstreamError(resp.StatusCode) {
+	if s.shouldFailoverUpstreamError(ctx, resp.StatusCode) {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 		_ = resp.Body.Close()
 		resp.Body = io.NopCloser(bytes.NewReader(respBody))
@@ -6081,6 +6100,7 @@ func (s *GatewayService) handleBedrockUpstreamErrors(
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           respBody,
 			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 		}
 	}
 
@@ -8711,7 +8731,7 @@ type RecordUsageLongContextInput struct {
 	APIKeyService         APIKeyQuotaUpdater // API Key 配额服务（可选）
 	QuotaPlatform         string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
 
-	ChannelUsageFields                         // 渠道映射信息（由 handler 在 Forward 前解析）
+	ChannelUsageFields                           // 渠道映射信息（由 handler 在 Forward 前解析）
 	ServiceQuotaRequest ServiceQuotaCheckRequest // 服务配额请求上下文
 }
 
@@ -9869,7 +9889,7 @@ func (s *GatewayService) InvalidateAvailableModelsCache(groupID *int64, platform
 		return
 	}
 
-	targetGroup := derefGroupID(groupID)
+	targetGroup := DerefGroupID(groupID)
 	for key := range s.modelsListCache.Items() {
 		parts := strings.SplitN(key, "|", 2)
 		if len(parts) != 2 {

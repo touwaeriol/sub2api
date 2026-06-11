@@ -112,6 +112,18 @@ func NewGatewayHandler(
 	}
 }
 
+// maxAccountSwitchesFor 运行时读取"网关请求重试"设置中的最大换号次数（进程内 60s 缓存）。
+// settingService 未注入（测试场景）时回退构造期 cfg 值。
+func (h *GatewayHandler) maxAccountSwitchesFor(c *gin.Context, platform string) int {
+	if h.settingService == nil {
+		if platform == service.PlatformGemini {
+			return h.maxAccountSwitchesGemini
+		}
+		return h.maxAccountSwitches
+	}
+	return h.settingService.GetGatewayRetryPolicy(c.Request.Context()).MaxSwitches(platform)
+}
+
 // Messages handles Claude API compatible messages endpoint
 // POST /v1/messages
 func (h *GatewayHandler) Messages(c *gin.Context) {
@@ -320,7 +332,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 
 	if platform == service.PlatformGemini {
-		fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+		fs := NewFailoverState(h.maxAccountSwitchesFor(c, service.PlatformGemini), hasBoundSession)
 
 		// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 		// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -340,7 +352,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("platform", platform),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, err.Error())
+					h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -389,7 +402,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("model", reqModel),
 						zap.String("platform", platform),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+					naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, "")
+					h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 					return
 				}
 				accountWaitCounted := false
@@ -457,7 +471,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
 			if account.Platform == service.PlatformAntigravity {
-				result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, reqModel, "generateContent", reqStream, body, hasBoundSession)
+				result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, reqModel, "generateContent", reqStream, body, hasBoundSession, apiKey.GroupID, sessionKey)
 			} else {
 				result, err = h.geminiCompatService.Forward(requestCtx, c, account, body)
 			}
@@ -576,7 +590,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	}
 
 	for {
-		fs := NewFailoverState(h.maxAccountSwitches, hasBoundSession)
+		fs := NewFailoverState(h.maxAccountSwitchesFor(c, ""), hasBoundSession)
 		retryWithFallback := false
 
 		for {
@@ -598,7 +612,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.Bool("fallback_used", fallbackUsed),
 						zap.Error(err),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error(), streamStarted)
+					naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, err.Error())
+					h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 					return
 				}
 				action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -657,7 +672,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 						zap.String("model", reqModel),
 						zap.String("platform", platform),
 					)
-					h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+					naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, "")
+					h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 					return
 				}
 				accountWaitCounted := false
@@ -793,7 +809,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 			// 记录 Forward 前已写入字节数，Forward 后若增加则说明 SSE 内容已发，禁止 failover
 			writerSizeBeforeForward := c.Writer.Size()
 			if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
-				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession)
+				result, err = h.antigravityGatewayService.Forward(requestCtx, c, account, body, hasBoundSession, currentAPIKey.GroupID, sessionKey)
 			} else {
 				result, err = h.gatewayService.Forward(requestCtx, c, account, parsedReq)
 			}
@@ -1416,27 +1432,12 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	}
 
 	// 先检查透传规则
-	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule(platform, statusCode, responseBody); rule != nil {
-			// 确定响应状态码
-			respCode := statusCode
-			if !rule.PassthroughCode && rule.ResponseCode != nil {
-				respCode = *rule.ResponseCode
-			}
-
-			// 确定响应消息
-			msg := service.ExtractUpstreamErrorMessage(responseBody)
-			if !rule.PassthroughBody && rule.CustomMessage != nil {
-				msg = *rule.CustomMessage
-			}
-
-			if rule.SkipMonitoring {
-				c.Set(service.OpsSkipPassthroughKey, true)
-			}
-
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
-			return
+	if respCode, msg, matched := matchFailoverPassthroughRule(c, h.errorPassthroughService, platform, failoverErr); matched {
+		if msg == "" {
+			_, _, msg = h.mapUpstreamError(statusCode)
 		}
+		h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
+		return
 	}
 
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误
@@ -1446,6 +1447,58 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	// 使用默认的错误映射
 	status, errType, errMsg := h.mapUpstreamError(statusCode)
 	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+}
+
+// matchFailoverPassthroughRule failover 耗尽场景的透传规则匹配（单点实现，供各协议
+// 的 failoverExhausted 变体复用）。命中返回 (响应码, 消息, true)；消息可能为空（无响应体
+// 且规则透传消息体时），由调用方回退默认文案。
+// 注意：不要求响应体非空——只配错误码的规则（match_mode=any）对无响应体的错误也应生效。
+func matchFailoverPassthroughRule(c *gin.Context, svc *service.ErrorPassthroughService, platform string, failoverErr *service.UpstreamFailoverError) (int, string, bool) {
+	if svc == nil || failoverErr == nil {
+		return 0, "", false
+	}
+	rule := svc.MatchRule(platform, failoverErr.StatusCode, failoverErr.ResponseBody)
+	if rule == nil {
+		return 0, "", false
+	}
+	respCode := failoverErr.StatusCode
+	if !rule.PassthroughCode && rule.ResponseCode != nil {
+		respCode = *rule.ResponseCode
+	}
+	msg := service.ExtractUpstreamErrorMessage(failoverErr.ResponseBody)
+	if !rule.PassthroughBody && rule.CustomMessage != nil {
+		msg = *rule.CustomMessage
+	}
+	if rule.SkipMonitoring {
+		c.Set(service.OpsSkipPassthroughKey, true)
+	}
+	return respCode, msg, true
+}
+
+// noAvailableAccountsStatus 选号失败的统一错误语义（单点实现）：
+// 分组内账号全部处于限流/过载冷却时返回 429 + Retry-After 头，保留上游限流语义，
+// 下游网关/SDK 才能正确退避重试（503 会被部分下游网关包装成 500）；其余情况维持 503。
+func (h *GatewayHandler) noAvailableAccountsStatus(c *gin.Context, groupID *int64, detail string) (int, string, string) {
+	if h.gatewayService != nil {
+		if cooling, wait := h.gatewayService.GroupRateLimitRecovery(c.Request.Context(), groupID); cooling {
+			c.Header("Retry-After", strconv.Itoa(retryAfterSeconds(wait)))
+			return http.StatusTooManyRequests, "rate_limit_error", "All accounts are rate limited, please retry later"
+		}
+	}
+	msg := "No available accounts"
+	if detail != "" {
+		msg += ": " + detail
+	}
+	return http.StatusServiceUnavailable, "api_error", msg
+}
+
+// retryAfterSeconds 将等待时长向上取整为秒（至少 1 秒），用于 Retry-After 头。
+func retryAfterSeconds(wait time.Duration) int {
+	seconds := int((wait + time.Second - 1) / time.Second)
+	if seconds < 1 {
+		seconds = 1
+	}
+	return seconds
 }
 
 // handleFailoverExhaustedSimple 简化版本，用于没有响应体的情况

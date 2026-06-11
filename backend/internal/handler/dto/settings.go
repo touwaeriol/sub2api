@@ -358,6 +358,14 @@ type RectifierSettings struct {
 	AdvisorToolPatterns      []string `json:"advisor_tool_patterns"`
 }
 
+// GatewayRetrySettings 网关请求重试配置 DTO
+type GatewayRetrySettings struct {
+	FailoverCodes        string `json:"failover_codes"`
+	MaxSwitches          int    `json:"max_switches"`
+	MaxSwitchesGemini    int    `json:"max_switches_gemini"`
+	NetworkErrorFailover bool   `json:"network_error_failover"`
+}
+
 // BetaPolicyRule Beta 策略规则 DTO
 type BetaPolicyRule struct {
 	BetaToken            string   `json:"beta_token"`

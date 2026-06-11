@@ -174,17 +174,15 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 	}
 
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
-	if groupPlatform == service.PlatformGemini {
-		fs = NewFailoverState(h.maxAccountSwitchesGemini, false)
-	}
+	fs := NewFailoverState(h.maxAccountSwitchesFor(c, groupPlatform), false)
 
 	for {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, selectionSessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.chatCompletionsErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
+				naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, err.Error())
+				h.chatCompletionsErrorResponse(c, naStatus, naType, naMsg)
 				return
 			}
 			action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -195,7 +193,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, groupPlatform, streamStarted)
 				} else {
 					h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
 				}
@@ -277,7 +275,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 			var failoverErr *service.UpstreamFailoverError
 			if errors.As(err, &failoverErr) {
 				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleCCFailoverExhausted(c, failoverErr, true)
+					h.handleCCFailoverExhausted(c, failoverErr, account.Platform, true)
 					return
 				}
 				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, failoverErr)
@@ -285,7 +283,7 @@ func (h *GatewayHandler) ChatCompletions(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
-					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleCCFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
 					return
 				case FailoverCanceled:
 					return
@@ -356,7 +354,7 @@ func (h *GatewayHandler) chatCompletionsErrorResponseWithMetadata(c *gin.Context
 }
 
 // handleCCFailoverExhausted writes a failover-exhausted error in CC format.
-func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
 	if streamStarted {
 		return
 	}
@@ -367,6 +365,14 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
 		h.chatCompletionsErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
+		return
+	}
+	// 错误透传规则（与 handleFailoverExhausted 同一单点实现）
+	if respCode, msg, matched := matchFailoverPassthroughRule(c, h.errorPassthroughService, platform, lastErr); matched {
+		if msg == "" {
+			msg = "All available accounts exhausted"
+		}
+		h.chatCompletionsErrorResponse(c, respCode, "upstream_error", msg)
 		return
 	}
 	h.chatCompletionsErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")

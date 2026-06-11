@@ -328,7 +328,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				// 查找会话
 				foundUUID, foundAccountID, foundMatchedChain, found := h.gatewayService.FindGeminiSession(
 					c.Request.Context(),
-					derefGroupID(apiKey.GroupID),
+					service.DerefGroupID(apiKey.GroupID),
 					geminiPrefixHash,
 					geminiDigestChain,
 				)
@@ -364,7 +364,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 	hasBoundSession := sessionKey != "" && sessionBoundAccountID > 0
 	cleanedForUnknownBinding := false
 
-	fs := NewFailoverState(h.maxAccountSwitchesGemini, hasBoundSession)
+	fs := NewFailoverState(h.maxAccountSwitchesFor(c, service.PlatformGemini), hasBoundSession)
 
 	// 单账号分组提前设置 SingleAccountRetry 标记，让 Service 层首次 503 就不设模型限流标记。
 	// 避免单账号分组收到 503 (MODEL_CAPACITY_EXHAUSTED) 时设 29s 限流，导致后续请求连续快速失败。
@@ -492,7 +492,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 			requestCtx = service.WithAccountSwitchCount(requestCtx, fs.SwitchCount, h.metadataBridgeEnabled())
 		}
 		if account.Platform == service.PlatformAntigravity && account.Type != service.AccountTypeAPIKey {
-			result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, modelName, action, stream, body, hasBoundSession)
+			result, err = h.antigravityGatewayService.ForwardGemini(requestCtx, c, account, modelName, action, stream, body, hasBoundSession, apiKey.GroupID, sessionKey)
 		} else {
 			result, err = h.geminiCompatService.ForwardNative(requestCtx, c, account, modelName, action, stream, body)
 		}
@@ -526,7 +526,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 		if useDigestFallback && geminiDigestChain != "" && geminiPrefixHash != "" {
 			if err := h.gatewayService.SaveGeminiSession(
 				c.Request.Context(),
-				derefGroupID(apiKey.GroupID),
+				service.DerefGroupID(apiKey.GroupID),
 				geminiPrefixHash,
 				geminiDigestChain,
 				geminiSessionUUID,
@@ -560,7 +560,7 @@ func (h *GatewayHandler) GeminiV1BetaModels(c *gin.Context) {
 				ForceCacheBilling:     fs.ForceCacheBilling,
 				APIKeyService:         h.apiKeyService,
 				ChannelUsageFields:    channelMapping.ToUsageFields(reqModel, result.UpstreamModel),
-				ServiceQuotaRequest:  service.ServiceQuotaCheckRequest{Model: reqModel, AccountID: account.ID, ChannelID: channelMapping.ChannelID},
+				ServiceQuotaRequest:   service.ServiceQuotaCheckRequest{Model: reqModel, AccountID: account.ID, ChannelID: channelMapping.ChannelID},
 			}); err != nil {
 				logger.L().With(
 					zap.String("component", "handler.gemini_v1beta.models"),
@@ -785,12 +785,4 @@ func safeShortPrefix(value string, n int) string {
 		return value
 	}
 	return value[:n]
-}
-
-// derefGroupID 安全解引用 *int64，nil 返回 0
-func derefGroupID(groupID *int64) int64 {
-	if groupID == nil {
-		return 0
-	}
-	return *groupID
 }

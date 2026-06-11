@@ -467,6 +467,9 @@ func registerSettingsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		// 请求整流器配置
 		adminSettings.GET("/rectifier", h.Admin.Setting.GetRectifierSettings)
 		adminSettings.PUT("/rectifier", h.Admin.Setting.UpdateRectifierSettings)
+		// 网关请求重试配置
+		adminSettings.GET("/gateway-retry", h.Admin.Setting.GetGatewayRetrySettings)
+		adminSettings.PUT("/gateway-retry", h.Admin.Setting.UpdateGatewayRetrySettings)
 		// Beta 策略配置
 		adminSettings.GET("/beta-policy", h.Admin.Setting.GetBetaPolicySettings)
 		adminSettings.PUT("/beta-policy", h.Admin.Setting.UpdateBetaPolicySettings)

@@ -3653,7 +3653,7 @@ export default {
       poolModeRetryCountHint: '仅在池模式下生效。0 表示不原地重试；默认 {default}，最大 {max}。',
       customErrorCodes: '自定义错误码',
       customErrorCodesHint: '仅对选中的错误码停止调度',
-      customErrorCodesWarning: '仅选中的错误码会停止调度，其他错误将返回 500。',
+      customErrorCodesWarning: '仅选中的错误码会停止调度，其他错误将透传返回。',
       customErrorCodes429Warning:
         '429 已有内置的限流处理机制。添加到自定义错误码后，将直接停止调度而非临时限流。确定要添加吗？',
       customErrorCodes529Warning:
@@ -6466,6 +6466,23 @@ export default {
         addPattern: '添加关键词',
         saved: '整流器设置保存成功',
         saveFailed: '保存整流器设置失败'
+      },
+      gatewayRetry: {
+        title: '请求重试',
+        description: '上游报错时自动切换账号重试。可配置触发换号的错误码与最大换号次数，运行时生效（约 60 秒内）',
+        failoverCodes: '换号错误码',
+        failoverCodesHint:
+          '逗号分隔，支持单值与区间混合（100-599）。命中这些状态码的上游错误会切换到其他账号重试；未命中的错误直接返回客户端。',
+        failoverCodesPlaceholder: '401-403,429,500-599',
+        failoverCodesInvalid: '错误码格式无效：仅支持 100-599 内的单值或区间（如 429 或 500-503），逗号分隔',
+        maxSwitches: '最大换号次数',
+        maxSwitchesHint: 'Anthropic / OpenAI / Antigravity 平台单次请求最多切换的账号数',
+        maxSwitchesGemini: 'Gemini 最大换号次数',
+        maxSwitchesGeminiHint: 'Gemini 平台单次请求最多切换的账号数',
+        networkErrorFailover: '网络错误换号',
+        networkErrorFailoverHint: '连接失败 / 超时等网络层错误时也切换账号重试（关闭则直接返回 502）',
+        saved: '请求重试设置保存成功',
+        saveFailed: '保存请求重试设置失败'
       },
       betaPolicy: {
         title: 'Beta 策略',

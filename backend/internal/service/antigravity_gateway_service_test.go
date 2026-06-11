@@ -249,7 +249,7 @@ func TestAntigravityGatewayService_Forward_PromptTooLong(t *testing.T) {
 		},
 	}
 
-	result, err := svc.Forward(context.Background(), c, account, body, false)
+	result, err := svc.Forward(context.Background(), c, account, body, false, nil, "")
 	require.Nil(t, result)
 
 	var promptErr *PromptTooLongError
@@ -314,7 +314,7 @@ func TestAntigravityGatewayService_Forward_ModelRateLimitTriggersFailover(t *tes
 		},
 	}
 
-	result, err := svc.Forward(context.Background(), c, account, body, false)
+	result, err := svc.Forward(context.Background(), c, account, body, false, nil, "")
 	require.Nil(t, result, "Forward should not return result when model rate limited")
 	require.NotNil(t, err, "Forward should return error")
 
@@ -370,7 +370,7 @@ func TestAntigravityGatewayService_ForwardGemini_ModelRateLimitTriggersFailover(
 		},
 	}
 
-	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, false)
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, false, nil, "")
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 
@@ -425,7 +425,7 @@ func TestAntigravityGatewayService_Forward_StickySessionForceCacheBilling(t *tes
 	}
 
 	// 传入 isStickySession = true
-	result, err := svc.Forward(context.Background(), c, account, body, true)
+	result, err := svc.Forward(context.Background(), c, account, body, true, nil, "")
 	require.Nil(t, result, "Forward should not return result when model rate limited")
 	require.NotNil(t, err, "Forward should return error")
 
@@ -480,7 +480,7 @@ func TestAntigravityGatewayService_ForwardGemini_StickySessionForceCacheBilling(
 	}
 
 	// 传入 isStickySession = true
-	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, true)
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", false, body, true, nil, "")
 	require.Nil(t, result, "ForwardGemini should not return result when model rate limited")
 	require.NotNil(t, err, "ForwardGemini should return error")
 
@@ -540,7 +540,7 @@ func TestAntigravityGatewayService_Forward_BillsWithMappedModel(t *testing.T) {
 		},
 	}
 
-	result, err := svc.Forward(context.Background(), c, account, body, false)
+	result, err := svc.Forward(context.Background(), c, account, body, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "claude-sonnet-4-5", result.Model)
@@ -593,7 +593,7 @@ func TestAntigravityGatewayService_ForwardGemini_BillsWithMappedModel(t *testing
 		},
 	}
 
-	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", true, body, false)
+	result, err := svc.ForwardGemini(context.Background(), c, account, "gemini-2.5-flash", "generateContent", true, body, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, "gemini-2.5-flash", result.Model)
@@ -664,7 +664,7 @@ func TestAntigravityGatewayService_ForwardGemini_RetriesCorruptedThoughtSignatur
 		},
 	}
 
-	result, err := svc.ForwardGemini(context.Background(), c, account, originalModel, "streamGenerateContent", true, body, false)
+	result, err := svc.ForwardGemini(context.Background(), c, account, originalModel, "streamGenerateContent", true, body, false, nil, "")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, originalModel, result.Model)
@@ -754,7 +754,7 @@ func TestAntigravityGatewayService_ForwardGemini_SignatureRetryPropagatesFailove
 		httpUpstream:   upstream,
 	}
 
-	result, err := svc.ForwardGemini(context.Background(), c, account, originalModel, "streamGenerateContent", true, body, true)
+	result, err := svc.ForwardGemini(context.Background(), c, account, originalModel, "streamGenerateContent", true, body, true, nil, "")
 	require.Nil(t, result)
 
 	var failoverErr *UpstreamFailoverError

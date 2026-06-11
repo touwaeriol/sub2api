@@ -3505,7 +3505,7 @@ export default {
       customErrorCodes: 'Custom Error Codes',
       customErrorCodesHint: 'Only stop scheduling for selected error codes',
       customErrorCodesWarning:
-        'Only selected error codes will stop scheduling. Other errors will return 500.',
+        'Only selected error codes will stop scheduling. Other errors are passed through as-is.',
       customErrorCodes429Warning:
         '429 already has built-in rate limit handling. Adding it to custom error codes will disable the account instead of temporary rate limiting. Are you sure?',
       customErrorCodes529Warning:
@@ -6302,6 +6302,23 @@ export default {
         addPattern: 'Add Pattern',
         saved: 'Rectifier settings saved',
         saveFailed: 'Failed to save rectifier settings'
+      },
+      gatewayRetry: {
+        title: 'Request Retry',
+        description: 'Automatically switch accounts and retry on upstream errors. Configure failover status codes and max switches; takes effect at runtime (within ~60s)',
+        failoverCodes: 'Failover Status Codes',
+        failoverCodesHint:
+          'Comma-separated; single values and ranges (100-599) can be mixed. Upstream errors matching these codes trigger account switching; non-matching errors are returned to the client directly.',
+        failoverCodesPlaceholder: '401-403,429,500-599',
+        failoverCodesInvalid: 'Invalid format: only single values or ranges within 100-599 (e.g., 429 or 500-503), comma-separated',
+        maxSwitches: 'Max Account Switches',
+        maxSwitchesHint: 'Maximum accounts to switch per request for Anthropic / OpenAI / Antigravity platforms',
+        maxSwitchesGemini: 'Max Switches (Gemini)',
+        maxSwitchesGeminiHint: 'Maximum accounts to switch per request for the Gemini platform',
+        networkErrorFailover: 'Failover on Network Errors',
+        networkErrorFailoverHint: 'Also switch accounts on network-level errors (connection failure / timeout); when disabled, a 502 is returned directly',
+        saved: 'Request retry settings saved',
+        saveFailed: 'Failed to save request retry settings'
       },
       betaPolicy: {
         title: 'Beta Policy',

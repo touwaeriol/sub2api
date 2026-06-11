@@ -172,10 +172,12 @@ type SettingService struct {
 	version                   string // Application version
 	webSearchManagerBuilder   WebSearchManagerBuilder
 	rectifierCache            RectifierSettingsCache // 可选：跨实例 rectifier 设置缓存，nil 时退化为直查 DB
-	antigravityUAVersionCache atomic.Value // *cachedAntigravityUserAgentVersion
+	antigravityUAVersionCache atomic.Value           // *cachedAntigravityUserAgentVersion
 	antigravityUAVersionSF    singleflight.Group
 	openAICodexUACache        atomic.Value // *cachedOpenAICodexUserAgent
 	openAICodexUASF           singleflight.Group
+	gatewayRetryPolicyCache   atomic.Value // *cachedGatewayRetryPolicy
+	gatewayRetryPolicySF      singleflight.Group
 }
 
 // DefaultPlatformQuotaSetting 单 platform 三档限额（nil = 沿用上层；0 = 显式禁用；>0 = 上限）

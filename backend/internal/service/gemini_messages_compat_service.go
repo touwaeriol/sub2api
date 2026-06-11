@@ -134,7 +134,7 @@ func (s *GeminiMessagesCompatService) SelectAccountForModelWithExclusions(ctx co
 	// 5. 设置粘性会话绑定
 	// Set sticky session binding
 	if sessionHash != "" {
-		_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), cacheKey, selected.ID, geminiStickySessionTTL)
+		_ = s.cache.SetSessionAccountID(ctx, DerefGroupID(groupID), cacheKey, selected.ID, geminiStickySessionTTL)
 	}
 
 	return s.hydrateSelectedAccount(ctx, selected)
@@ -188,7 +188,7 @@ func (s *GeminiMessagesCompatService) tryStickySessionHit(
 		return nil
 	}
 
-	accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
+	accountID, err := s.cache.GetSessionAccountID(ctx, DerefGroupID(groupID), cacheKey)
 	if err != nil || accountID <= 0 {
 		return nil
 	}
@@ -205,7 +205,7 @@ func (s *GeminiMessagesCompatService) tryStickySessionHit(
 	// 检查账号是否需要清理粘性会话
 	// Check if sticky session should be cleared
 	if shouldClearStickySession(account, requestedModel) {
-		_ = s.cache.DeleteSessionAccountID(ctx, derefGroupID(groupID), cacheKey)
+		_ = s.cache.DeleteSessionAccountID(ctx, DerefGroupID(groupID), cacheKey)
 		return nil
 	}
 
@@ -217,7 +217,7 @@ func (s *GeminiMessagesCompatService) tryStickySessionHit(
 
 	// 刷新会话 TTL 并返回账号
 	// Refresh session TTL and return account
-	_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), cacheKey, geminiStickySessionTTL)
+	_ = s.cache.RefreshSessionTTL(ctx, DerefGroupID(groupID), cacheKey, geminiStickySessionTTL)
 	return account
 }
 
@@ -783,6 +783,10 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				continue
 			}
 			setOpsUpstreamError(c, 0, safeErr, "")
+			// 同账号重试耗尽：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+			if s.shouldFailoverOnNetworkError(ctx) {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+			}
 			return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries: "+safeErr)
 		}
 
@@ -924,6 +928,16 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 		if s.rateLimitService != nil {
 			switch s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody) {
 			case ErrorPolicySkipped:
+				// Skipped（自定义错误码未命中/池模式）只代表"不标记账号状态"；
+				// 换号判定与标记正交，仍按全局重试策略切换账号，避免错误直接打到客户端。
+				if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
+					return nil, &UpstreamFailoverError{
+						StatusCode:             resp.StatusCode,
+						ResponseBody:           respBody,
+						RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+						MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+					}
+				}
 				upstreamReqID := resp.Header.Get(requestIDHeader)
 				if upstreamReqID == "" {
 					upstreamReqID = resp.Header.Get("x-goog-request-id")
@@ -992,7 +1006,7 @@ func (s *GeminiMessagesCompatService) Forward(ctx context.Context, c *gin.Contex
 				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: respBody, RetryableOnSameAccount: true}
 			}
 		}
-		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
 			upstreamReqID := resp.Header.Get(requestIDHeader)
 			if upstreamReqID == "" {
 				upstreamReqID = resp.Header.Get("x-goog-request-id")
@@ -1317,6 +1331,10 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				}, nil
 			}
 			setOpsUpstreamError(c, 0, safeErr, "")
+			// 同账号重试耗尽：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+			if s.shouldFailoverOnNetworkError(ctx) {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway}
+			}
 			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries: "+safeErr)
 		}
 
@@ -1432,6 +1450,16 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 		if s.rateLimitService != nil {
 			switch s.rateLimitService.CheckErrorPolicy(ctx, account, resp.StatusCode, respBody) {
 			case ErrorPolicySkipped:
+				// Skipped（自定义错误码未命中/池模式）只代表"不标记账号状态"；
+				// 换号判定与标记正交，仍按全局重试策略切换账号，避免错误直接打到客户端。
+				if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
+					return nil, &UpstreamFailoverError{
+						StatusCode:             resp.StatusCode,
+						ResponseBody:           respBody,
+						RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+						MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+					}
+				}
 				respBody = unwrapIfNeeded(isOAuth, respBody)
 				contentType := resp.Header.Get("Content-Type")
 				if contentType == "" {
@@ -1497,7 +1525,7 @@ func (s *GeminiMessagesCompatService) ForwardNative(ctx context.Context, c *gin.
 				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode, ResponseBody: evBody, RetryableOnSameAccount: true}
 			}
 		}
-		if s.shouldFailoverGeminiUpstreamError(resp.StatusCode) {
+		if s.shouldFailoverGeminiUpstreamError(ctx, resp.StatusCode) {
 			evBody := unwrapIfNeeded(isOAuth, respBody)
 			upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(evBody))
 			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
@@ -1652,13 +1680,23 @@ func (s *GeminiMessagesCompatService) shouldRetryGeminiUpstreamError(account *Ac
 	}
 }
 
-func (s *GeminiMessagesCompatService) shouldFailoverGeminiUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 403, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
+// shouldFailoverGeminiUpstreamError 判定规则由全局"网关请求重试"设置驱动。
+// settingService 经 rateLimitService 间接获取（本服务未直接持有）。
+func (s *GeminiMessagesCompatService) shouldFailoverGeminiUpstreamError(ctx context.Context, statusCode int) bool {
+	return s.gatewayRetryPolicy(ctx).ShouldFailover(statusCode)
+}
+
+// shouldFailoverOnNetworkError 网络层错误（连接失败/超时）重试耗尽后是否换号。
+func (s *GeminiMessagesCompatService) shouldFailoverOnNetworkError(ctx context.Context) bool {
+	return s.gatewayRetryPolicy(ctx).ShouldFailoverOnNetworkError()
+}
+
+func (s *GeminiMessagesCompatService) gatewayRetryPolicy(ctx context.Context) *GatewayRetryPolicy {
+	var settingSvc *SettingService
+	if s.rateLimitService != nil {
+		settingSvc = s.rateLimitService.settingService
 	}
+	return resolveGatewayRetryPolicy(ctx, settingSvc)
 }
 
 func sleepGeminiBackoff(attempt int) {
@@ -2804,6 +2842,11 @@ func (s *GeminiMessagesCompatService) handleGeminiUpstreamError(ctx context.Cont
 	}
 	if s.rateLimitService != nil && (statusCode == 401 || statusCode == 403 || statusCode == 529) {
 		s.rateLimitService.HandleUpstreamError(ctx, account, statusCode, headers, body)
+		return
+	}
+	// 持续 5xx（重试耗尽后到达此处）：短时停调，避免下个请求继续选中故障账号。
+	if statusCode >= 500 && s.accountRepo != nil {
+		_ = s.accountRepo.SetTempUnschedulable(ctx, account.ID, time.Now().Add(upstream5xxCooldown), upstream5xxCooldownReason)
 		return
 	}
 	if statusCode != 429 {

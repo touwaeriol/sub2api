@@ -111,13 +111,15 @@ func TestRetryLoop_ErrorPolicy_CustomErrorCodes(t *testing.T) {
 			expectStatusCode:  429,
 		},
 		{
+			// Skipped 只代表不标记账号状态，必须保留原始状态码——
+			// 改写成 500 会让 429 错误透传规则永远匹配不上（用户配 429 规则却收到 500）
 			name:              "429_not_in_custom_codes_skipped",
 			upstreamStatus:    429,
 			upstreamBody:      `{"error":"rate limited"}`,
 			customCodes:       []any{float64(500)},
 			expectHandleError: 0,
 			expectUpstream:    1,
-			expectStatusCode:  500,
+			expectStatusCode:  429,
 		},
 		{
 			name:              "500_in_custom_codes_matched",
@@ -397,17 +399,18 @@ func (r *epTrackingRepo) SetTempUnschedulable(_ context.Context, _ int64, _ time
 }
 
 // ---------------------------------------------------------------------------
-// TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit
+// TestCustomErrorCode599_SkippedErrors_PreserveStatus_NoRateLimit
 //
 // 核心场景：自定义错误码设为 [599]（一个不会真正出现的错误码），
 // 当上游返回 429/500/503/401 时：
-//   - 返回给客户端的状态码必须是 500（而不是透传原始状态码）
+//   - 必须保留原始上游状态码（Skipped 只跳过账号标记，不改写状态码；
+//     改写成 500 会让错误透传规则/failover 判定基于污染后的状态码）
 //   - 不调用 SetRateLimited（不进入限流状态）
 //   - 不调用 SetError（不停止调度）
 //   - 不调用 handleError
 // ---------------------------------------------------------------------------
 
-func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
+func TestCustomErrorCode599_SkippedErrors_PreserveStatus_NoRateLimit(t *testing.T) {
 	errorCodes := []int{429, 500, 503, 401, 403}
 
 	for _, upstreamStatus := range errorCodes {
@@ -449,9 +452,10 @@ func TestCustomErrorCode599_SkippedErrors_Return500_NoRateLimit(t *testing.T) {
 			require.NotNil(t, result.resp, "response should not be nil")
 			defer func() { _ = result.resp.Body.Close() }()
 
-			// 状态码必须是 500（不透传原始状态码）
-			require.Equal(t, http.StatusInternalServerError, result.resp.StatusCode,
-				"skipped error should return 500, not %d", upstreamStatus)
+			// Skipped 只跳过账号标记，必须保留原始状态码——
+			// 改写成 500 会污染 failover 判定与错误透传规则匹配（429 规则匹配不上 500）
+			require.Equal(t, upstreamStatus, result.resp.StatusCode,
+				"skipped error must preserve original upstream status %d", upstreamStatus)
 
 			// 不调用 handleError
 			require.Equal(t, 0, handleErrorCount,

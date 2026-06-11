@@ -40,6 +40,7 @@ const (
 	errReasonSettingRectifierInvalid        = "RECTIFIER_SETTINGS_INVALID"
 	errReasonSettingBetaPolicyInvalid       = "BETA_POLICY_SETTINGS_INVALID"
 	errReasonSettingStreamTimeoutInvalid    = "STREAM_TIMEOUT_SETTINGS_INVALID"
+	errReasonSettingGatewayRetryInvalid     = "GATEWAY_RETRY_SETTINGS_INVALID"
 )
 
 // semverPattern 预编译 semver 格式校验正则
@@ -77,12 +78,12 @@ func firstNonEmpty(values ...string) string {
 
 // SettingHandler 系统设置处理器
 type SettingHandler struct {
-	settingService           *service.SettingService
-	emailService             *service.EmailService
-	turnstileService         *service.TurnstileService
-	opsService               *service.OpsService
-	paymentConfigService     *service.PaymentConfigService
-	paymentService           *service.PaymentService
+	settingService       *service.SettingService
+	emailService         *service.EmailService
+	turnstileService     *service.TurnstileService
+	opsService           *service.OpsService
+	paymentConfigService *service.PaymentConfigService
+	paymentService       *service.PaymentService
 	// serviceQuotaSvc 用于在 service_quota_enabled 总开关变更时失效 Redis 缓存。
 	// 没有它，开关切换后 ServiceQuota 中的 5min 启用快照缓存仍会返回旧值。
 	serviceQuotaSvc          service.ServiceQuotaService
@@ -315,14 +316,14 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		PaymentCancelRateLimitMode:             paymentCfg.CancelRateLimitMode,
 		PaymentAlipayForceQRCode:               paymentCfg.AlipayForceQRCode,
 
-		ChannelMonitorEnabled:                  settings.ChannelMonitorEnabled,
-		ChannelMonitorDefaultIntervalSeconds:   settings.ChannelMonitorDefaultIntervalSeconds,
+		ChannelMonitorEnabled:                settings.ChannelMonitorEnabled,
+		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled:               settings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
 
-		ServiceQuotaEnabled:                    settings.ServiceQuotaEnabled,
+		ServiceQuotaEnabled: settings.ServiceQuotaEnabled,
 
-		AffiliateEnabled:                       settings.AffiliateEnabled,
+		AffiliateEnabled: settings.AffiliateEnabled,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)
@@ -1616,17 +1617,17 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 			}
 			return previousSettings.ServiceQuotaEnabled
 		}(),
-		EnableModelFallback:                    req.EnableModelFallback,
-		FallbackModelAnthropic:                 req.FallbackModelAnthropic,
-		FallbackModelOpenAI:                    req.FallbackModelOpenAI,
-		FallbackModelGemini:                    req.FallbackModelGemini,
-		FallbackModelAntigravity:               req.FallbackModelAntigravity,
-		EnableIdentityPatch:                    req.EnableIdentityPatch,
-		IdentityPatchPrompt:                    req.IdentityPatchPrompt,
-		MinClaudeCodeVersion:                   req.MinClaudeCodeVersion,
-		MaxClaudeCodeVersion:                   req.MaxClaudeCodeVersion,
-		AllowUngroupedKeyScheduling:            req.AllowUngroupedKeyScheduling,
-		BackendModeEnabled:                     req.BackendModeEnabled,
+		EnableModelFallback:         req.EnableModelFallback,
+		FallbackModelAnthropic:      req.FallbackModelAnthropic,
+		FallbackModelOpenAI:         req.FallbackModelOpenAI,
+		FallbackModelGemini:         req.FallbackModelGemini,
+		FallbackModelAntigravity:    req.FallbackModelAntigravity,
+		EnableIdentityPatch:         req.EnableIdentityPatch,
+		IdentityPatchPrompt:         req.IdentityPatchPrompt,
+		MinClaudeCodeVersion:        req.MinClaudeCodeVersion,
+		MaxClaudeCodeVersion:        req.MaxClaudeCodeVersion,
+		AllowUngroupedKeyScheduling: req.AllowUngroupedKeyScheduling,
+		BackendModeEnabled:          req.BackendModeEnabled,
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -2110,16 +2111,16 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		PaymentCancelRateLimitMode:             updatedPaymentCfg.CancelRateLimitMode,
 		PaymentAlipayForceQRCode:               updatedPaymentCfg.AlipayForceQRCode,
 
-		ChannelMonitorEnabled:                  updatedSettings.ChannelMonitorEnabled,
-		ChannelMonitorDefaultIntervalSeconds:   updatedSettings.ChannelMonitorDefaultIntervalSeconds,
+		ChannelMonitorEnabled:                updatedSettings.ChannelMonitorEnabled,
+		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 
-		AvailableChannelsEnabled:               updatedSettings.AvailableChannelsEnabled,
+		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
 
-		ServiceQuotaEnabled:                    updatedSettings.ServiceQuotaEnabled,
+		ServiceQuotaEnabled: updatedSettings.ServiceQuotaEnabled,
 
-		AffiliateEnabled:                       updatedSettings.AffiliateEnabled,
+		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
-		RiskControlEnabled:                     updatedSettings.RiskControlEnabled,
+		RiskControlEnabled: updatedSettings.RiskControlEnabled,
 	}
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)
@@ -3310,6 +3311,62 @@ func cleanRectifierPatterns(input []string) ([]string, error) {
 		cleaned = append(cleaned, p)
 	}
 	return cleaned, nil
+}
+
+// GetGatewayRetrySettings 获取网关请求重试配置
+// GET /api/v1/admin/settings/gateway-retry
+func (h *SettingHandler) GetGatewayRetrySettings(c *gin.Context) {
+	settings, err := h.settingService.GetGatewayRetrySettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gatewayRetrySettingsToDTO(settings))
+}
+
+// UpdateGatewayRetrySettingsRequest 更新网关请求重试配置请求
+type UpdateGatewayRetrySettingsRequest struct {
+	FailoverCodes        string `json:"failover_codes"`
+	MaxSwitches          int    `json:"max_switches"`
+	MaxSwitchesGemini    int    `json:"max_switches_gemini"`
+	NetworkErrorFailover bool   `json:"network_error_failover"`
+}
+
+// UpdateGatewayRetrySettings 更新网关请求重试配置
+// PUT /api/v1/admin/settings/gateway-retry
+func (h *SettingHandler) UpdateGatewayRetrySettings(c *gin.Context) {
+	var req UpdateGatewayRetrySettingsRequest
+	if err := BindJSONOrError(c, &req, errReasonInvalidRequestBody); err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+
+	settings := &service.GatewayRetrySettings{
+		FailoverCodes:        strings.TrimSpace(req.FailoverCodes),
+		MaxSwitches:          req.MaxSwitches,
+		MaxSwitchesGemini:    req.MaxSwitchesGemini,
+		NetworkErrorFailover: req.NetworkErrorFailover,
+	}
+	if err := h.settingService.SetGatewayRetrySettings(c.Request.Context(), settings); err != nil {
+		response.ErrorFrom(c, infraerrors.BadRequest(errReasonSettingGatewayRetryInvalid, "gateway retry settings invalid").WithCause(err))
+		return
+	}
+
+	updated, err := h.settingService.GetGatewayRetrySettings(c.Request.Context())
+	if err != nil {
+		response.ErrorFrom(c, err)
+		return
+	}
+	response.Success(c, gatewayRetrySettingsToDTO(updated))
+}
+
+func gatewayRetrySettingsToDTO(settings *service.GatewayRetrySettings) dto.GatewayRetrySettings {
+	return dto.GatewayRetrySettings{
+		FailoverCodes:        settings.FailoverCodes,
+		MaxSwitches:          settings.MaxSwitches,
+		MaxSwitchesGemini:    settings.MaxSwitchesGemini,
+		NetworkErrorFailover: settings.NetworkErrorFailover,
+	}
 }
 
 // GetBetaPolicySettings 获取 Beta 策略配置

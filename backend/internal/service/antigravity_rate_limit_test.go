@@ -87,6 +87,12 @@ type stubAntigravityAccountRepo struct {
 	rateCalls           []rateLimitCall
 	modelRateLimitCalls []modelRateLimitCall
 	extraUpdateCalls    []extraUpdateCall
+	tempUnschedCalls    []tempUnschedCall
+}
+
+func (s *stubAntigravityAccountRepo) SetTempUnschedulable(ctx context.Context, id int64, until time.Time, reason string) error {
+	s.tempUnschedCalls = append(s.tempUnschedCalls, tempUnschedCall{accountID: id, until: until, reason: reason})
+	return nil
 }
 
 func (s *stubAntigravityAccountRepo) SetRateLimited(ctx context.Context, id int64, resetAt time.Time) error {
@@ -273,10 +279,12 @@ func TestHandleUpstreamError_503_NonModelRateLimit(t *testing.T) {
 
 	result := svc.handleUpstreamError(context.Background(), "[test]", account, http.StatusServiceUnavailable, http.Header{}, body, "gemini-3-pro-high", 0, "", false)
 
-	// 503 非模型限流不应该做任何处理
+	// 503 非模型限流：不设限流，但应短时停调（upstream5xxCooldown），避免持续 503 的账号反复被调度
 	require.Nil(t, result)
 	require.Empty(t, repo.modelRateLimitCalls, "503 non-model rate limit should not trigger model rate limit")
 	require.Empty(t, repo.rateCalls, "503 non-model rate limit should not trigger account rate limit")
+	require.Len(t, repo.tempUnschedCalls, 1, "503 non-model rate limit should temp-unschedule the account briefly")
+	require.Equal(t, account.ID, repo.tempUnschedCalls[0].accountID)
 }
 
 // TestHandleUpstreamError_503_EmptyBody 测试 503 空响应体（不处理）

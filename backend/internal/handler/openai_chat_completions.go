@@ -121,7 +121,7 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, body)
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 
-	maxAccountSwitches := h.maxAccountSwitches
+	maxAccountSwitches := h.maxAccountSwitchesNow(c)
 	switchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -159,7 +159,8 @@ func (h *OpenAIGatewayHandler) ChatCompletions(c *gin.Context) {
 		}
 		if selection == nil || selection.Account == nil {
 			markOpsRoutingCapacityLimited(c)
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID)
+			h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 			return
 		}
 		account := selection.Account

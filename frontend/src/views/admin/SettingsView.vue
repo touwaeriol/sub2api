@@ -878,6 +878,138 @@
               </template>
             </div>
           </div>
+          <!-- Gateway Retry Settings -->
+          <div class="card">
+            <div
+              class="border-b border-gray-100 px-6 py-4 dark:border-dark-700"
+            >
+              <h2 class="text-lg font-semibold text-gray-900 dark:text-white">
+                {{ t("admin.settings.gatewayRetry.title") }}
+              </h2>
+              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ t("admin.settings.gatewayRetry.description") }}
+              </p>
+            </div>
+            <div class="space-y-5 p-6">
+              <!-- Loading State -->
+              <div
+                v-if="gatewayRetryLoading"
+                class="flex items-center gap-2 text-gray-500"
+              >
+                <div
+                  class="h-4 w-4 animate-spin rounded-full border-b-2 border-primary-600"
+                ></div>
+                {{ t("common.loading") }}
+              </div>
+
+              <template v-else>
+                <!-- Failover Codes -->
+                <div>
+                  <label
+                    class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >{{ t("admin.settings.gatewayRetry.failoverCodes") }}</label
+                  >
+                  <p class="text-xs text-gray-500 dark:text-gray-400">
+                    {{ t("admin.settings.gatewayRetry.failoverCodesHint") }}
+                  </p>
+                  <textarea
+                    v-model="gatewayRetryForm.failover_codes"
+                    rows="2"
+                    class="input mt-2 w-full font-mono text-sm"
+                    :placeholder="
+                      t('admin.settings.gatewayRetry.failoverCodesPlaceholder')
+                    "
+                  ></textarea>
+                  <p
+                    v-if="gatewayRetryCodesError"
+                    class="mt-1 text-xs text-red-500"
+                  >
+                    {{ t("admin.settings.gatewayRetry.failoverCodesInvalid") }}
+                  </p>
+                </div>
+
+                <!-- Max Switches -->
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >{{ t("admin.settings.gatewayRetry.maxSwitches") }}</label
+                    >
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{ t("admin.settings.gatewayRetry.maxSwitchesHint") }}
+                    </p>
+                    <input
+                      v-model.number="gatewayRetryForm.max_switches"
+                      type="number"
+                      min="1"
+                      max="100"
+                      class="input mt-2 w-full"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >{{
+                        t("admin.settings.gatewayRetry.maxSwitchesGemini")
+                      }}</label
+                    >
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t("admin.settings.gatewayRetry.maxSwitchesGeminiHint")
+                      }}
+                    </p>
+                    <input
+                      v-model.number="gatewayRetryForm.max_switches_gemini"
+                      type="number"
+                      min="1"
+                      max="100"
+                      class="input mt-2 w-full"
+                    />
+                  </div>
+                </div>
+
+                <!-- Network Error Failover -->
+                <div class="flex items-center justify-between">
+                  <div>
+                    <label
+                      class="text-sm font-medium text-gray-700 dark:text-gray-300"
+                      >{{
+                        t("admin.settings.gatewayRetry.networkErrorFailover")
+                      }}</label
+                    >
+                    <p class="text-xs text-gray-500 dark:text-gray-400">
+                      {{
+                        t(
+                          "admin.settings.gatewayRetry.networkErrorFailoverHint",
+                        )
+                      }}
+                    </p>
+                  </div>
+                  <Toggle
+                    v-model="gatewayRetryForm.network_error_failover"
+                  />
+                </div>
+
+                <!-- Save Button -->
+                <div
+                  class="flex justify-end border-t border-gray-100 pt-4 dark:border-dark-700"
+                >
+                  <button
+                    type="button"
+                    @click="saveGatewayRetrySettings"
+                    :disabled="gatewayRetrySaving"
+                    class="btn btn-primary btn-sm"
+                  >
+                    {{
+                      gatewayRetrySaving
+                        ? t("common.saving")
+                        : t("common.save")
+                    }}
+                  </button>
+                </div>
+              </template>
+            </div>
+          </div>
           <!-- Beta Policy Settings -->
           <div class="card">
             <div
@@ -6995,6 +7127,24 @@ const rectifierForm = reactive({
   advisor_tool_patterns: [] as string[],
 });
 
+// Gateway Retry 状态
+const gatewayRetryLoading = ref(true);
+const gatewayRetrySaving = ref(false);
+const gatewayRetryForm = reactive({
+  failover_codes: "",
+  max_switches: 10,
+  max_switches_gemini: 3,
+  network_error_failover: true,
+});
+// 区间语法预校验：逗号分隔的 "nnn" 或 "nnn-nnn"（100-599）
+const gatewayRetryCodesPattern =
+  /^\s*\d{3}\s*(-\s*\d{3}\s*)?(,\s*\d{3}\s*(-\s*\d{3}\s*)?)*,?\s*$/;
+const gatewayRetryCodesError = computed(() => {
+  const spec = gatewayRetryForm.failover_codes.trim();
+  if (spec === "") return false;
+  return !gatewayRetryCodesPattern.test(spec);
+});
+
 // Beta Policy 状态
 const betaPolicyLoading = ref(true);
 const betaPolicySaving = ref(false);
@@ -8862,6 +9012,47 @@ async function saveRectifierSettings() {
   }
 }
 
+async function loadGatewayRetrySettings() {
+  gatewayRetryLoading.value = true;
+  try {
+    const settings = await adminAPI.settings.getGatewayRetrySettings();
+    Object.assign(gatewayRetryForm, settings);
+  } catch (_error: unknown) {
+    // Silent fail - settings will use defaults
+  } finally {
+    gatewayRetryLoading.value = false;
+  }
+}
+
+async function saveGatewayRetrySettings() {
+  if (gatewayRetryCodesError.value) {
+    appStore.showError(
+      t("admin.settings.gatewayRetry.failoverCodesInvalid"),
+    );
+    return;
+  }
+  gatewayRetrySaving.value = true;
+  try {
+    const updated = await adminAPI.settings.updateGatewayRetrySettings({
+      failover_codes: gatewayRetryForm.failover_codes.trim(),
+      max_switches: gatewayRetryForm.max_switches,
+      max_switches_gemini: gatewayRetryForm.max_switches_gemini,
+      network_error_failover: gatewayRetryForm.network_error_failover,
+    });
+    Object.assign(gatewayRetryForm, updated);
+    appStore.showSuccess(t("admin.settings.gatewayRetry.saved"));
+  } catch (error: unknown) {
+    appStore.showError(
+      extractApiErrorMessage(
+        error,
+        t("admin.settings.gatewayRetry.saveFailed"),
+      ),
+    );
+  } finally {
+    gatewayRetrySaving.value = false;
+  }
+}
+
 const betaPolicyActionOptions = computed(() => [
   { value: "pass", label: t("admin.settings.betaPolicy.actionPass") },
   { value: "filter", label: t("admin.settings.betaPolicy.actionFilter") },
@@ -9398,6 +9589,7 @@ onMounted(() => {
   loadRateLimit429CooldownSettings();
   loadStreamTimeoutSettings();
   loadRectifierSettings();
+  loadGatewayRetrySettings();
   loadBetaPolicySettings();
   loadProviders();
 });

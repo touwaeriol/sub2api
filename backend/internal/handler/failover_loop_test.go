@@ -327,6 +327,28 @@ func TestHandleFailoverError_SameAccountRetry(t *testing.T) {
 		require.Equal(t, err, mock.calls[0].failoverErr)
 	})
 
+	t.Run("池模式账号级重试次数优先于默认值", func(t *testing.T) {
+		// B-2：UpstreamFailoverError.MaxSameAccountRetries 携带 pool_mode_retry_count，
+		// 应覆盖 failover_loop 的默认 maxSameAccountRetries。
+		mock := &mockTempUnscheduler{}
+		fs := NewFailoverState(10, false)
+		err := newTestFailoverErr(429, true, false)
+		err.MaxSameAccountRetries = 5
+
+		for i := 1; i <= 5; i++ {
+			action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", err)
+			require.Equal(t, FailoverContinue, action)
+			require.Equal(t, i, fs.SameAccountRetryCount[100])
+			require.NotContains(t, fs.FailedAccountIDs, int64(100), "第 %d 次仍应同账号重试", i)
+		}
+
+		// 第 6 次：超过账号级配置 → TempUnschedule + 切换
+		action := fs.HandleFailoverError(context.Background(), mock, 100, "openai", err)
+		require.Equal(t, FailoverContinue, action)
+		require.Contains(t, fs.FailedAccountIDs, int64(100))
+		require.Len(t, mock.calls, 1)
+	})
+
 	t.Run("不同账号独立跟踪重试次数", func(t *testing.T) {
 		mock := &mockTempUnscheduler{}
 		fs := NewFailoverState(5, false)

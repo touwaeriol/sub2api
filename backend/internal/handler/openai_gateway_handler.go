@@ -79,6 +79,27 @@ func NewOpenAIGatewayHandler(
 	}
 }
 
+// noAvailableAccountsStatus 选号失败的统一错误语义（与 GatewayHandler 同语义的单点实现）：
+// 分组内账号全部处于限流/过载冷却时返回 429 + Retry-After 头，保留上游限流语义；否则维持 503。
+func (h *OpenAIGatewayHandler) noAvailableAccountsStatus(c *gin.Context, groupID *int64) (int, string, string) {
+	if h.gatewayService != nil {
+		if cooling, wait := h.gatewayService.GroupRateLimitRecovery(c.Request.Context(), groupID); cooling {
+			c.Header("Retry-After", strconv.Itoa(retryAfterSeconds(wait)))
+			return http.StatusTooManyRequests, "rate_limit_error", "All accounts are rate limited, please retry later"
+		}
+	}
+	return http.StatusServiceUnavailable, "api_error", "No available accounts"
+}
+
+// maxAccountSwitchesNow 运行时读取"网关请求重试"设置中的最大换号次数（进程内 60s 缓存）。
+// 设置不可用（测试场景）时回退构造期 cfg 值。
+func (h *OpenAIGatewayHandler) maxAccountSwitchesNow(c *gin.Context) int {
+	if v := h.gatewayService.MaxAccountSwitchesPolicy(c.Request.Context()); v > 0 {
+		return v
+	}
+	return h.maxAccountSwitches
+}
+
 // Responses handles OpenAI Responses API endpoint
 // POST /openai/v1/responses
 func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
@@ -260,7 +281,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(c, sessionHashBody)
 	requireCompact := isOpenAIRemoteCompactPath(c)
 
-	maxAccountSwitches := h.maxAccountSwitches
+	maxAccountSwitches := h.maxAccountSwitchesNow(c)
 	switchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -302,7 +323,8 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 		}
 		if selection == nil || selection.Account == nil {
 			markOpsRoutingCapacityLimited(c)
-			h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID)
+			h.handleStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 			return
 		}
 		if previousResponseID != "" && selection != nil && selection.Account != nil {
@@ -680,7 +702,7 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 	promptCacheKey := h.gatewayService.ExtractSessionID(c, body)
 	sessionHash, promptCacheKey = resolveOpenAIMessagesMetadataSession(sessionHash, promptCacheKey, reqModel, body)
 
-	maxAccountSwitches := h.maxAccountSwitches
+	maxAccountSwitches := h.maxAccountSwitchesNow(c)
 	switchCount := 0
 	failedAccountIDs := make(map[int64]struct{})
 	sameAccountRetryCount := make(map[int64]int)
@@ -725,7 +747,8 @@ func (h *OpenAIGatewayHandler) Messages(c *gin.Context) {
 		}
 		if selection == nil || selection.Account == nil {
 			markOpsRoutingCapacityLimited(c)
-			h.anthropicStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", streamStarted)
+			naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID)
+			h.anthropicStreamingAwareError(c, naStatus, naType, naMsg, streamStarted)
 			return
 		}
 		account := selection.Account
@@ -948,6 +971,14 @@ func (h *OpenAIGatewayHandler) anthropicStreamingAwareErrorWithMetadata(c *gin.C
 
 // handleAnthropicFailoverExhausted maps upstream failover errors to Anthropic format.
 func (h *OpenAIGatewayHandler) handleAnthropicFailoverExhausted(c *gin.Context, failoverErr *service.UpstreamFailoverError, streamStarted bool) {
+	// 错误透传规则（单点实现）；本路径为 OpenAI 平台分组的 /v1/messages 协议适配
+	if respCode, msg, matched := matchFailoverPassthroughRule(c, h.errorPassthroughService, service.PlatformOpenAI, failoverErr); matched {
+		if msg == "" {
+			_, _, msg = h.mapUpstreamError(failoverErr.StatusCode)
+		}
+		h.anthropicStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
+		return
+	}
 	status, errType, errMsg := h.mapUpstreamError(failoverErr.StatusCode)
 	h.anthropicStreamingAwareError(c, status, errType, errMsg, streamStarted)
 }
@@ -1064,7 +1095,8 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 ) (func(), bool) {
 	if selection == nil || selection.Account == nil {
 		markOpsRoutingCapacityLimited(c)
-		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
+		naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, groupID)
+		h.handleStreamingAwareError(c, naStatus, naType, naMsg, *streamStarted)
 		return nil, false
 	}
 
@@ -1075,7 +1107,8 @@ func (h *OpenAIGatewayHandler) acquireResponsesAccountSlot(
 	}
 	if selection.WaitPlan == nil {
 		markOpsRoutingCapacityLimited(c)
-		h.handleStreamingAwareError(c, http.StatusServiceUnavailable, "api_error", "No available accounts", *streamStarted)
+		naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, groupID)
+		h.handleStreamingAwareError(c, naStatus, naType, naMsg, *streamStarted)
 		return nil, false
 	}
 
@@ -1696,28 +1729,13 @@ func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, failoverE
 		return
 	}
 
-	// 先检查透传规则
-	if h.errorPassthroughService != nil && len(responseBody) > 0 {
-		if rule := h.errorPassthroughService.MatchRule("openai", statusCode, responseBody); rule != nil {
-			// 确定响应状态码
-			respCode := statusCode
-			if !rule.PassthroughCode && rule.ResponseCode != nil {
-				respCode = *rule.ResponseCode
-			}
-
-			// 确定响应消息
-			msg := service.ExtractUpstreamErrorMessage(responseBody)
-			if !rule.PassthroughBody && rule.CustomMessage != nil {
-				msg = *rule.CustomMessage
-			}
-
-			if rule.SkipMonitoring {
-				c.Set(service.OpsSkipPassthroughKey, true)
-			}
-
-			h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
-			return
+	// 错误透传规则（单点实现）；本 handler 仅服务 OpenAI 平台分组
+	if respCode, msg, matched := matchFailoverPassthroughRule(c, h.errorPassthroughService, service.PlatformOpenAI, failoverErr); matched {
+		if msg == "" {
+			_, _, msg = h.mapUpstreamError(statusCode)
 		}
+		h.handleStreamingAwareError(c, respCode, "upstream_error", msg, streamStarted)
+		return
 	}
 
 	// 记录原始上游状态码，以便 ops 错误日志捕获真实的上游错误

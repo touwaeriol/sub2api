@@ -1194,7 +1194,7 @@ func (s *OpenAIGatewayService) selectAccountWithScheduler(
 
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"model", requestedModel)
 		return nil, decision, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}

@@ -386,6 +386,13 @@ const (
 	SettingKeyRectifierSettings = "rectifier_settings"
 
 	// =========================
+	// Gateway Retry (网关请求重试)
+	// =========================
+
+	// SettingKeyGatewayRetrySettings stores JSON config for gateway retry (failover) settings.
+	SettingKeyGatewayRetrySettings = "gateway_retry_settings"
+
+	// =========================
 	// Beta Policy Settings
 	// =========================
 

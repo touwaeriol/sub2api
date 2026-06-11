@@ -17,6 +17,13 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// 持续 5xx（非容量/过载类）重试耗尽后的短时停调参数：
+// 让故障账号在冷却窗口内不再被调度，避免下个请求继续选中它。
+const (
+	upstream5xxCooldown       = 2 * time.Minute
+	upstream5xxCooldownReason = "upstream 5xx after retries exhausted"
+)
+
 // RateLimitService 处理限流和过载状态管理
 type RateLimitService struct {
 	accountRepo           AccountRepository

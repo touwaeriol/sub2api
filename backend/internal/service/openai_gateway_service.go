@@ -1369,7 +1369,7 @@ func resolveOpenAIAccountUpstreamModelForRequest(account *Account, requestedMode
 func (s *OpenAIGatewayService) selectAccountForModelWithExclusions(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool, stickyAccountID int64) (*Account, error) {
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"model", requestedModel)
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
@@ -1579,7 +1579,7 @@ func (s *OpenAIGatewayService) SelectAccountWithLoadAwareness(ctx context.Contex
 func (s *OpenAIGatewayService) selectAccountWithLoadAwareness(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, requireCompact bool) (*AccountSelectionResult, error) {
 	if s.checkChannelPricingRestriction(ctx, groupID, requestedModel) {
 		slog.Warn("channel pricing restriction blocked request",
-			"group_id", derefGroupID(groupID),
+			"group_id", DerefGroupID(groupID),
 			"model", requestedModel)
 		return nil, fmt.Errorf("%w supporting model: %s (channel pricing restriction)", ErrNoAvailableAccounts, requestedModel)
 	}
@@ -2051,20 +2051,27 @@ func (s *OpenAIGatewayService) GetAccessToken(ctx context.Context, account *Acco
 	}
 }
 
-func (s *OpenAIGatewayService) shouldFailoverUpstreamError(statusCode int) bool {
-	switch statusCode {
-	case 401, 402, 403, 429, 529:
-		return true
-	default:
-		return statusCode >= 500
-	}
+// shouldFailoverUpstreamError 判定规则由全局"网关请求重试"设置驱动（默认码集已含 402，
+// 与 OpenAI 历史硬编码行为等价）。
+func (s *OpenAIGatewayService) shouldFailoverUpstreamError(ctx context.Context, statusCode int) bool {
+	return resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailover(statusCode)
 }
 
-func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(statusCode int, upstreamMsg string, upstreamBody []byte) bool {
-	if s.shouldFailoverUpstreamError(statusCode) {
+func (s *OpenAIGatewayService) shouldFailoverOpenAIUpstreamResponse(ctx context.Context, statusCode int, upstreamMsg string, upstreamBody []byte) bool {
+	if s.shouldFailoverUpstreamError(ctx, statusCode) {
 		return true
 	}
+	// OpenAI 平台特有 hook：部分 400 属于上游瞬态处理错误，独立于全局码集判定。
 	return isOpenAITransientProcessingError(statusCode, upstreamMsg, upstreamBody)
+}
+
+// MaxAccountSwitchesPolicy 返回全局"网关请求重试"设置的最大换号次数。
+// settingService 未注入（测试场景）时返回 0，由调用方回退构造期默认值。
+func (s *OpenAIGatewayService) MaxAccountSwitchesPolicy(ctx context.Context) int {
+	if s == nil || s.settingService == nil {
+		return 0
+	}
+	return s.settingService.GetGatewayRetryPolicy(ctx).MaxSwitches(PlatformOpenAI)
 }
 
 func (s *OpenAIGatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account) {
@@ -2789,7 +2796,6 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 		resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 		SetOpsLatencyMs(c, OpsUpstreamLatencyMsKey, time.Since(upstreamStart).Milliseconds())
 		if err != nil {
-			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			safeErr := sanitizeUpstreamErrorMessage(err.Error())
 			setOpsUpstreamError(c, 0, safeErr, "")
 			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
@@ -2800,6 +2806,11 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				Kind:               "request_error",
 				Message:            safeErr,
 			})
+			// 网络层错误：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+			if resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailoverOnNetworkError() {
+				return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+			}
+			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
 			c.JSON(http.StatusBadGateway, gin.H{
 				"error": gin.H{
 					"type":    "upstream_error",
@@ -2830,7 +2841,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 				}
 				logger.LegacyPrintf("service.openai_gateway", "[OpenAI] Skip non-WSv2 invalid_encrypted_content retry because encrypted reasoning items are missing (account: %s)", account.Name)
 			}
-			if s.shouldFailoverOpenAIUpstreamResponse(resp.StatusCode, upstreamMsg, respBody) {
+			if s.shouldFailoverOpenAIUpstreamResponse(ctx, resp.StatusCode, upstreamMsg, respBody) {
 				upstreamDetail := ""
 				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
@@ -2855,6 +2866,7 @@ func (s *OpenAIGatewayService) Forward(ctx context.Context, c *gin.Context, acco
 					StatusCode:             resp.StatusCode,
 					ResponseBody:           respBody,
 					RetryableOnSameAccount: account.IsPoolMode() && (isPoolModeRetryableStatus(resp.StatusCode) || isOpenAITransientProcessingError(resp.StatusCode, upstreamMsg, respBody)),
+					MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 				}
 			}
 			return s.handleErrorResponse(ctx, resp, c, account, body)
@@ -3101,6 +3113,10 @@ func (s *OpenAIGatewayService) forwardOpenAIPassthrough(
 			Kind:               "request_error",
 			Message:            safeErr,
 		})
+		// 网络层错误：按全局重试策略换号（不能先写响应，见 Writer.Size 守卫）。
+		if resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailoverOnNetworkError() {
+			return nil, &UpstreamFailoverError{StatusCode: http.StatusBadGateway, RetryableOnSameAccount: true}
+		}
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"type":    "upstream_error",
@@ -3322,6 +3338,10 @@ func (s *OpenAIGatewayService) buildUpstreamRequestOpenAIPassthrough(
 	return req, nil
 }
 
+// shouldFailoverOpenAIPassthroughResponse 透传模式的换号判定。
+// 有意不接入全局 GatewayRetryPolicy：透传模式承诺"尽量保持上游原样"，仅对
+// 429/529 这类网关必须兜底的容量错误换号，其余错误（401/403/5xx）原样透传给客户端，
+// 账号状态仍由 handleErrorResponsePassthrough 标记（下次调度自动排除）。
 func shouldFailoverOpenAIPassthroughResponse(statusCode int) bool {
 	switch statusCode {
 	case http.StatusTooManyRequests, 529:
@@ -4122,7 +4142,8 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// Check custom error codes
+	// 自定义错误码未命中：跳过账号标记，但仍走 failover 判定（与标记正交）。
+	// 不再写 500——交给下面的 failover/默认映射统一处理。
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -4130,21 +4151,18 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
 			UpstreamRequestID:  resp.Header.Get("x-request-id"),
-			Kind:               "http_error",
+			Kind:               "http_error_skipped",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		MarkResponseCommitted(c)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{
-				"type":    "upstream_error",
-				"message": "Upstream gateway error",
-			},
-		})
-		if upstreamMsg == "" {
-			return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
+		if s.shouldFailoverOpenAIUpstreamResponse(ctx, resp.StatusCode, upstreamMsg, body) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           body,
+				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			}
 		}
-		return nil, fmt.Errorf("upstream error: %d (not in custom error codes) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// Handle upstream error (mark account status)
@@ -4168,6 +4186,7 @@ func (s *OpenAIGatewayService) handleErrorResponse(
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
 			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 		}
 	}
 
@@ -4262,8 +4281,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
-	// Check custom error codes — if the account does not handle this status,
-	// return a generic error without exposing upstream details.
+	// 自定义错误码未命中：跳过账号标记，但仍走 failover 判定（与标记正交）。
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -4271,16 +4289,18 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			AccountName:        account.Name,
 			UpstreamStatusCode: resp.StatusCode,
 			UpstreamRequestID:  resp.Header.Get("x-request-id"),
-			Kind:               "http_error",
+			Kind:               "http_error_skipped",
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		MarkResponseCommitted(c)
-		writeError(c, http.StatusInternalServerError, "api_error", "Upstream gateway error")
-		if upstreamMsg == "" {
-			return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
+		if s.shouldFailoverOpenAIUpstreamResponse(c.Request.Context(), resp.StatusCode, upstreamMsg, body) {
+			return nil, &UpstreamFailoverError{
+				StatusCode:             resp.StatusCode,
+				ResponseBody:           body,
+				RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+				MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
+			}
 		}
-		return nil, fmt.Errorf("upstream error: %d (not in custom error codes) message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// Track rate limits and decide whether to trigger secondary failover.
@@ -4306,6 +4326,7 @@ func (s *OpenAIGatewayService) handleCompatErrorResponse(
 			StatusCode:             resp.StatusCode,
 			ResponseBody:           body,
 			RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(resp.StatusCode),
+			MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 		}
 	}
 

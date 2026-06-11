@@ -421,6 +421,27 @@ func DefaultRectifierSettings() *RectifierSettings {
 	}
 }
 
+// GatewayRetrySettings 网关请求重试（报错换号）配置。
+// FailoverCodes 为区间语法的错误码描述（如 "401-403,429,500-599"），决定哪些上游
+// 状态码触发换号；MaxSwitches/MaxSwitchesGemini 为最大换号次数；NetworkErrorFailover
+// 控制网络层错误（连接失败/超时）是否换号。
+type GatewayRetrySettings struct {
+	FailoverCodes        string `json:"failover_codes"`         // 换号错误码（区间语法）
+	MaxSwitches          int    `json:"max_switches"`           // 最大换号次数（Gemini 之外的平台）
+	MaxSwitchesGemini    int    `json:"max_switches_gemini"`    // Gemini 平台最大换号次数
+	NetworkErrorFailover bool   `json:"network_error_failover"` // 网络错误是否换号
+}
+
+// DefaultGatewayRetrySettings 返回与历史硬编码行为等价的默认配置。
+func DefaultGatewayRetrySettings() *GatewayRetrySettings {
+	return &GatewayRetrySettings{
+		FailoverCodes:        defaultFailoverCodesSpec,
+		MaxSwitches:          defaultMaxAccountSwitches,
+		MaxSwitchesGemini:    defaultMaxAccountSwitchesGemini,
+		NetworkErrorFailover: true,
+	}
+}
+
 // Beta Policy 策略常量
 const (
 	BetaPolicyActionPass   = "pass"   // 透传，不做任何处理

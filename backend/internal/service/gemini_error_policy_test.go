@@ -41,7 +41,7 @@ func TestShouldFailoverGeminiUpstreamError(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := svc.shouldFailoverGeminiUpstreamError(tt.statusCode)
+			got := svc.shouldFailoverGeminiUpstreamError(context.Background(), tt.statusCode)
 			require.Equal(t, tt.expected, got)
 		})
 	}
@@ -323,7 +323,7 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 			// ErrorPolicyNone → original logic
 			svc.handleGeminiUpstreamError(ctx, account, statusCode, headers, respBody)
 			handleErrorCalled = true
-			if svc.shouldFailoverGeminiUpstreamError(statusCode) {
+			if svc.shouldFailoverGeminiUpstreamError(context.Background(), statusCode) {
 				gotFailover = true
 			}
 
@@ -332,7 +332,7 @@ func TestGeminiErrorPolicyIntegration(t *testing.T) {
 			require.Equal(t, tt.expectHandleError, handleErrorCalled, "handleGeminiUpstreamError call mismatch")
 
 			if tt.expectShouldFailover {
-				require.True(t, svc.shouldFailoverGeminiUpstreamError(statusCode),
+				require.True(t, svc.shouldFailoverGeminiUpstreamError(context.Background(), statusCode),
 					"shouldFailoverGeminiUpstreamError should return true for status %d", statusCode)
 			}
 		})
@@ -369,8 +369,8 @@ func TestGeminiErrorPolicy_NilRateLimitService(t *testing.T) {
 	}
 
 	// shouldFailoverGeminiUpstreamError still works
-	require.True(t, svc.shouldFailoverGeminiUpstreamError(429))
-	require.False(t, svc.shouldFailoverGeminiUpstreamError(400))
+	require.True(t, svc.shouldFailoverGeminiUpstreamError(context.Background(), 429))
+	require.False(t, svc.shouldFailoverGeminiUpstreamError(context.Background(), 400))
 
 	// handleGeminiUpstreamError should not panic with nil rateLimitService
 	require.NotPanics(t, func() {

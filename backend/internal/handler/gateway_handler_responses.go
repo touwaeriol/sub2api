@@ -171,14 +171,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	sessionHash := h.gatewayService.GenerateSessionHash(parsedReq)
 
 	// 3. Account selection + failover loop
-	fs := NewFailoverState(h.maxAccountSwitches, false)
+	fs := NewFailoverState(h.maxAccountSwitchesFor(c, ""), false)
 
 	for {
 		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
-				h.responsesErrorResponse(c, http.StatusServiceUnavailable, "api_error", "No available accounts: "+err.Error())
+				naStatus, naType, naMsg := h.noAvailableAccountsStatus(c, apiKey.GroupID, err.Error())
+				h.responsesErrorResponse(c, naStatus, naType, naMsg)
 				return
 			}
 			action := fs.HandleSelectionExhausted(c.Request.Context())
@@ -189,7 +190,8 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				return
 			default:
 				if fs.LastFailoverErr != nil {
-					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					// 本 handler 仅服务 Anthropic 平台分组（选号失败分支无 account 可取）
+					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, service.PlatformAnthropic, streamStarted)
 				} else {
 					h.responsesErrorResponse(c, http.StatusBadGateway, "server_error", "All available accounts exhausted")
 				}
@@ -251,7 +253,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 			if errors.As(err, &failoverErr) {
 				// Can't failover if streaming content already sent
 				if c.Writer.Size() != writerSizeBeforeForward {
-					h.handleResponsesFailoverExhausted(c, failoverErr, true)
+					h.handleResponsesFailoverExhausted(c, failoverErr, account.Platform, true)
 					return
 				}
 				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, failoverErr)
@@ -259,7 +261,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				case FailoverContinue:
 					continue
 				case FailoverExhausted:
-					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, streamStarted)
+					h.handleResponsesFailoverExhausted(c, fs.LastFailoverErr, account.Platform, streamStarted)
 					return
 				case FailoverCanceled:
 					return
@@ -330,7 +332,7 @@ func (h *GatewayHandler) responsesErrorResponseWithMetadata(c *gin.Context, stat
 }
 
 // handleResponsesFailoverExhausted writes a failover-exhausted error in Responses format.
-func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, streamStarted bool) {
+func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastErr *service.UpstreamFailoverError, platform string, streamStarted bool) {
 	if streamStarted {
 		return // Can't write error after stream started
 	}
@@ -341,6 +343,14 @@ func (h *GatewayHandler) handleResponsesFailoverExhausted(c *gin.Context, lastEr
 	if lastErr != nil && service.IsOpenAISilentRefusalErrorBody(lastErr.ResponseBody) {
 		service.SetOpsUpstreamError(c, statusCode, service.OpenAISilentRefusalClientMessage(), "")
 		h.responsesErrorResponse(c, http.StatusBadGateway, "upstream_error", service.OpenAISilentRefusalClientMessage())
+		return
+	}
+	// 错误透传规则（与 handleFailoverExhausted 同一单点实现）
+	if respCode, msg, matched := matchFailoverPassthroughRule(c, h.errorPassthroughService, platform, lastErr); matched {
+		if msg == "" {
+			msg = "All available accounts exhausted"
+		}
+		h.responsesErrorResponse(c, respCode, "upstream_error", msg)
 		return
 	}
 	h.responsesErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")

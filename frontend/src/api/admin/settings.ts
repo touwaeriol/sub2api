@@ -1200,6 +1200,44 @@ export async function updateRectifierSettings(
   return data;
 }
 
+// ==================== Gateway Retry Settings ====================
+
+/**
+ * Gateway retry (failover) settings interface
+ */
+export interface GatewayRetrySettings {
+  failover_codes: string;
+  max_switches: number;
+  max_switches_gemini: number;
+  network_error_failover: boolean;
+}
+
+/**
+ * Get gateway retry settings
+ * @returns Gateway retry settings
+ */
+export async function getGatewayRetrySettings(): Promise<GatewayRetrySettings> {
+  const { data } = await apiClient.get<GatewayRetrySettings>(
+    "/admin/settings/gateway-retry",
+  );
+  return data;
+}
+
+/**
+ * Update gateway retry settings
+ * @param settings - Gateway retry settings to update
+ * @returns Updated settings
+ */
+export async function updateGatewayRetrySettings(
+  settings: GatewayRetrySettings,
+): Promise<GatewayRetrySettings> {
+  const { data } = await apiClient.put<GatewayRetrySettings>(
+    "/admin/settings/gateway-retry",
+    settings,
+  );
+  return data;
+}
+
 // ==================== OpenAI Fast Policy Settings ====================
 
 /**
@@ -1352,6 +1390,8 @@ export const settingsAPI = {
   updateStreamTimeoutSettings,
   getRectifierSettings,
   updateRectifierSettings,
+  getGatewayRetrySettings,
+  updateGatewayRetrySettings,
   getBetaPolicySettings,
   updateBetaPolicySettings,
   getWebSearchEmulationConfig,

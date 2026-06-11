@@ -3987,7 +3987,7 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 		return nil, nil
 	}
 
-	accountID, err := store.GetResponseAccount(ctx, derefGroupID(groupID), responseID)
+	accountID, err := store.GetResponseAccount(ctx, DerefGroupID(groupID), responseID)
 	if err != nil || accountID <= 0 {
 		return nil, nil
 	}
@@ -3999,7 +3999,7 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 
 	account, err := s.getSchedulableAccount(ctx, accountID)
 	if err != nil || account == nil {
-		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		_ = store.DeleteResponseAccount(ctx, DerefGroupID(groupID), responseID)
 		return nil, nil
 	}
 	// 非 WSv2 场景（如 force_http/全局关闭）不应使用 previous_response_id 粘连，
@@ -4008,7 +4008,7 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 		return nil, nil
 	}
 	if shouldClearStickySession(account, requestedModel) || !account.IsOpenAI() || !account.IsSchedulable() {
-		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		_ = store.DeleteResponseAccount(ctx, DerefGroupID(groupID), responseID)
 		return nil, nil
 	}
 	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
@@ -4016,22 +4016,22 @@ func (s *OpenAIGatewayService) SelectAccountByPreviousResponseID(
 	}
 	account = s.recheckSelectedOpenAIAccountFromDB(ctx, account, requestedModel, requireCompact)
 	if account == nil {
-		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		_ = store.DeleteResponseAccount(ctx, DerefGroupID(groupID), responseID)
 		return nil, nil
 	}
 	// 兜底：若上游 compact 能力刚被探测为不支持，但 sticky 还在，需要主动放弃。
 	if requireCompact && openAICompactSupportTier(account) == 0 {
-		_ = store.DeleteResponseAccount(ctx, derefGroupID(groupID), responseID)
+		_ = store.DeleteResponseAccount(ctx, DerefGroupID(groupID), responseID)
 		return nil, nil
 	}
 
 	result, acquireErr := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 	if acquireErr == nil && result.Acquired {
 		logOpenAIWSBindResponseAccountWarn(
-			derefGroupID(groupID),
+			DerefGroupID(groupID),
 			accountID,
 			responseID,
-			store.BindResponseAccount(ctx, derefGroupID(groupID), responseID, accountID, s.openAIWSResponseStickyTTL()),
+			store.BindResponseAccount(ctx, DerefGroupID(groupID), responseID, accountID, s.openAIWSResponseStickyTTL()),
 		)
 		return &AccountSelectionResult{
 			Account:     account,
