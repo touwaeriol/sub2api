@@ -299,7 +299,7 @@ func TestHandleErrorResponse_PassthroughRuleSetsCommitted(t *testing.T) {
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	errField, ok := payload["error"].(map[string]any)
-	require.True(t, ok, "error field must be an object")
+	require.True(t, ok, "payload[\"error\"] should be map[string]any")
 	assert.Equal(t, "参数错误", errField["message"])
 }
 

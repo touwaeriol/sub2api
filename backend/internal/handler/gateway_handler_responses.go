@@ -74,14 +74,22 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		return
 	}
 	reqModel := modelResult.String()
-	reqStream := gjson.GetBytes(body, "stream").Bool()
+	reqStream, ok := parseOpenAICompatibleStream(body)
+	if !ok {
+		h.responsesErrorResponse(c, http.StatusBadRequest, "invalid_request_error", invalidStreamFieldTypeMessage)
+		return
+	}
 	reqLog = reqLog.With(zap.String("model", reqModel), zap.Bool("stream", reqStream))
 
 	setOpsRequestContext(c, reqModel, reqStream)
 	setOpsEndpointContext(c, "", int16(service.RequestTypeFromLegacy(reqStream, false)))
+	requestCtx := c.Request.Context()
+	if service.IsImageGenerationIntent("/v1/responses", reqModel, body) {
+		requestCtx = service.WithOpenAIImageGenerationIntent(requestCtx)
+	}
 
 	// 解析渠道级模型映射
-	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(c.Request.Context(), apiKey.GroupID, reqModel)
+	channelMapping, _ := h.gatewayService.ResolveChannelMappingAndRestrict(requestCtx, apiKey.GroupID, reqModel)
 
 	// Claude Code only restriction:
 	// /v1/responses is never a Claude Code endpoint.
@@ -145,9 +153,9 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 
 	// 2. Re-check billing
 	billingTicket, err := h.billingCacheService.PrepareBillingCheckForRequest(
-		c.Request.Context(), apiKey.User, apiKey, apiKey.Group, subscription,
+		requestCtx, apiKey.User, apiKey, apiKey.Group, subscription,
 		service.ServiceQuotaCheckRequest{Model: reqModel, ChannelID: channelMapping.ChannelID},
-		service.QuotaPlatform(c.Request.Context(), apiKey),
+		service.QuotaPlatform(requestCtx, apiKey),
 	)
 	if err != nil {
 		reqLog.Info("gateway.responses.billing_check_failed", zap.Error(err))
@@ -159,9 +167,10 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	c.Request = c.Request.WithContext(service.WithBillingTicket(c.Request.Context(), billingTicket))
 
 	// Parse request for session hash
-	parsedReq, _ := service.ParseGatewayRequest(body, "responses")
+	bodyRef := service.NewRequestBodyRef(body)
+	parsedReq, _ := service.ParseGatewayRequest(bodyRef, "responses")
 	if parsedReq == nil {
-		parsedReq = &service.ParsedRequest{Model: reqModel, Stream: reqStream, Body: body}
+		parsedReq = &service.ParsedRequest{Model: reqModel, Stream: reqStream, Body: bodyRef}
 	}
 	parsedReq.SessionContext = &service.SessionContext{
 		ClientIP:  ip.GetClientIP(c),
@@ -174,7 +183,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 	fs := NewFailoverState(h.maxAccountSwitchesFor(c, ""), false)
 
 	for {
-		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(c.Request.Context(), apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
+		selection, err := h.gatewayService.SelectAccountWithLoadAwareness(requestCtx, apiKey.GroupID, sessionHash, reqModel, fs.FailedAccountIDs, "", int64(0))
 		if err != nil {
 			if len(fs.FailedAccountIDs) == 0 {
 				markOpsRoutingCapacityLimitedIfNoAvailable(c, err)
@@ -182,7 +191,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 				h.responsesErrorResponse(c, naStatus, naType, naMsg)
 				return
 			}
-			action := fs.HandleSelectionExhausted(c.Request.Context())
+			action := fs.HandleSelectionExhausted(requestCtx)
 			switch action {
 			case FailoverContinue:
 				continue
@@ -242,7 +251,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 		if channelMapping.Mapped {
 			forwardBody = h.gatewayService.ReplaceModelInBody(body, channelMapping.MappedModel)
 		}
-		result, err := h.gatewayService.ForwardAsResponses(c.Request.Context(), c, account, forwardBody, parsedReq)
+		result, err := h.gatewayService.ForwardAsResponses(requestCtx, c, account, forwardBody, parsedReq)
 
 		if accountReleaseFunc != nil {
 			accountReleaseFunc()
@@ -256,7 +265,7 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 					h.handleResponsesFailoverExhausted(c, failoverErr, account.Platform, true)
 					return
 				}
-				action := fs.HandleFailoverError(c.Request.Context(), h.gatewayService, account.ID, account.Platform, failoverErr)
+				action := fs.HandleFailoverError(requestCtx, h.gatewayService, account.ID, account.Platform, failoverErr)
 				switch action {
 				case FailoverContinue:
 					continue
@@ -267,9 +276,15 @@ func (h *GatewayHandler) Responses(c *gin.Context) {
 					return
 				}
 			}
-			h.ensureForwardErrorResponse(c, streamStarted)
+			upstreamErrorAlreadyCommunicated := gatewayForwardErrorAlreadyCommunicated(c, writerSizeBeforeForward, err)
+			wroteFallback := false
+			if !upstreamErrorAlreadyCommunicated {
+				wroteFallback = h.ensureForwardErrorResponse(c, streamStarted)
+			}
 			reqLog.Error("gateway.responses.forward_failed",
 				zap.Int64("account_id", account.ID),
+				zap.Bool("fallback_error_response_written", wroteFallback),
+				zap.Bool("upstream_error_response_already_written", upstreamErrorAlreadyCommunicated),
 				zap.Error(err),
 			)
 			return

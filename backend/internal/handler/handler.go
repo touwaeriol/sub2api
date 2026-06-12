@@ -38,6 +38,7 @@ type AdminHandlers struct {
 	ServiceQuota           *admin.ServiceQuotaHandler
 	ServiceQuotaMonitor    *admin.ServiceQuotaMonitorHandler
 	Affiliate              *admin.AffiliateHandler
+	Compliance             *admin.ComplianceHandler
 }
 
 // Handlers contains all HTTP handlers

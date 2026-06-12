@@ -182,6 +182,7 @@ func (r *ModelPricingResolver) applyFlatPricesToBase(chPricing *ChannelModelPric
 		base.CacheReadPricePerToken = *chPricing.CacheReadPrice
 		base.CacheReadPricePerTokenPriority = *chPricing.CacheReadPrice
 	}
+	// 渠道定价覆盖一切：显式配置则用配置值，未配置则归零（不回退到 LiteLLM）
 	if chPricing.ImageOutputPrice != nil {
 		base.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
 	} else {

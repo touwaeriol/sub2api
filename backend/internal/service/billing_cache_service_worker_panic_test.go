@@ -106,8 +106,20 @@ func (p *panickingBillingCache) SetUserPlatformQuotaCache(ctx context.Context, u
 func (p *panickingBillingCache) DeleteUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) error {
 	return nil
 }
-func (p *panickingBillingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration) error {
+func (p *panickingBillingCache) IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) error {
 	return nil
+}
+
+func (p *panickingBillingCache) PopDirtyUserPlatformQuotaKeys(ctx context.Context, n int) ([]UserPlatformQuotaKey, error) {
+	return nil, nil
+}
+
+func (p *panickingBillingCache) ReaddDirtyUserPlatformQuotaKeys(ctx context.Context, keys []UserPlatformQuotaKey) error {
+	return nil
+}
+
+func (p *panickingBillingCache) BatchGetUserPlatformQuotaCache(ctx context.Context, keys []UserPlatformQuotaKey) ([]*UserPlatformQuotaCacheEntry, error) {
+	return nil, nil
 }
 
 // TestCacheWriteWorker_PanicRecovery 验证 runCacheWriteTask 的 recover：

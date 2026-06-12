@@ -21,6 +21,12 @@ type APIKeyRateLimitCacheData struct {
 	Window7d int64   `json:"window_7d"`
 }
 
+// UserPlatformQuotaKey 标识一个 user×platform，用于脏集出入与批量读。
+type UserPlatformQuotaKey struct {
+	UserID   int64
+	Platform string
+}
+
 // UserPlatformQuotaCacheEntry Redis hash 反序列化结果。
 const UserPlatformQuotaCacheSchemaV1 = int64(1)
 
@@ -68,7 +74,13 @@ type RateLimitCache interface {
 	SetUserPlatformQuotaCache(ctx context.Context, userID int64, platform string, entry *UserPlatformQuotaCacheEntry, ttl time.Duration) error
 	DeleteUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) error
 	// IncrUserPlatformQuotaUsageCache 在缓存命中时累加用量；缓存未命中（key 不存在）静默返回 nil。
-	IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration) error
+	// markDirty=true 时将该 key 的 member 写入 Redis 脏集，供 flusher 批量回写 DB。
+	IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) error
+
+	// 脏集读写，供 flusher 使用。
+	PopDirtyUserPlatformQuotaKeys(ctx context.Context, n int) ([]UserPlatformQuotaKey, error)
+	ReaddDirtyUserPlatformQuotaKeys(ctx context.Context, keys []UserPlatformQuotaKey) error
+	BatchGetUserPlatformQuotaCache(ctx context.Context, keys []UserPlatformQuotaKey) ([]*UserPlatformQuotaCacheEntry, error)
 }
 
 // BillingCache 计费服务的完整缓存接口（3 个关注点的组合）。

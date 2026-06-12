@@ -124,10 +124,14 @@ func (s *GatewayService) trySignaturePoolRetry(ctx context.Context, p signatureP
 	}
 	logger.LegacyPrintf("service.gateway", "[SignaturePool] Account %d: replacing signature from pool and retrying", p.Account.ID)
 	upstreamCtx, releaseCtx := detachStreamUpstreamContext(ctx, p.ReqStream)
-	poolReq, reqErr := s.buildUpstreamRequest(upstreamCtx, p.C, p.Account, poolBody, p.Token, p.TokenType, p.MappedModel, p.ReqStream, p.ShouldMimicClaudeCode)
+	poolReq, builtPoolBody, reqErr := s.buildUpstreamRequest(upstreamCtx, p.C, p.Account, poolBody, p.Token, p.TokenType, p.MappedModel, p.ReqStream, p.ShouldMimicClaudeCode)
 	releaseCtx()
 	if reqErr != nil {
 		return nil, nil, false
+	}
+	// build 阶段可能按 beta 能力进一步清理 body，回传时以实际发送的版本为准
+	if builtPoolBody != nil {
+		poolBody = builtPoolBody
 	}
 	poolResp, doErr := s.httpUpstream.DoWithTLS(poolReq, p.ProxyURL, p.Account.ID, p.Account.Concurrency, s.tlsFPProfileService.ResolveTLSProfile(p.Account))
 	if doErr == nil && poolResp != nil && poolResp.StatusCode < 400 {

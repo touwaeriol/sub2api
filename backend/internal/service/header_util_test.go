@@ -22,8 +22,8 @@ func TestDelHeaderRaw(t *testing.T) {
 		h2.Del("anthropic-beta")
 		require.NotEmpty(t, h2["anthropic-beta"], "vanilla Header.Del must NOT remove wire-casing key (regression guard)")
 
-		// delHeaderRaw 应同时删 canonical + wire casing + raw 三种形式。
-		delHeaderRaw(h, "anthropic-beta")
+		// deleteHeaderAllForms 应同时删 canonical + wire casing + raw 三种形式。
+		deleteHeaderAllForms(h, "anthropic-beta")
 		require.Empty(t, h["anthropic-beta"])
 		require.Empty(t, h["Anthropic-Beta"])
 		require.Empty(t, h.Get("anthropic-beta"))
@@ -34,7 +34,7 @@ func TestDelHeaderRaw(t *testing.T) {
 		h.Set("Authorization", "Bearer x")
 		require.NotEmpty(t, h["Authorization"])
 
-		delHeaderRaw(h, "Authorization")
+		deleteHeaderAllForms(h, "Authorization")
 		require.Empty(t, h["Authorization"])
 		require.Empty(t, h.Get("Authorization"))
 	})
@@ -42,7 +42,7 @@ func TestDelHeaderRaw(t *testing.T) {
 	t.Run("noop on missing key", func(t *testing.T) {
 		h := http.Header{}
 		require.NotPanics(t, func() {
-			delHeaderRaw(h, "anthropic-beta")
+			deleteHeaderAllForms(h, "anthropic-beta")
 		})
 	})
 
@@ -52,7 +52,7 @@ func TestDelHeaderRaw(t *testing.T) {
 		h["Anthropic-Beta"] = []string{"a"}
 		h["anthropic-beta"] = []string{"b"}
 
-		delHeaderRaw(h, "anthropic-beta")
+		deleteHeaderAllForms(h, "anthropic-beta")
 		require.Empty(t, h["Anthropic-Beta"])
 		require.Empty(t, h["anthropic-beta"])
 	})
