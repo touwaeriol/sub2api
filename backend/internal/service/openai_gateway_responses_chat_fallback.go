@@ -188,10 +188,10 @@ func (s *OpenAIGatewayService) forwardResponsesViaRawChatCompletions(
 				Message:            upstreamMsg,
 				Detail:             upstreamDetail,
 			})
-			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
-			return nil, NewPoolModeFailoverErrorOpenAI(resp.StatusCode, respBody, account, upstreamMsg)
+			s.handleOpenAIAccountUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody, upstreamModel)
+				return nil, NewPoolModeFailoverErrorOpenAI(resp.StatusCode, respBody, account, upstreamMsg)
 		}
-		return s.handleErrorResponse(ctx, resp, c, account, chatBody)
+		return s.handleErrorResponse(ctx, resp, c, account, chatBody, billingModel)
 	}
 
 	if clientStream {

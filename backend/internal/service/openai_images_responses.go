@@ -1188,7 +1188,7 @@ func (s *OpenAIGatewayService) forwardOpenAIImagesOAuth(
 				Kind:               "failover",
 				Message:            upstreamMsg,
 			})
-			s.handleFailoverSideEffects(upstreamCtx, resp, account)
+			s.handleFailoverSideEffects(upstreamCtx, resp, account, requestModel)
 			return nil, NewPoolModeFailoverError(resp.StatusCode, respBody, account)
 		}
 		return s.handleErrorResponse(upstreamCtx, resp, c, account, responsesBody)
