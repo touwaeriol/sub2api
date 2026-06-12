@@ -109,15 +109,18 @@ func addHeaderRaw(h http.Header, key, value string) {
 	h[key] = append(h[key], value)
 }
 
-// delHeaderRaw 与 setHeaderRaw 对称地删除一个 header，覆盖 canonical / wire casing / 原始 key 三种存储形式。
-// http.Header.Del 仅删 canonical 形式（如 "Anthropic-Beta"），无法删项目里以小写 wire casing 存储的 key
-// （如 "anthropic-beta"），单独使用会留下"幽灵 entry"。
-func delHeaderRaw(h http.Header, key string) {
-	h.Del(key) // canonical form
+// deleteHeaderAllForms removes a header in all common key forms (raw, wire casing,
+// canonical) so subsequent setHeaderRaw will not coexist with a passthrough value
+// written under a different casing.
+func deleteHeaderAllForms(h http.Header, key string) {
+	if h == nil || key == "" {
+		return
+	}
+	h.Del(key) // canonical
+	delete(h, key)
 	if wk := resolveWireCasing(key); wk != key {
 		delete(h, wk)
 	}
-	delete(h, key)
 }
 
 // getHeaderRaw reads a header value, trying multiple key forms to handle the mismatch
