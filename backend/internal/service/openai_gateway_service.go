@@ -1349,7 +1349,9 @@ func isOpenAIAccountEligibleForRequest(ctx context.Context, account *Account, re
 		)
 		return false
 	}
-	if requestedModel != "" && !account.IsModelSupported(requestedModel) {
+	// 透传账号不做模型过滤：model_mapping 未覆盖的新模型（如 gpt-5.4）直接透传上游，
+	// 否则透传账号会被调度过滤导致 503（fork 定制，见 commit 914a0cd4c）。
+	if requestedModel != "" && !account.IsOpenAIPassthroughEnabled() && !account.IsModelSupported(requestedModel) {
 		return false
 	}
 	if !account.SupportsOpenAIEndpointCapability(requiredCapability) {

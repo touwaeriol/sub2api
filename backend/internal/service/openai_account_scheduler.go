@@ -1045,7 +1045,8 @@ func (s *defaultOpenAIAccountScheduler) isAccountRequestCompatible(ctx context.C
 	if paused, _ := shouldAutoPauseOpenAIAccountByQuota(ctx, account); paused {
 		return false
 	}
-	if req.RequestedModel != "" && !account.IsModelSupported(req.RequestedModel) {
+	// 透传账号不做模型过滤（fork 定制，见 commit 914a0cd4c）
+	if req.RequestedModel != "" && !account.IsOpenAIPassthroughEnabled() && !account.IsModelSupported(req.RequestedModel) {
 		return false
 	}
 	if req.GroupID != nil && s != nil && s.service != nil &&

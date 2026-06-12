@@ -583,13 +583,13 @@ type UpstreamFailoverError struct {
 }
 
 // NewPoolModeFailoverError 池模式账号的 failover 错误构造（单点实现，消除创建点的二行式重复）。
-// RetryableOnSameAccount 仅对 401/403/429 为 true（换 key 池内 key 有意义）；
+// RetryableOnSameAccount 由账号级 pool_mode_retry_status_codes 决定（未配置时回退默认 401/403/429）；
 // MaxSameAccountRetries 取账号配置的 pool_mode_retry_count。
 func NewPoolModeFailoverError(statusCode int, body []byte, account *Account) *UpstreamFailoverError {
 	return &UpstreamFailoverError{
 		StatusCode:             statusCode,
 		ResponseBody:           body,
-		RetryableOnSameAccount: account.IsPoolMode() && isPoolModeRetryableStatus(statusCode),
+		RetryableOnSameAccount: account.IsPoolMode() && account.IsPoolModeRetryableStatus(statusCode),
 		MaxSameAccountRetries:  account.GetPoolModeRetryCount(),
 	}
 }
