@@ -21,6 +21,19 @@ type APIKeyRateLimitCacheData struct {
 	Window7d int64   `json:"window_7d"`
 }
 
+// UserPlatformQuotaKey 标识一个 user×platform，用于脏集出入与批量读。
+type UserPlatformQuotaKey struct {
+	UserID   int64
+	Platform string
+}
+
+// UserPlatformQuotaCacheEntry Redis hash 反序列化结果。
+//
+// SchemaVersion 用于向后兼容：
+//   - 0（旧 entry，无 SchemaVersion 字段）→ 视为 cache MISS，强制 refresh
+//   - 1（当前版本）→ 包含 limits 和 window_start，可免 DB 查询
+//
+// limit 字段为 nil 表示"无限额"（DB 中对应列为 NULL）。
 const UserPlatformQuotaCacheSchemaV1 = int64(1)
 
 type UserPlatformQuotaCacheEntry struct {
@@ -73,7 +86,13 @@ type RateLimitCache interface {
 	SetUserPlatformQuotaCache(ctx context.Context, userID int64, platform string, entry *UserPlatformQuotaCacheEntry, ttl time.Duration) error
 	DeleteUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) error
 	// IncrUserPlatformQuotaUsageCache 在缓存命中时累加用量；缓存未命中（key 不存在）静默返回 nil。
-	IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration) error
+	// markDirty=true 时将该 key 的 member 写入 Redis 脏集，供 flusher 批量回写 DB。
+	IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) error
+
+	// 脏集读写，供 flusher 使用。
+	PopDirtyUserPlatformQuotaKeys(ctx context.Context, n int) ([]UserPlatformQuotaKey, error)
+	ReaddDirtyUserPlatformQuotaKeys(ctx context.Context, keys []UserPlatformQuotaKey) error
+	BatchGetUserPlatformQuotaCache(ctx context.Context, keys []UserPlatformQuotaKey) ([]*UserPlatformQuotaCacheEntry, error)
 }
 
 // BillingCache 计费服务的完整缓存接口（3 个关注点的组合）。
@@ -101,6 +120,7 @@ type ModelPricing struct {
 	LongContextInputMultiplier     float64 // 长上下文整次会话输入倍率
 	LongContextOutputMultiplier    float64 // 长上下文整次会话输出倍率
 	ImageOutputPricePerToken       float64 // 图片输出 token 价格 (USD)
+	ImageOutputPriceExplicit       bool    // 是否由渠道定价显式设定（为 true 时即使 == 0 也不回退）
 }
 
 const (
@@ -429,6 +449,42 @@ func (s *BillingService) GetModelPricing(model string) (*ModelPricing, error) {
 	return nil, fmt.Errorf("%w for model: %s", ErrModelPricingUnavailable, model)
 }
 
+// GetModelPricingWithChannel 获取模型定价，渠道配置的价格覆盖默认值
+// 渠道存在时，未配置的图片输出价格归零（不回退到 LiteLLM）
+func (s *BillingService) GetModelPricingWithChannel(model string, channelPricing *ChannelModelPricing) (*ModelPricing, error) {
+	pricing, err := s.GetModelPricing(model)
+	if err != nil {
+		return nil, err
+	}
+	if channelPricing == nil {
+		return pricing, nil
+	}
+	if channelPricing.InputPrice != nil {
+		pricing.InputPricePerToken = *channelPricing.InputPrice
+		pricing.InputPricePerTokenPriority = *channelPricing.InputPrice
+	}
+	if channelPricing.OutputPrice != nil {
+		pricing.OutputPricePerToken = *channelPricing.OutputPrice
+		pricing.OutputPricePerTokenPriority = *channelPricing.OutputPrice
+	}
+	if channelPricing.CacheWritePrice != nil {
+		pricing.CacheCreationPricePerToken = *channelPricing.CacheWritePrice
+		pricing.CacheCreation5mPrice = *channelPricing.CacheWritePrice
+		pricing.CacheCreation1hPrice = *channelPricing.CacheWritePrice
+	}
+	if channelPricing.CacheReadPrice != nil {
+		pricing.CacheReadPricePerToken = *channelPricing.CacheReadPrice
+		pricing.CacheReadPricePerTokenPriority = *channelPricing.CacheReadPrice
+	}
+	if channelPricing.ImageOutputPrice != nil {
+		pricing.ImageOutputPricePerToken = *channelPricing.ImageOutputPrice
+	} else {
+		pricing.ImageOutputPricePerToken = 0
+	}
+	pricing.ImageOutputPriceExplicit = true
+	return pricing, nil
+}
+
 // --- 统一计费入口 ---
 
 // CostInput 统一计费输入
@@ -634,8 +690,8 @@ func (s *BillingService) computeTokenBreakdown(
 	// 图片输出 token 费用（独立费率）
 	if tokens.ImageOutputTokens > 0 {
 		imgPrice := pricing.ImageOutputPricePerToken
-		if imgPrice == 0 {
-			imgPrice = outputPrice // 回退到常规输出价格
+		if imgPrice == 0 && !pricing.ImageOutputPriceExplicit {
+			imgPrice = outputPrice
 		}
 		bd.ImageOutputCost = float64(tokens.ImageOutputTokens) * imgPrice
 	}

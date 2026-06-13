@@ -46,8 +46,8 @@ type UsageStats struct {
 	TotalInputTokens         int64   `json:"total_input_tokens"`
 	TotalOutputTokens        int64   `json:"total_output_tokens"`
 	TotalCacheTokens         int64   `json:"total_cache_tokens"`
-	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalCacheCreationTokens int64   `json:"total_cache_creation_tokens"`
+	TotalCacheReadTokens     int64   `json:"total_cache_read_tokens"`
 	TotalTokens              int64   `json:"total_tokens"`
 	TotalCost                float64 `json:"total_cost"`
 	TotalActualCost          float64 `json:"total_actual_cost"`
@@ -235,8 +235,8 @@ func toServiceUsageStats(stats *usagestats.UsageStats) *UsageStats {
 		TotalInputTokens:         stats.TotalInputTokens,
 		TotalOutputTokens:        stats.TotalOutputTokens,
 		TotalCacheTokens:         stats.TotalCacheTokens,
-		TotalCacheReadTokens:     stats.TotalCacheReadTokens,
 		TotalCacheCreationTokens: stats.TotalCacheCreationTokens,
+		TotalCacheReadTokens:     stats.TotalCacheReadTokens,
 		TotalTokens:              stats.TotalTokens,
 		TotalCost:                stats.TotalCost,
 		TotalActualCost:          stats.TotalActualCost,

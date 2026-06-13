@@ -83,6 +83,22 @@ func (s *billingCacheMissStub) InvalidateQuotaConfig(ctx context.Context, userID
 	return nil
 }
 
+func (s *billingCacheMissStub) IncrUserPlatformQuotaUsageCache(ctx context.Context, userID int64, platform string, cost float64, ttl time.Duration, markDirty bool) error {
+	return nil
+}
+
+func (s *billingCacheMissStub) PopDirtyUserPlatformQuotaKeys(ctx context.Context, n int) ([]UserPlatformQuotaKey, error) {
+	return nil, nil
+}
+
+func (s *billingCacheMissStub) ReaddDirtyUserPlatformQuotaKeys(ctx context.Context, keys []UserPlatformQuotaKey) error {
+	return nil
+}
+
+func (s *billingCacheMissStub) BatchGetUserPlatformQuotaCache(ctx context.Context, keys []UserPlatformQuotaKey) ([]*UserPlatformQuotaCacheEntry, error) {
+	return nil, nil
+}
+
 type balanceLoadUserRepoStub struct {
 	mockUserRepo
 	calls   atomic.Int64

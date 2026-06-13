@@ -193,6 +193,8 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	geminiTokenCache := repository.NewGeminiTokenCache(redisClient)
 	compositeTokenCacheInvalidator := service.NewCompositeTokenCacheInvalidator(geminiTokenCache)
 	rateLimitService := service.ProvideRateLimitService(accountRepository, usageLogRepository, configConfig, geminiQuotaService, tempUnschedCache, timeoutCounterCache, openAI403CounterCache, settingService, compositeTokenCacheInvalidator)
+	identityCache := repository.NewIdentityCache(redisClient)
+	identityService := service.NewIdentityService(identityCache)
 	httpUpstream := repository.NewHTTPUpstream(configConfig)
 	claudeUsageFetcher := repository.NewClaudeUsageFetcher(httpUpstream)
 	antigravityQuotaFetcher := service.NewAntigravityQuotaFetcher(proxyRepository)
@@ -384,8 +386,9 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	affiliateHandler := admin.NewAffiliateHandler(affiliateService, adminService)
 	uploadService := service.ProvideUploadService(configConfig)
 	adminUploadHandler := admin.NewUploadHandler(uploadService)
+	complianceHandler := admin.NewComplianceHandler(settingService)
 	platformHandler := handler.ProvidePlatformHandler(pluginManager)
-	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, serviceQuotaHandler, serviceQuotaMonitorHandler, affiliateHandler, pluginHandler, pluginSettingsHandler, adminUploadHandler, platformHandler)
+	adminHandlers := handler.ProvideAdminHandlers(dashboardHandler, adminUserHandler, groupHandler, accountHandler, adminAnnouncementHandler, dataManagementHandler, backupHandler, oAuthHandler, proxyHandler, adminRedeemHandler, promoHandler, settingHandler, opsHandler, systemHandler, adminSubscriptionHandler, adminUsageHandler, userAttributeHandler, errorPassthroughHandler, tlsFingerprintProfileHandler, adminAPIKeyHandler, scheduledTestHandler, serviceQuotaHandler, serviceQuotaMonitorHandler, affiliateHandler, pluginHandler, pluginSettingsHandler, adminUploadHandler, platformHandler, complianceHandler)
 	usageRecordWorkerPool := service.NewUsageRecordWorkerPool(configConfig)
 	userMsgQueueCache := repository.NewUserMsgQueueCache(redisClient)
 	userMessageQueueService := service.ProvideUserMessageQueueService(userMsgQueueCache, rpmCache, configConfig)
@@ -410,7 +413,7 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	httpServer := server.ProvideHTTPServer(configConfig, engine, pluginRouter)
 	opsMetricsCollector := service.ProvideOpsMetricsCollector(opsRepository, settingRepository, accountRepository, concurrencyService, db, redisClient, configConfig)
 	opsAggregationService := service.ProvideOpsAggregationService(opsRepository, settingRepository, db, redisClient, configConfig)
-	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig)
+	opsAlertEvaluatorService := service.ProvideOpsAlertEvaluatorService(opsService, opsRepository, emailService, redisClient, configConfig, proxyRepository)
 	opsCleanupService := service.ProvideOpsCleanupService(opsRepository, db, redisClient, configConfig, settingRepository, opsService)
 	if pluginManager != nil {
 		opsCleanupService.SetPluginMaintenance(pluginManager)
@@ -431,9 +434,11 @@ func initializeApplication(buildInfo handler.BuildInfo) (*Application, error) {
 	}
 	tokenRefreshService.Start()
 	accountExpiryService := service.ProvideAccountExpiryService(accountRepository)
+	proxyExpiryService := service.ProvideProxyExpiryService(proxyRepository)
 	subscriptionExpiryService := service.ProvideSubscriptionExpiryService(userSubscriptionRepository)
 	scheduledTestRunnerService := service.ProvideScheduledTestRunnerService(scheduledTestPlanRepository, scheduledTestService, accountTestService, rateLimitService, configConfig)
-	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, pluginManager)
+	// channelMonitorRunner / paymentOrderExpiryService: 已迁移到插件
+	v := provideCleanup(client, redisClient, opsMetricsCollector, opsAggregationService, opsAlertEvaluatorService, opsCleanupService, opsScheduledReportService, opsSystemLogSink, schedulerSnapshotService, tokenRefreshService, accountExpiryService, proxyExpiryService, subscriptionExpiryService, usageCleanupService, idempotencyCleanupService, pricingService, emailQueueService, billingCacheService, usageRecordWorkerPool, subscriptionService, oAuthService, openAIOAuthService, geminiOAuthService, antigravityOAuthService, openAIGatewayService, scheduledTestRunnerService, backupService, pluginManager, nil, nil)
 	application := &Application{
 		Server:         httpServer,
 		PluginManager:  pluginManager,
@@ -482,6 +487,7 @@ func provideCleanup(
 	schedulerSnapshot *service.SchedulerSnapshotService,
 	tokenRefresh *service.TokenRefreshService,
 	accountExpiry *service.AccountExpiryService,
+	proxyExpiry *service.ProxyExpiryService,
 	subscriptionExpiry *service.SubscriptionExpiryService,
 	usageCleanup *service.UsageCleanupService,
 	idempotencyCleanup *service.IdempotencyCleanupService,
@@ -498,6 +504,8 @@ func provideCleanup(
 	scheduledTestRunner *service.ScheduledTestRunnerService,
 	backupSvc *service.BackupService,
 	pluginManager *plugin.PluginManager,
+	channelMonitorRunner *service.ChannelMonitorRunner,
+	quotaFlusher *service.UserPlatformQuotaUsageFlusher,
 ) func() {
 	return func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -577,6 +585,10 @@ func provideCleanup(
 				accountExpiry.Stop()
 				return nil
 			}},
+			{"ProxyExpiryService", func() error {
+				proxyExpiry.Stop()
+				return nil
+			}},
 			{"SubscriptionExpiryService", func() error {
 				subscriptionExpiry.Stop()
 				return nil
@@ -640,6 +652,18 @@ func provideCleanup(
 				return nil
 			}},
 			// PaymentOrderExpiryService 已迁移到 plugins/payment/
+			{"ChannelMonitorRunner", func() error {
+				if channelMonitorRunner != nil {
+					channelMonitorRunner.Stop()
+				}
+				return nil
+			}},
+			{"UserPlatformQuotaUsageFlusher", func() error {
+				if quotaFlusher != nil {
+					quotaFlusher.Stop()
+				}
+				return nil
+			}},
 		}
 
 		infraSteps := []cleanupStep{

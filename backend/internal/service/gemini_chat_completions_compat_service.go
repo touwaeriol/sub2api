@@ -152,7 +152,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 		}
 
 		if resp.StatusCode >= 400 && s.shouldRetryGeminiUpstreamError(account, resp.StatusCode) {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			respBody := s.readUpstreamErrorBody(resp)
 			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusForbidden && isGeminiInsufficientScope(resp.Header, respBody) {
 				resp = &http.Response{
@@ -208,7 +208,7 @@ func (s *GeminiMessagesCompatService) forwardClaudeBodyAsChatCompletions(
 	reasoningEffort := extractCCReasoningEffortFromBody(originalChatBody)
 
 	if resp.StatusCode >= 400 {
-		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		respBody := s.readUpstreamErrorBody(resp)
 		s.handleGeminiUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 		evBody := unwrapIfNeeded(account.Type == AccountTypeOAuth, respBody)
 
@@ -886,18 +886,3 @@ func (s *GeminiMessagesCompatService) writeChatCompletionsError(c *gin.Context, 
 	return fmt.Errorf("%s", message)
 }
 
-// extractCCReasoningEffortFromBody extracts reasoning effort from a chat completions request body.
-func extractCCReasoningEffortFromBody(body []byte) *string {
-	raw := strings.TrimSpace(gjson.GetBytes(body, "reasoning.effort").String())
-	if raw == "" {
-		raw = strings.TrimSpace(gjson.GetBytes(body, "reasoning_effort").String())
-	}
-	if raw == "" {
-		return nil
-	}
-	normalized := normalizeOpenAIReasoningEffort(raw)
-	if normalized == "" {
-		return nil
-	}
-	return &normalized
-}

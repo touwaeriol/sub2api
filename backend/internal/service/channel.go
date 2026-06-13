@@ -42,6 +42,19 @@ const (
 	BillingModelSourceChannelMapped = "channel_mapped"
 )
 
+// AccountStatsPricingRule 账号统计定价规则
+type AccountStatsPricingRule struct {
+	ID         int64
+	ChannelID  int64
+	Name       string
+	GroupIDs   []int64
+	AccountIDs []int64
+	SortOrder  int
+	Pricing    []ChannelModelPricing // 规则内的模型定价（复用现有定价结构）
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+}
+
 // ChannelModelPricing 渠道模型定价条目。
 // 渠道管理逻辑已迁移到 plugins/channel-management/；核心只保留这份定价结构作为
 // PricingOverrideCache 翻译层的本地 owner（见 channel_cache_reader.go），
@@ -132,55 +145,3 @@ type ChannelUsageFields struct {
 	ModelMappingChain  string // 映射链描述，如 "a→b→c"
 }
 
-// ChannelMappingResult 渠道映射查找结果
-type ChannelMappingResult struct {
-	MappedModel        string // 映射后的模型名（无映射时等于原始模型名）
-	ChannelID          int64  // 渠道 ID（0 = 无渠道关联）
-	Mapped             bool   // 是否发生了映射
-	BillingModelSource string // 计费模型来源
-}
-
-// BuildModelMappingChain 根据映射结果和上游实际模型构建映射链描述
-func (r ChannelMappingResult) BuildModelMappingChain(reqModel, upstreamModel string) string {
-	if !r.Mapped {
-		if upstreamModel != "" && upstreamModel != reqModel {
-			return reqModel + "→" + upstreamModel
-		}
-		return ""
-	}
-	if upstreamModel != "" && upstreamModel != r.MappedModel {
-		return reqModel + "→" + r.MappedModel + "→" + upstreamModel
-	}
-	return reqModel + "→" + r.MappedModel
-}
-
-// ToUsageFields 将渠道映射结果转为使用记录字段
-func (r ChannelMappingResult) ToUsageFields(reqModel, upstreamModel string) ChannelUsageFields {
-	channelMappedModel := reqModel
-	if r.Mapped {
-		channelMappedModel = r.MappedModel
-	}
-	return ChannelUsageFields{
-		ChannelID:          r.ChannelID,
-		OriginalModel:      reqModel,
-		ChannelMappedModel: channelMappedModel,
-		BillingModelSource: r.BillingModelSource,
-		ModelMappingChain:  r.BuildModelMappingChain(reqModel, upstreamModel),
-	}
-}
-
-// ReplaceModelInBody 替换请求体 JSON 中的 model 字段。
-// 这是一个通用工具函数，gateway 在执行渠道映射后用它改写上游请求。
-func ReplaceModelInBody(body []byte, newModel string) []byte {
-	if len(body) == 0 {
-		return body
-	}
-	if current := gjson.GetBytes(body, "model"); current.Exists() && current.String() == newModel {
-		return body
-	}
-	newBody, err := sjson.SetBytes(body, "model", newModel)
-	if err != nil {
-		return body
-	}
-	return newBody
-}

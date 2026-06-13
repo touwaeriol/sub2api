@@ -34,6 +34,7 @@ type AdminHandlers struct {
 	ServiceQuota        *admin.ServiceQuotaHandler
 	ServiceQuotaMonitor *admin.ServiceQuotaMonitorHandler
 	Affiliate           *admin.AffiliateHandler
+	Compliance          *admin.ComplianceHandler
 	Plugin              *admin.PluginHandler
 	Platform            *admin.PlatformHandler
 	PluginSettings      *admin.PluginSettingsHandler

@@ -262,6 +262,7 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		AvailableChannelsEnabled:               settings.AvailableChannelsEnabled,
 		ServiceQuotaEnabled:                    settings.ServiceQuotaEnabled,
 		AffiliateEnabled:                       settings.AffiliateEnabled,
+		AllowUserViewErrorRequests:             settings.AllowUserViewErrorRequests,
 	}
 
 	// OpenAI fast policy (stored under a dedicated setting key)
@@ -551,6 +552,20 @@ type UpdateSettingsRequest struct {
 
 	// OpenAI fast/flex policy (optional, only updated when provided)
 	OpenAIFastPolicySettings *dto.OpenAIFastPolicySettings `json:"openai_fast_policy_settings,omitempty"`
+
+	// 系统全局 platform quota 默认值（整体替换语义：nil = 不修改，non-nil = 整体覆盖）。
+	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas"`
+
+	// auth-source 层 platform quota 覆盖（override 语义：nil = 不修改，non-nil = 整体覆盖该 source 的 quota 配置）。
+	AuthSourceEmailPlatformQuotas    map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_email_platform_quotas"`
+	AuthSourceLinuxDoPlatformQuotas  map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_linuxdo_platform_quotas"`
+	AuthSourceOIDCPlatformQuotas     map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_oidc_platform_quotas"`
+	AuthSourceWeChatPlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_wechat_platform_quotas"`
+	AuthSourceGitHubPlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_github_platform_quotas"`
+	AuthSourceGooglePlatformQuotas   map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_google_platform_quotas"`
+	AuthSourceDingTalkPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"auth_source_default_dingtalk_platform_quotas"`
+
+	AllowUserViewErrorRequests *bool `json:"allow_user_view_error_requests"`
 }
 
 // UpdateSettings 更新系统设置
@@ -1365,6 +1380,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		MaxClaudeCodeVersion:        req.MaxClaudeCodeVersion,
 		AllowUngroupedKeyScheduling: req.AllowUngroupedKeyScheduling,
 		BackendModeEnabled:          req.BackendModeEnabled,
+		AllowUserViewErrorRequests: func() bool {
+			if req.AllowUserViewErrorRequests != nil {
+				return *req.AllowUserViewErrorRequests
+			}
+			return previousSettings.AllowUserViewErrorRequests
+		}(),
 		OpsMonitoringEnabled: func() bool {
 			if req.OpsMonitoringEnabled != nil {
 				return *req.OpsMonitoringEnabled
@@ -1732,6 +1753,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ServiceQuotaEnabled:                    updatedSettings.ServiceQuotaEnabled,
 		AffiliateEnabled:                       updatedSettings.AffiliateEnabled,
 		RiskControlEnabled:                     updatedSettings.RiskControlEnabled,
+		AllowUserViewErrorRequests:             updatedSettings.AllowUserViewErrorRequests,
 	}
 	if fastPolicy, err := h.settingService.GetOpenAIFastPolicySettings(c.Request.Context()); err != nil {
 		slog.Error("openai_fast_policy_settings_get_failed", "error", err)

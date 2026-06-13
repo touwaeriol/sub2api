@@ -228,6 +228,9 @@ type SystemSettings struct {
 
 	// 系统全局默认平台配额（key = platform，nil/缺省 = 不限制）
 	DefaultPlatformQuotas map[string]*service.DefaultPlatformQuotaSetting `json:"default_platform_quotas,omitempty"`
+
+	// 允许终端用户在用量页查看自己的失败请求
+	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
 }
 
 type DefaultSubscriptionSetting struct {
@@ -295,6 +298,8 @@ type PublicSettings struct {
 
 	RiskControlEnabled bool `json:"risk_control_enabled"`
 
+	AllowUserViewErrorRequests bool `json:"allow_user_view_error_requests"`
+
 	// PluginFlags carries the union of plugin-declared PublicFlags. Tagged
 	// "-" so the schema-drift test ignores it; MarshalJSON below flattens
 	// these into top-level JSON keys so frontend code can read
@@ -335,7 +340,6 @@ func (p PublicSettings) MarshalJSON() ([]byte, error) {
 		merged[k] = b
 	}
 	return json.Marshal(merged)
-}
 
 type LoginAgreementDocument struct {
 	ID        string `json:"id"`

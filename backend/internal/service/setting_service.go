@@ -743,6 +743,7 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		SettingKeyServiceQuotaEnabled,
 		SettingKeyAffiliateEnabled,
 		SettingKeyRiskControlEnabled,
+		SettingKeyAllowUserViewErrorRequests,
 	}
 
 	settings, err := s.settingRepo.GetMultiple(ctx, keys)
@@ -849,6 +850,8 @@ func (s *SettingService) GetPublicSettings(ctx context.Context) (*PublicSettings
 		AffiliateEnabled: settings[SettingKeyAffiliateEnabled] == "true",
 
 		RiskControlEnabled: settings[SettingKeyRiskControlEnabled] == "true",
+
+		AllowUserViewErrorRequests: settings[SettingKeyAllowUserViewErrorRequests] == "true",
 	}
 
 	// 把所有 running plugin 声明的 PublicFlags 合并进来。Provider 未注入或返回
@@ -933,6 +936,17 @@ func (s *SettingService) GetAvailableChannelsRuntime(ctx context.Context) Availa
 	return AvailableChannelsRuntime{
 		Enabled: vals[SettingKeyAvailableChannelsEnabled] == "true",
 	}
+}
+
+// IsUserErrorViewAllowed reads the user-facing error-requests visibility switch
+// directly from the settings store. Fail-closed: on error returns false (opt-in default).
+func (s *SettingService) IsUserErrorViewAllowed(ctx context.Context) bool {
+	vals, err := s.settingRepo.GetMultiple(ctx, []string{SettingKeyAllowUserViewErrorRequests})
+	if err != nil {
+		slog.Warn("failed to get allow_user_view_error_requests setting, defaulting to false", "error", err)
+		return false
+	}
+	return vals[SettingKeyAllowUserViewErrorRequests] == "true"
 }
 
 // GetAntigravityUserAgentVersion 返回 Antigravity 上游请求使用的版本号。
@@ -1161,6 +1175,7 @@ type PublicSettingsInjectionPayload struct {
 	ServiceQuotaEnabled                  bool `json:"service_quota_enabled"`
 	AffiliateEnabled                     bool `json:"affiliate_enabled"`
 	RiskControlEnabled                   bool `json:"risk_control_enabled"`
+	AllowUserViewErrorRequests           bool `json:"allow_user_view_error_requests"`
 
 	// PluginFlags carries the union of plugin-declared PublicFlags. Tagged
 	// "-" so the schema-drift test (public_settings_injection_schema_test.go)
@@ -1261,8 +1276,8 @@ func (s *SettingService) GetPublicSettingsForInjection(ctx context.Context) (any
 		AvailableChannelsEnabled:             settings.AvailableChannelsEnabled,
 		ServiceQuotaEnabled:                  settings.ServiceQuotaEnabled,
 		AffiliateEnabled:                     settings.AffiliateEnabled,
-
-		RiskControlEnabled: settings.RiskControlEnabled,
+		RiskControlEnabled:                   settings.RiskControlEnabled,
+		AllowUserViewErrorRequests:           settings.AllowUserViewErrorRequests,
 
 		PluginFlags: settings.PluginFlags,
 	}, nil
@@ -1941,7 +1956,41 @@ func (s *SettingService) buildSystemSettingsUpdates(ctx context.Context, setting
 	u.SetBool(SettingKeyAccountQuotaNotifyEnabled, settings.AccountQuotaNotifyEnabled)
 	u.SetString(SettingKeyAccountQuotaNotifyEmails, MarshalNotifyEmails(settings.AccountQuotaNotifyEmails))
 
+	// 系统全局 platform quota：整体替换语义（null/缺省 = 不限制）。
+	if settings.DefaultPlatformQuotas != nil {
+		if err := validateDefaultPlatformQuotaMap(settings.DefaultPlatformQuotas); err != nil {
+			return nil, err
+		}
+		blob, err := json.Marshal(settings.DefaultPlatformQuotas)
+		if err != nil {
+			return nil, fmt.Errorf("marshal default platform quotas: %w", err)
+		}
+		u.updates[SettingKeyDefaultPlatformQuotas] = string(blob)
+	}
+
+	u.SetBool(SettingKeyAllowUserViewErrorRequests, settings.AllowUserViewErrorRequests)
+
 	return u.updates, nil
+}
+
+// validateDefaultPlatformQuotaMap 校验 platform quota map 的合法性：
+// 平台名须在 AllowedQuotaPlatforms 白名单内，每个非 nil 上限须 finite 且 >= 0。
+// 系统层和 auth-source 层共用此 helper。
+func validateDefaultPlatformQuotaMap(m map[string]*DefaultPlatformQuotaSetting) error {
+	for platform, pq := range m {
+		if !IsAllowedQuotaPlatform(platform) {
+			return infraerrors.BadRequest("INVALID_DEFAULT_PLATFORM_QUOTA", fmt.Sprintf("unknown platform %q", platform))
+		}
+		if pq == nil {
+			continue
+		}
+		for _, v := range []*float64{pq.DailyLimitUSD, pq.WeeklyLimitUSD, pq.MonthlyLimitUSD} {
+			if v != nil && (*v < 0 || math.IsNaN(*v) || math.IsInf(*v, 0)) {
+				return infraerrors.BadRequest("INVALID_DEFAULT_PLATFORM_QUOTA", "platform quota limit must be a finite non-negative number")
+			}
+		}
+	}
+	return nil
 }
 
 func (s *SettingService) buildAuthSourceDefaultUpdates(ctx context.Context, settings *AuthSourceDefaultSettings) (map[string]string, error) {
@@ -2789,8 +2838,11 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		SettingKeyEnableAnthropicCacheTTL1hInjection: "false",
 		SettingKeyRewriteMessageCacheControl:         strconv.FormatBool(s.defaultRewriteMessageCacheControl()),
 		SettingKeyAntigravityUserAgentVersion:        "",
+		SettingKeyOpenAICodexUserAgent:               "",
 		// payment_visible_method_* 默认值由 plugins/payment 自身维护。
 		openAIAdvancedSchedulerSettingKey: "false",
+
+		SettingKeyAllowUserViewErrorRequests: "false",
 	}
 
 	return s.settingRepo.SetMultiple(ctx, defaults)
@@ -3204,6 +3256,18 @@ func (s *SettingService) parseSettings(settings map[string]string) *SystemSettin
 	if result.AccountQuotaNotifyEmails == nil {
 		result.AccountQuotaNotifyEmails = []NotifyEmailEntry{}
 	}
+
+	// 系统层默认 platform quota（修复 Bug B：parseSettings 不填充导致回显恒为 nil）
+	if raw := settings[SettingKeyDefaultPlatformQuotas]; raw != "" {
+		parsed := map[string]*DefaultPlatformQuotaSetting{}
+		if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+			slog.Warn("[Setting] parseSettings: unmarshal default_platform_quotas failed", "error", err)
+		} else {
+			result.DefaultPlatformQuotas = parsed
+		}
+	}
+
+	result.AllowUserViewErrorRequests = settings[SettingKeyAllowUserViewErrorRequests] == "true" // default false
 
 	return result
 }
