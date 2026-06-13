@@ -1692,17 +1692,18 @@ func TestOpenAIGatewayServiceRecordUsage_ChannelImageBillingUsesImageCountAndInd
 
 func newOpenAIImageChannelPricingResolverForTest(t *testing.T, groupID int64, model string, price float64) *ModelPricingResolver {
 	t.Helper()
-	cache := newEmptyChannelCache()
-	cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: model}] = &ChannelModelPricing{
-		BillingMode:     BillingModeImage,
-		PerRequestPrice: &price,
-	}
-	cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
-	cache.groupPlatform[groupID] = ""
-	cache.loadedAt = time.Now()
-	cs := &ChannelService{}
-	cs.cache.Store(cache)
-	return NewModelPricingResolver(cs, NewBillingService(&config.Config{}, nil))
+	poc := NewPricingOverrideCache()
+	poc.Set(PricingOverride{
+		Key: PricingOverrideKey{
+			GroupID:  groupID,
+			Platform: "openai",
+			Model:    model,
+		},
+		BillingMode:     string(BillingModeImage),
+		PerRequestPrice: price,
+	})
+	reader := NewChannelCacheReader(nil, poc)
+	return NewModelPricingResolver(reader, NewBillingService(&config.Config{}, nil))
 }
 
 func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesImageCount(t *testing.T) {
@@ -1731,25 +1732,24 @@ func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesImageCoun
 
 func TestGatewayServiceCalculateRecordUsageCost_ChannelImageBillingUsesSizeTier(t *testing.T) {
 	groupID := int64(127)
-	defaultPrice := 0.10
-	price4K := 0.40
-	cache := newEmptyChannelCache()
-	cache.pricingByGroupModel[channelModelKey{groupID: groupID, model: "gemini-image"}] = &ChannelModelPricing{
-		BillingMode:     BillingModeImage,
-		PerRequestPrice: &defaultPrice,
-		Intervals: []PricingInterval{{
-			TierLabel:       "4K",
-			PerRequestPrice: &price4K,
+	poc := NewPricingOverrideCache()
+	poc.Set(PricingOverride{
+		Key: PricingOverrideKey{
+			GroupID:  groupID,
+			Platform: "openai",
+			Model:    "gemini-image",
+		},
+		BillingMode:     string(BillingModeImage),
+		PerRequestPrice: 0.10,
+		Intervals: []PricingOverrideInterval{{
+			PerRequestPrice: 0.40,
 		}},
-	}
-	cache.channelByGroupID[groupID] = &Channel{ID: groupID, Status: StatusActive}
-	cache.loadedAt = time.Now()
-	channelService := &ChannelService{}
-	channelService.cache.Store(cache)
+	})
+	reader := NewChannelCacheReader(nil, poc)
 
 	svc := &GatewayService{
 		billingService: NewBillingService(&config.Config{}, nil),
-		resolver:       NewModelPricingResolver(channelService, NewBillingService(&config.Config{}, nil)),
+		resolver:       NewModelPricingResolver(reader, NewBillingService(&config.Config{}, nil)),
 	}
 
 	cost := svc.calculateRecordUsageCost(

@@ -588,9 +588,6 @@ func TestOpenAIGatewayService_Forward_WSv2_PoolReuseNotOneToOne(t *testing.T) {
 
 	// 条件式 MarkBroken：正常终端事件退出后连接归还复用，不再无条件销毁。
 	require.Equal(t, int64(1), upgradeCount.Load(), "正常完成后连接应归还复用，不应每次新建")
-	metrics := svc.SnapshotOpenAIWSPoolMetrics()
-	require.GreaterOrEqual(t, metrics.AcquireReuseTotal, int64(1))
-	require.GreaterOrEqual(t, metrics.ConnPickTotal, int64(1))
 }
 
 func TestOpenAIGatewayService_Forward_WSv2_OAuthStoreFalseByDefault(t *testing.T) {

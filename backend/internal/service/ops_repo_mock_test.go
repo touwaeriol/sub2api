@@ -190,6 +190,22 @@ func (m *opsRepoMock) GetLatestDailyBucketDate(ctx context.Context) (time.Time, 
 	return time.Time{}, false, nil
 }
 
+func (m *opsRepoMock) InsertRetryAttempt(ctx context.Context, input *OpsInsertRetryAttemptInput) (int64, error) {
+	return 0, nil
+}
+
+func (m *opsRepoMock) UpdateRetryAttempt(ctx context.Context, input *OpsUpdateRetryAttemptInput) error {
+	return nil
+}
+
+func (m *opsRepoMock) GetLatestRetryAttemptForError(ctx context.Context, sourceErrorID int64) (*OpsRetryAttempt, error) {
+	return nil, nil
+}
+
+func (m *opsRepoMock) ListRetryAttemptsByErrorID(ctx context.Context, sourceErrorID int64, limit int) ([]*OpsRetryAttempt, error) {
+	return []*OpsRetryAttempt{}, nil
+}
+
 func (m *opsRepoMock) LookupDeletedKeyAudit(ctx context.Context, key string) (*DeletedKeyAuditResult, error) {
 	if m.LookupDeletedKeyAuditFn != nil {
 		return m.LookupDeletedKeyAuditFn(ctx, key)

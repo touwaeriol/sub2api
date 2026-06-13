@@ -7,13 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
-	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	coderws "github.com/coder/websocket"
@@ -92,24 +90,6 @@ func TestOpenAIHandleStreamingAwareError_JSONEscaping(t *testing.T) {
 			assert.Equal(t, tt.message, errorObj["message"])
 		})
 	}
-}
-
-func TestResolveOpenAIMessagesMetadataSession_DoesNotDerivePromptCacheKey(t *testing.T) {
-	body := []byte(`{"model":"claude-sonnet-4-5","metadata":{"user_id":"claude-code-session"},"messages":[{"role":"user","content":"hello"}]}`)
-
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "", "claude-sonnet-4-5", body)
-
-	require.NotEmpty(t, sessionHash)
-	require.Empty(t, promptCacheKey)
-}
-
-func TestResolveOpenAIMessagesMetadataSession_PreservesExplicitPromptCacheKey(t *testing.T) {
-	body := []byte(`{"metadata":{"user_id":"claude-code-session"}}`)
-
-	sessionHash, promptCacheKey := resolveOpenAIMessagesMetadataSession("", "explicit-cache", "claude-sonnet-4-5", body)
-
-	require.NotEmpty(t, sessionHash)
-	require.Equal(t, "explicit-cache", promptCacheKey)
 }
 
 func TestOpenAIHandleStreamingAwareError_NonStreaming(t *testing.T) {
@@ -443,41 +423,6 @@ func TestResolveOpenAIMessagesDispatchMappedModel(t *testing.T) {
 		require.Empty(t, resolveOpenAIMessagesDispatchMappedModel(apiKey, "gpt-5.4"))
 		require.Equal(t, "gpt-5.3-codex", resolveOpenAIMessagesDispatchMappedModel(apiKey, "claude-sonnet-4-5-20250929"))
 	})
-}
-
-func TestOpenAIModelMappedBody(t *testing.T) {
-	body := []byte(`{"model":"alias","input":"hello"}`)
-	calls := 0
-
-	forwardBody := openAIModelMappedBody(body, true, "gpt-5.4", func(body []byte, newModel string) []byte {
-		calls++
-		return service.ReplaceModelInBody(body, newModel)
-	})
-
-	require.Equal(t, 1, calls)
-	require.Equal(t, "gpt-5.4", gjson.GetBytes(forwardBody, "model").String())
-	require.Equal(t, "alias", gjson.GetBytes(body, "model").String())
-}
-
-func TestOpenAIModelMappedBodyCache(t *testing.T) {
-	body := []byte(`{"model":"alias","input":"hello"}`)
-	calls := 0
-	mappedBody := newOpenAIModelMappedBodyCache(body, func(body []byte, newModel string) []byte {
-		calls++
-		return service.ReplaceModelInBody(body, newModel)
-	})
-
-	first := mappedBody(true, "gpt-5.4")
-	second := mappedBody(true, "gpt-5.4")
-	third := mappedBody(true, "gpt-5.3-codex")
-	unmapped := mappedBody(false, "ignored")
-
-	require.Equal(t, 2, calls)
-	require.Equal(t, "gpt-5.4", gjson.GetBytes(first, "model").String())
-	require.Equal(t, "gpt-5.4", gjson.GetBytes(second, "model").String())
-	require.Equal(t, "gpt-5.3-codex", gjson.GetBytes(third, "model").String())
-	require.Equal(t, body, unmapped)
-	require.Same(t, &first[0], &second[0])
 }
 
 func TestOpenAIResponses_MissingDependencies_ReturnsServiceUnavailable(t *testing.T) {
@@ -1086,7 +1031,6 @@ func TestOpenAIResponsesWebSocket_FailoverOnUpstreamUsageLimitEvent(t *testing.T
 		nil,
 		nil,
 		nil,
-		nil,
 	)
 
 	cache := &concurrencyCacheMock{
@@ -1263,7 +1207,6 @@ func runOpenAIResponsesWebSocketUsageLogCase(t *testing.T, tc openAIResponsesWSU
 		channelCacheReader,
 		nil,
 		nil,
-		nil, // userPlatformQuotaRepo
 	)
 
 	cache := &concurrencyCacheMock{
@@ -1356,43 +1299,3 @@ func testStringPtr(v string) *string {
 	return &v
 }
 
-func TestOpenAIForwardErrorAlreadyCommunicated(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	t.Run("upstream response failed after write", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
-		before := c.Writer.Size()
-		_, _ = c.Writer.WriteString(`event: response.failed
-data: {"type":"response.failed","error":{"message":"This content was flagged"}}
-
-`)
-
-		reported := openAIForwardErrorAlreadyCommunicated(c, before, errors.New("upstream response failed: This content was flagged"))
-
-		require.True(t, reported)
-	})
-
-	t.Run("no write still needs fallback", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
-
-		reported := openAIForwardErrorAlreadyCommunicated(c, c.Writer.Size(), errors.New("upstream response failed: This content was flagged"))
-
-		require.False(t, reported)
-	})
-
-	t.Run("generic error after write still needs fallback", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Request = httptest.NewRequest(http.MethodPost, EndpointResponses, nil)
-		before := c.Writer.Size()
-		_, _ = c.Writer.WriteString(":\n\n")
-
-		reported := openAIForwardErrorAlreadyCommunicated(c, before, errors.New("stream read error: unexpected EOF"))
-
-		require.False(t, reported)
-	})
-}

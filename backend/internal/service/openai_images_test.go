@@ -92,51 +92,6 @@ func TestOpenAIGatewayServiceParseOpenAIImagesRequest_MultipartEdit(t *testing.T
 	require.Equal(t, OpenAIImagesCapabilityNative, parsed.RequiredCapability)
 }
 
-func TestOpenAIImagesRequestModerationBody_JSONEditIncludesInputImageURLs(t *testing.T) {
-	parsed := &OpenAIImagesRequest{
-		Endpoint:       openAIImagesEditsEndpoint,
-		Prompt:         "replace background",
-		InputImageURLs: []string{"https://example.com/source.png"},
-		MaskImageURL:   "https://example.com/mask.png",
-	}
-
-	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIImages, parsed.ModerationBody())
-
-	require.Equal(t, "replace background", input.Text)
-	require.Equal(t, []string{"https://example.com/source.png", "https://example.com/mask.png"}, input.Images)
-}
-
-func TestOpenAIImagesRequestModerationBody_MultipartEditIncludesUploadsInMemory(t *testing.T) {
-	parsed := &OpenAIImagesRequest{
-		Endpoint: openAIImagesEditsEndpoint,
-		Prompt:   "replace background",
-		Uploads: []OpenAIImagesUpload{{
-			FieldName:   "image",
-			FileName:    "source.png",
-			ContentType: "image/png",
-			Data:        []byte("fake-image-bytes"),
-		}},
-		MaskUpload: &OpenAIImagesUpload{
-			FieldName:   "mask",
-			FileName:    "mask.png",
-			ContentType: "image/png",
-			Data:        []byte("fake-mask-bytes"),
-		},
-	}
-
-	input := ExtractContentModerationInput(ContentModerationProtocolOpenAIImages, parsed.ModerationBody())
-
-	require.Equal(t, "replace background", input.Text)
-	require.Equal(t, []string{
-		"data:image/png;base64,ZmFrZS1pbWFnZS1ieXRlcw==",
-		"data:image/png;base64,ZmFrZS1tYXNrLWJ5dGVz",
-	}, input.Images)
-
-	log := (&ContentModerationService{}).buildLog(ContentModerationCheckInput{}, defaultContentModerationConfig(), ContentModerationActionAllow, false, "", 0, nil, input.ExcerptText(), nil, nil, "")
-	require.Equal(t, "replace background", log.InputExcerpt)
-	require.NotContains(t, log.InputExcerpt, "ZmFrZS")
-}
-
 func TestOpenAIGatewayServiceParseOpenAIImagesRequest_NormalizesOfficialAndCustomSizes(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -968,12 +923,6 @@ func TestOpenAIGatewayServiceForwardImages_APIKeyStreamMultilineSSEDataBillsImag
 	require.Equal(t, 10, result.Usage.InputTokens)
 	require.Equal(t, 18, result.Usage.OutputTokens)
 	require.Equal(t, 8, result.Usage.ImageOutputTokens)
-}
-
-func TestExtractOpenAIImagesBillableCountFromJSONBytes_CompletedEvent(t *testing.T) {
-	body := []byte(`{"type":"image_generation.completed","b64_json":"ZmluYWw=","usage":{"input_tokens":10,"output_tokens":18}}`)
-
-	require.Equal(t, 1, extractOpenAIImagesBillableCountFromJSONBytes(body))
 }
 
 func TestOpenAIGatewayServiceForwardImages_APIKeyEditUsesConfiguredV1BaseURL(t *testing.T) {
