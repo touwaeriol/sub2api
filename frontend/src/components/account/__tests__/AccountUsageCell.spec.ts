@@ -210,7 +210,7 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(getUsage).toHaveBeenCalledWith(2000)
+    expect(getUsage).toHaveBeenCalledWith(2000, undefined)
     expect(wrapper.text()).toContain('5h|15|300')
     expect(wrapper.text()).toContain('7d|77|300')
   })
@@ -271,7 +271,7 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(getUsage).toHaveBeenCalledWith(2001)
+    expect(getUsage).toHaveBeenCalledWith(2001, undefined)
     // 单一数据源：始终使用 /usage API 返回值，忽略 codex 快照
     expect(wrapper.text()).toContain('5h|18|900')
     expect(wrapper.text()).toContain('7d|36|900')
@@ -342,7 +342,7 @@ describe('AccountUsageCell', () => {
 
     // 手动刷新再拉一次
     expect(getUsage).toHaveBeenCalledTimes(2)
-    expect(getUsage).toHaveBeenCalledWith(2010)
+    expect(getUsage).toHaveBeenCalledWith(2010, undefined)
     // 单一数据源：始终使用 /usage API 值
     expect(wrapper.text()).toContain('5h|18|900')
   })
@@ -397,7 +397,7 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 
-	expect(getUsage).toHaveBeenCalledWith(2002)
+	expect(getUsage).toHaveBeenCalledWith(2002, undefined)
 	expect(wrapper.text()).toContain('5h|0|27700')
 	expect(wrapper.text()).toContain('7d|0|27700')
   })
@@ -434,7 +434,7 @@ describe('AccountUsageCell', () => {
 
     await flushPromises()
 
-    expect(getUsage).toHaveBeenCalledWith(2004)
+    expect(getUsage).toHaveBeenCalledWith(2004, undefined)
     expect(wrapper.text()).toContain('5h|12|2099-03-07T12:00:00.000Z')
     expect(wrapper.text()).toContain('7d|34|2099-03-13T12:00:00.000Z')
     errorSpy.mockRestore()
@@ -476,7 +476,7 @@ describe('AccountUsageCell', () => {
 
     await Promise.resolve()
 
-    expect(getUsage).toHaveBeenCalledWith(2005)
+    expect(getUsage).toHaveBeenCalledWith(2005, undefined)
     expect(wrapper.text()).not.toContain('5h|0|')
     expect(wrapper.text()).not.toContain('7d|0|')
 
@@ -617,7 +617,7 @@ describe('AccountUsageCell', () => {
 		const wrapper = mount(AccountUsageCell, {
 		  props: {
 		    account: makeAccount({
-		      id: 2004,
+		      id: 2006,
 		      platform: 'openai',
 		      type: 'oauth',
 		      rate_limit_reset_at: '2099-03-07T12:00:00Z',
@@ -640,7 +640,7 @@ describe('AccountUsageCell', () => {
 
 	await flushPromises()
 
-  expect(getUsage).toHaveBeenCalledWith(2004)
+  expect(getUsage).toHaveBeenCalledWith(2006, undefined)
   expect(wrapper.text()).toContain('5h|100|106540000')
   expect(wrapper.text()).toContain('7d|100|106540000')
   })

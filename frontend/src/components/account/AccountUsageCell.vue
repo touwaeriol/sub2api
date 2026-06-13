@@ -1214,6 +1214,8 @@ watch(openAIUsageRefreshKey, (nextKey, prevKey) => {
   if (!prevKey || nextKey === prevKey) return
   if (props.account.platform !== 'openai' || props.account.type !== 'oauth') return
 
+  // 行数据更新时必须绕过模块级缓存重拉，否则该 watcher 被 5 分钟缓存吞掉而形同虚设
+  _usageCache.delete(props.account.id)
   requestAutoLoad()
 })
 
