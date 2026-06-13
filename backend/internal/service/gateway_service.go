@@ -5047,7 +5047,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 						releaseAdvisorRetryCtx()
 						if buildErr == nil {
 							// 剥离 advisor token；若剥完 anthropic-beta 变空则删除整个 header，避免发送空值。
-							// 注意必须用 delHeaderRaw 而非 Header.Del——后者仅删 canonical 形式，
+							// 注意必须用 deleteHeaderAllForms 而非 Header.Del——后者仅删 canonical 形式，
 							// 而 anthropic-beta 在本项目以小写 wire casing 存储，会留下幽灵 entry。
 							if v := getHeaderRaw(advisorRetryReq.Header, "anthropic-beta"); v != "" {
 								stripped := stripBetaTokenIgnoreCase(v, AdvisorBetaToken)
