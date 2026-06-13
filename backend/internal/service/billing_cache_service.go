@@ -11,6 +11,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -18,6 +20,7 @@ import (
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -36,6 +39,10 @@ var (
 	ErrUserPlatformMonthlyQuotaExhausted = infraerrors.TooManyRequests("USER_PLATFORM_MONTHLY_QUOTA_EXHAUSTED", "Monthly usage quota exhausted for this platform.")
 )
 
+// errBillingCacheUnavailable 内部哨兵：用于 quota 校验路径在 cache==nil 时
+// 与"Redis 故障"走同一条 fail-open + DB 一次性检查的分支。
+var errBillingCacheUnavailable = fmt.Errorf("billing cache unavailable")
+
 // billingCacheLogComponent 是 billing_cache_service 所有子文件（余额/订阅/限速/worker）
 // 异步写入告警日志共用的 component 标签，与 quotaLogComponent (billing_cache_service_quota.go)
 // 平行。集中一处避免各方法散落相同字面量；消息本身（如 "set balance cache failed"）
@@ -53,6 +60,7 @@ type BillingCacheService struct {
 	userGroupRateRepo     UserGroupRateRepository
 	cfg                   *config.Config
 	circuitBreaker        *billingCircuitBreaker
+	userPlatformQuotaRepo UserPlatformQuotaRepository
 
 	serviceQuota ServiceQuotaService
 
@@ -62,6 +70,7 @@ type BillingCacheService struct {
 	cacheWriteMu       sync.RWMutex
 	stopped            atomic.Bool
 	balanceLoadSF      singleflight.Group
+	quotaLoadSF        singleflight.Group
 	// 丢弃日志节流计数器（减少高负载下日志噪音）
 	cacheWriteDropFullCount     uint64
 	cacheWriteDropFullLastLog   int64
@@ -78,6 +87,7 @@ func NewBillingCacheService(
 	userRPMCache UserRPMCache,
 	userGroupRateRepo UserGroupRateRepository,
 	cfg *config.Config,
+	userPlatformQuotaRepo UserPlatformQuotaRepository,
 	serviceQuotas ...ServiceQuotaService,
 ) *BillingCacheService {
 	var serviceQuota ServiceQuotaService
@@ -92,6 +102,7 @@ func NewBillingCacheService(
 		userRPMCache:          userRPMCache,
 		userGroupRateRepo:     userGroupRateRepo,
 		cfg:                   cfg,
+		userPlatformQuotaRepo: userPlatformQuotaRepo,
 		serviceQuota:          serviceQuota,
 	}
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
@@ -660,6 +671,14 @@ func monthlyQuotaWindowExpired(start *time.Time, now time.Time) bool {
 // HasUserPlatformQuotaLimit 判断该 user×platform 是否设了任一非 nil limit。
 // 写入点守卫:无 limit 直接跳过 Redis 写 + 脏集标记,消除无谓写入。
 // fail-safe:任何不确定(simple 模式除外)都返回 true 维持写入。
+// DeleteUserPlatformQuotaCache invalidates the cached quota entry for a user+platform.
+func (s *BillingCacheService) DeleteUserPlatformQuotaCache(ctx context.Context, userID int64, platform string) error {
+	if s.cache == nil {
+		return nil
+	}
+	return s.cache.DeleteUserPlatformQuotaCache(ctx, userID, platform)
+}
+
 func (s *BillingCacheService) HasUserPlatformQuotaLimit(ctx context.Context, userID int64, platform string) bool {
 	if s.cfg.RunMode == config.RunModeSimple {
 		return false

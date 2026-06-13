@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime"
@@ -36,6 +37,11 @@ const (
 
 	openAIImageMaxUploadPartSize = 20 << 20 // 20MB per multipart upload part
 	openAIImagesResponsesMainModel = "gpt-5.4-mini"
+
+	openAIChatGPTStartURL          = "https://chatgpt.com/"
+	openAIChatGPTFilesURL          = "https://chatgpt.com/backend-api/files"
+	openAIImageBackendUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	openAIImageMaxDownloadBytes    = 20 << 20 // 20MB per image download
 )
 
 type OpenAIImagesCapability string

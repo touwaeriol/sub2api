@@ -314,6 +314,19 @@ func isCountTokensUnsupported404(statusCode int, body []byte) bool {
 	}
 	return strings.Contains(msg, "count_tokens") && strings.Contains(msg, "not found")
 }
+// readUpstreamErrorBody reads the upstream error response body with a size limit
+// to prevent OOM on huge error payloads.
+func (s *GatewayService) readUpstreamErrorBody(resp *http.Response) ([]byte, error) {
+	if resp == nil || resp.Body == nil {
+		return nil, nil
+	}
+	limit := gatewayUpstreamErrorBodyReadLimit
+	if s != nil && s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody && s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > int(limit) {
+		limit = int64(s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, limit))
+}
+
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*ForwardResult, error) {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 

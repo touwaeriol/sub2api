@@ -6,6 +6,9 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// OpenAIParsedRequestBodyKey is the gin context key for the pre-parsed request body map.
+const OpenAIParsedRequestBodyKey = "openai_parsed_request_body"
+
 // ToolContinuationSignals 聚合工具续链相关信号，避免重复遍历 input。
 type ToolContinuationSignals struct {
 	HasFunctionCallOutput              bool

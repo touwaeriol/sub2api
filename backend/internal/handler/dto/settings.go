@@ -340,6 +340,7 @@ func (p PublicSettings) MarshalJSON() ([]byte, error) {
 		merged[k] = b
 	}
 	return json.Marshal(merged)
+}
 
 type LoginAgreementDocument struct {
 	ID        string `json:"id"`
