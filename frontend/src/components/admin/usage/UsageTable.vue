@@ -391,18 +391,13 @@ import { getUsageServiceTierLabel } from '@/utils/usageServiceTier'
 import { resolveUsageRequestType } from '@/utils/usageRequestType'
 import {
   BILLING_MODE_TOKEN,
+  BILLING_MODE_IMAGE,
   getBillingModeLabel,
   getBillingModeBadgeClass,
   isImageUsage,
-  getDisplayBillingMode,
   imageUnitPrice,
 } from '@/utils/billingMode'
 import {
-  formatImageBillingSize,
-  formatImageInputSize,
-  formatImageOutputSize,
-  formatImageSizeBreakdown,
-  formatImageSizeSource,
   hasImageOutputTokens,
   textOutputTokens,
   hasImageOutputCost,

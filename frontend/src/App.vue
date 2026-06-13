@@ -61,7 +61,7 @@ watch(
   (isAuthenticated, oldValue) => {
     if (isAuthenticated) {
       if (authStore.isAdmin) {
-        adminComplianceStore.fetchStatus().catch((error) => {
+        adminComplianceStore.fetchStatus().catch((error: unknown) => {
           console.error('Failed to fetch admin compliance status:', error)
         })
       }

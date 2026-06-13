@@ -640,9 +640,8 @@ import Icon from '@/components/icons/Icon.vue'
 
 const { t } = useI18n()
 import { adminAPI } from '@/api/admin'
-import type { AdminUser, AdminGroup, UserAttributeDefinition } from '@/types'
+import type { AdminUser, AdminGroup, UserAttributeDefinition, SelectOption } from '@/types'
 import type { BatchUserUsageStats } from '@/api/admin/dashboard'
-import type { PlatformQuotaItem } from '@/api/admin/users'
 import type { Column } from '@sub2api/plugin-sdk'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import TablePageLayout from '@/components/layout/TablePageLayout.vue'
