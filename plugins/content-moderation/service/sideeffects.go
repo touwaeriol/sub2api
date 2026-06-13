@@ -79,6 +79,10 @@ func (s *ModerationService) applyFlaggedAccountSideEffects(ctx context.Context, 
 	log.ViolationCount = count
 	autoBanJustApplied := false
 	if cfg.AutoBanEnabled && cfg.BanThreshold > 0 && count >= cfg.BanThreshold && s.host != nil {
+		if user, err := s.host.GetUserByID(ctx, *log.UserID); err == nil && user != nil && user.Role == "admin" {
+			s.logger.Warn("content_moderation.autoban_skipped_admin", "user_id", *log.UserID, "role", user.Role, "count", count, "threshold", cfg.BanThreshold)
+			return false
+		}
 		if err := s.host.SetUserDisabled(ctx, *log.UserID, true, "content_moderation_auto_ban"); err != nil {
 			if !errors.Is(err, pluginsdk.ErrHostUserDisableUnavailable) {
 				s.logger.Warn("content_moderation.ban_update_user_failed", "user_id", *log.UserID, "error", err)
