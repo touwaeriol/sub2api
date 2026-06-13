@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -158,4 +159,27 @@ func TestHandleOpenAIUpstreamTransportError_DeadlineExceeded_StillFailsOver(t *t
 
 	var fo *UpstreamFailoverError
 	require.True(t, errors.As(err, &fo), "context.DeadlineExceeded must still return *UpstreamFailoverError")
+}
+
+// 策略关闭网络层换号时：写 502 + 标记 committed + 返回普通 error（非 failover）。
+// 不标记 committed 会导致 /v1/responses 入口的兜底在 502 JSON 后追加 SSE 错误帧。
+func TestHandleOpenAIUpstreamTransportError_PolicyOff_Writes502AndMarksCommitted(t *testing.T) {
+	settingSvc := &SettingService{}
+	settingSvc.gatewayRetryPolicyCache.Store(&cachedGatewayRetryPolicy{
+		policy:    newGatewayRetryPolicy(nil, false, 0, 0),
+		expiresAt: math.MaxInt64,
+	})
+	repo := &openaiTransportAccountRepoStub{}
+	svc := &OpenAIGatewayService{accountRepo: repo, settingService: settingSvc}
+	account := &Account{ID: 88, Name: "policy-off", Platform: PlatformOpenAI}
+	c, rec := newOpenAITransportErrTestContext()
+
+	err := svc.handleOpenAIUpstreamTransportError(context.Background(), c, account,
+		fmt.Errorf("dial tcp: connect: connection timed out"), false)
+
+	require.Error(t, err)
+	var fo *UpstreamFailoverError
+	require.False(t, errors.As(err, &fo), "policy-off must not return a failover error")
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.True(t, IsResponseCommitted(c), "policy-off 502 must mark response committed")
 }

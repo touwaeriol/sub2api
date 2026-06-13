@@ -4804,11 +4804,17 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				_ = resp.Body.Close()
 
 				// [优先级0] 签名池替换重试：用池中有效签名替换请求中的 signature，保留 thinking 能力
-				if poolResp, _, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
+				if poolResp, poolWireBody, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
 					C: c, Account: account, Body: body, RespBody: respBody, GroupID: parsed.GroupID,
 					ReqStream: reqStream, Token: token, TokenType: tokenType, MappedModel: mappedModel,
 					ShouldMimicClaudeCode: shouldMimicClaudeCode, ProxyURL: proxyURL,
 				}); ok {
+					// 池签名重试被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
+					lastWireBody = poolWireBody
+					if err := replaceBody(poolWireBody); err != nil {
+						_ = poolResp.Body.Close()
+						return nil, err
+					}
 					resp = poolResp
 					break
 				}
@@ -5037,7 +5043,7 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 						logger.LegacyPrintf("service.gateway", "Account %d: detected advisor-tool unsupported, retrying without %s beta+tool", account.ID, AdvisorBetaToken)
 						advisorRetryCtx, releaseAdvisorRetryCtx := detachStreamUpstreamContext(ctx, reqStream)
-						advisorRetryReq, _, buildErr := s.buildUpstreamRequest(advisorRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
+						advisorRetryReq, advisorWireBody, buildErr := s.buildUpstreamRequest(advisorRetryCtx, c, account, rectifiedBody, token, tokenType, reqModel, reqStream, shouldMimicClaudeCode)
 						releaseAdvisorRetryCtx()
 						if buildErr == nil {
 							// 剥离 advisor token；若剥完 anthropic-beta 变空则删除整个 header，避免发送空值。
@@ -5053,6 +5059,14 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 							}
 							advisorRetryResp, retryErr := s.httpUpstream.DoWithTLS(advisorRetryReq, proxyURL, account.ID, account.Concurrency, tlsProfile)
 							if retryErr == nil {
+								if advisorRetryResp.StatusCode < 400 {
+									// advisor 整流请求成功后，ParsedRequest 也要描述被接受的修正版。
+									lastWireBody = advisorWireBody
+									if err := replaceBody(advisorWireBody); err != nil {
+										_ = advisorRetryResp.Body.Close()
+										return nil, err
+									}
+								}
 								resp = advisorRetryResp
 								break
 							}
@@ -8569,6 +8583,8 @@ type postUsageBillingParams struct {
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
+// apiKey 为 nil 或 Group 信息缺失时返回空串（调用方据此 short-circuit quota 累加）。
+// 导出供 handler 层调用。
 func PlatformFromAPIKey(apiKey *APIKey) string {
 	if apiKey == nil || apiKey.Group == nil {
 		return ""
@@ -8577,6 +8593,12 @@ func PlatformFromAPIKey(apiKey *APIKey) string {
 }
 
 // QuotaPlatform 返回 user×platform 配额计量使用的平台标识。
+// 强制平台路由（如 /antigravity）优先按 ctx 中的 ForcePlatform 计量，否则回退到
+// APIKey 关联 Group 的平台。
+//
+// 注意：必须用带 ForcePlatform 的请求 context 调用（如 handler 的 c.Request.Context()）。
+// 后扣运行在 worker 池的 background ctx 上没有 ForcePlatform，因此后扣平台由 handler
+// 预先算定、经 RecordUsageInput.QuotaPlatform 传入，不要在后扣链路用 worker ctx 调用本函数。
 func QuotaPlatform(ctx context.Context, apiKey *APIKey) string {
 	if fp, ok := ctx.Value(ctxkey.ForcePlatform).(string); ok && fp != "" {
 		return fp

@@ -102,8 +102,11 @@ func classifyOpenAITransportError(err error) openAITransportErrorClass {
 //     to a healthy account) for all non-canceled errors, or a plain error for
 //     context.Canceled (client gone — no failover, no eviction).
 //
-// It deliberately does NOT write to the response: the handler owns the response
-// (failover, or a protocol-correct error once failover is exhausted).
+// It deliberately does NOT write to the response — the handler owns the response
+// (failover, or a protocol-correct error once failover is exhausted) — with one
+// exception: when the gateway retry policy disables network-error failover, this
+// function writes the 502 itself (handlers assume Forward writes on non-failover
+// errors) and marks the response committed.
 //
 // passthrough tags the Ops error event for the OpenAI passthrough forward path.
 func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Context, c *gin.Context, account *Account, err error, passthrough bool) error {
@@ -132,7 +135,9 @@ func (s *OpenAIGatewayService) handleOpenAIUpstreamTransportError(ctx context.Co
 
 	// 网络层错误是否换号由全局"网关请求重试"策略控制；策略关闭时
 	// 直接写 502（handler 约定：非 failover 错误由 Forward 负责写响应）。
+	// 必须标记 committed，否则 /v1/responses 入口的兜底会在 502 JSON 后追加 SSE 错误帧。
 	if !resolveGatewayRetryPolicy(ctx, s.settingService).ShouldFailoverOnNetworkError() {
+		MarkResponseCommitted(c)
 		c.JSON(http.StatusBadGateway, gin.H{
 			"error": gin.H{
 				"type":    "upstream_error",
