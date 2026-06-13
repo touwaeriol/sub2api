@@ -29,6 +29,9 @@ RUN pnpm install --frozen-lockfile
 
 # Copy frontend source and build
 COPY frontend/ ./
+# Compliance 法务文档：被 src/views/public/LegalDocumentView.vue 以 ?raw 从仓库根 docs/legal 导入，
+# 相对路径解析到 /app/docs/legal，需在构建上下文中显式拷入（.dockerignore 已放行）。
+COPY docs/legal /app/docs/legal
 RUN pnpm run build
 
 # -----------------------------------------------------------------------------

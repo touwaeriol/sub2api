@@ -11,6 +11,9 @@
 *.md
 !deploy/DOCKER.md
 docs/
+# Compliance 法务文档被前端 ?raw 导入（src/views/public/LegalDocumentView.vue），需进入构建上下文
+!docs/legal/
+!docs/legal/*.md
 
 # IDE
 .idea/
