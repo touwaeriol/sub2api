@@ -7512,6 +7512,21 @@ func (s *GatewayService) readUpstreamErrorBody(resp *http.Response) ([]byte, err
 	return io.ReadAll(io.LimitReader(resp.Body, limit))
 }
 
+// writeUpstreamErrorPassthrough 忠实透传上游错误响应：原样回写上游真实状态码、Content-Type
+// 与响应体，并透传 Retry-After（保留 429 退避语义）。用于所有上游错误码（含 401/403/5xx），
+// 替代历史上"拍平成 502 + 写死套话并丢弃上游 body"的做法。
+// 调用前应已 MarkResponseCommitted，且尚未向客户端写入成功响应体。
+func (s *GatewayService) writeUpstreamErrorPassthrough(c *gin.Context, resp *http.Response, body []byte) {
+	contentType := strings.TrimSpace(resp.Header.Get("Content-Type"))
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	if ra := strings.TrimSpace(resp.Header.Get("Retry-After")); ra != "" {
+		c.Header("Retry-After", ra)
+	}
+	c.Data(resp.StatusCode, contentType, body)
+}
+
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account, requestedModel ...string) (*ForwardResult, error) {
 	body, _ := s.readUpstreamErrorBody(resp)
 
@@ -7611,55 +7626,10 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		return nil, fmt.Errorf("upstream error: %d (passthrough rule matched) message=%s", resp.StatusCode, summary)
 	}
 
-	// 根据状态码返回适当的自定义错误响应（不透传上游详细信息）
-	var errType, errMsg string
-	var statusCode int
-
-	switch resp.StatusCode {
-	case 400:
-		c.Data(http.StatusBadRequest, "application/json", body)
-		summary := upstreamMsg
-		if summary == "" {
-			summary = truncateForLog(body, 512)
-		}
-		if summary == "" {
-			return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
-		}
-		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, summary)
-	case 401:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream authentication failed, please contact administrator"
-	case 403:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream access forbidden, please contact administrator"
-	case 429:
-		statusCode = http.StatusTooManyRequests
-		errType = "rate_limit_error"
-		errMsg = "Upstream rate limit exceeded, please retry later"
-	case 529:
-		statusCode = http.StatusServiceUnavailable
-		errType = "overloaded_error"
-		errMsg = "Upstream service overloaded, please retry later"
-	case 500, 502, 503, 504:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream service temporarily unavailable"
-	default:
-		statusCode = http.StatusBadGateway
-		errType = "upstream_error"
-		errMsg = "Upstream request failed"
-	}
-
-	// 返回自定义错误响应
-	c.JSON(statusCode, gin.H{
-		"type": "error",
-		"error": gin.H{
-			"type":    errType,
-			"message": errMsg,
-		},
-	})
+	// 忠实透传上游错误：原样回写上游真实状态码 + 上游响应体（含 Content-Type / Retry-After），
+	// 不再按状态码拍平成 502/503 + 写死套话、不再丢弃上游 body（历史上仅 case 400 这样做，
+	// 现统一到所有错误码）。下游网关因此能拿到上游真实码，不会再触发 "502/503→500" 的二次包装。
+	s.writeUpstreamErrorPassthrough(c, resp, body)
 
 	if upstreamMsg == "" {
 		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
@@ -7774,14 +7744,9 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 		return nil, fmt.Errorf("upstream error: %d (retries exhausted, passthrough rule matched) message=%s", resp.StatusCode, summary)
 	}
 
-	// 返回统一的重试耗尽错误响应
-	c.JSON(http.StatusBadGateway, gin.H{
-		"type": "error",
-		"error": gin.H{
-			"type":    "upstream_error",
-			"message": "Upstream request failed after retries",
-		},
-	})
+	// 忠实透传：重试耗尽后仍原样回写最后一次尝试的上游真实状态码 + 上游 body，
+	// 不再拍平成 502 + "failed after retries" 套话、不丢弃上游 body。
+	s.writeUpstreamErrorPassthrough(c, resp, respBody)
 
 	if upstreamMsg == "" {
 		return nil, fmt.Errorf("upstream error: %d (retries exhausted)", resp.StatusCode)

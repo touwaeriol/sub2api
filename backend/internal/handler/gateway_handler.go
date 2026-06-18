@@ -1601,9 +1601,15 @@ func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, failoverErr *se
 	upstreamMsg := service.ExtractUpstreamErrorMessage(responseBody)
 	service.SetOpsUpstreamError(c, statusCode, upstreamMsg, "")
 
-	// 使用默认的错误映射
-	status, errType, errMsg := h.mapUpstreamError(statusCode)
-	h.handleStreamingAwareError(c, status, errType, errMsg, streamStarted)
+	// 透传最后一次尝试的上游真实错误：保留上游真实状态码（不被 mapUpstreamError 的 502 掩盖），
+	// 并返回上游真实错误消息；仅当上游未给出可读消息时才回退到默认文案。
+	if statusCode <= 0 {
+		statusCode = http.StatusBadGateway
+	}
+	if strings.TrimSpace(upstreamMsg) == "" {
+		_, _, upstreamMsg = h.mapUpstreamError(statusCode)
+	}
+	h.handleStreamingAwareError(c, statusCode, "upstream_error", upstreamMsg, streamStarted)
 }
 
 // matchFailoverPassthroughRule failover 耗尽场景的透传规则匹配（单点实现，供各协议

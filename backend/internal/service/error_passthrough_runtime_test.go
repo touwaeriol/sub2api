@@ -52,14 +52,15 @@ func TestGatewayHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {
 
 	_, err := svc.handleErrorResponse(context.Background(), resp, c, account)
 	require.Error(t, err)
-	assert.Equal(t, http.StatusBadGateway, rec.Code)
+	// 无透传规则时忠实透传上游错误：原样回写上游真实状态码 + 上游响应体，
+	// 不再拍平成 502 + "Upstream request failed" 套话、不丢弃上游 body。
+	assert.Equal(t, http.StatusUnprocessableEntity, rec.Code)
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
 	errField, ok := payload["error"].(map[string]any)
 	require.True(t, ok)
-	assert.Equal(t, "upstream_error", errField["type"])
-	assert.Equal(t, "Upstream request failed", errField["message"])
+	assert.Equal(t, "Invalid schema for field messages", errField["message"])
 }
 
 func TestOpenAIHandleErrorResponse_NoRuleKeepsDefault(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	pkghttputil "github.com/Wei-Shaw/sub2api/internal/pkg/httputil"
@@ -386,5 +387,14 @@ func (h *GatewayHandler) handleCCFailoverExhausted(c *gin.Context, lastErr *serv
 		h.chatCompletionsErrorResponse(c, respCode, "upstream_error", msg)
 		return
 	}
-	h.chatCompletionsErrorResponse(c, statusCode, "server_error", "All available accounts exhausted")
+	// 默认：透传上游真实错误——保留上游真实状态码（不被 502 掩盖、不漏成裸 500 套话），
+	// 并把上游响应体里的真实错误消息带回客户端，而非丢弃成 "All available accounts exhausted"。
+	msg := "All available accounts exhausted"
+	if lastErr != nil {
+		if upstreamMsg := strings.TrimSpace(service.ExtractUpstreamErrorMessage(lastErr.ResponseBody)); upstreamMsg != "" {
+			msg = upstreamMsg
+		}
+		service.SetOpsUpstreamError(c, statusCode, msg, "")
+	}
+	h.chatCompletionsErrorResponse(c, statusCode, "upstream_error", msg)
 }
