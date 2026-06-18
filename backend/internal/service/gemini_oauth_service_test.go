@@ -5,12 +5,14 @@ package service
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 )
@@ -1432,8 +1434,11 @@ func TestGeminiOAuthService_ExchangeCode_InvalidState(t *testing.T) {
 	if err == nil {
 		t.Fatal("应返回错误（state 不匹配）")
 	}
-	if !strings.Contains(err.Error(), "invalid state") {
+	if !strings.Contains(err.Error(), "invalid oauth state") {
 		t.Fatalf("错误信息不匹配: got=%q", err.Error())
+	}
+	if got := infraerrors.Code(err); got != http.StatusBadRequest {
+		t.Fatalf("应返回 400 BadRequest, got=%d", got)
 	}
 }
 

@@ -41,6 +41,9 @@ const (
 	errReasonSettingBetaPolicyInvalid       = "BETA_POLICY_SETTINGS_INVALID"
 	errReasonSettingStreamTimeoutInvalid    = "STREAM_TIMEOUT_SETTINGS_INVALID"
 	errReasonSettingGatewayRetryInvalid     = "GATEWAY_RETRY_SETTINGS_INVALID"
+
+	// 通知邮件模板服务未挂载时返回 503（依赖未就绪），而非 500（内部故障）。
+	errReasonNotificationEmailUnavailable = "NOTIFICATION_EMAIL_SERVICE_UNAVAILABLE"
 )
 
 // semverPattern 预编译 semver 格式校验正则
@@ -3565,7 +3568,9 @@ func (h *SettingHandler) TestWebSearchEmulation(c *gin.Context) {
 
 	result, err := service.TestWebSearch(c.Request.Context(), req.Query)
 	if err != nil {
-		response.ErrorFrom(c, err)
+		// 同 SMTP test 范式：实时上游搜索探测失败属于外部连通性/配置问题，
+		// 不是本服务内部故障，回 400 把真实失败原因透传给运维，而非压成 500。
+		response.BadRequest(c, "Web search test failed: "+err.Error())
 		return
 	}
 	response.Success(c, result)
@@ -3628,7 +3633,7 @@ func (h *SettingHandler) ensureUserAttributeDefinition(ctx context.Context, key,
 // GET /api/v1/admin/settings/email-templates
 func (h *SettingHandler) ListEmailTemplates(c *gin.Context) {
 	if h.notificationEmailService == nil {
-		response.InternalError(c, "notification email service is not configured")
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable(errReasonNotificationEmailUnavailable, "notification email service is not configured"))
 		return
 	}
 	events := h.notificationEmailService.ListEventInfos()
@@ -3649,7 +3654,7 @@ func (h *SettingHandler) ListEmailTemplates(c *gin.Context) {
 // GET /api/v1/admin/settings/email-templates/:event/:locale
 func (h *SettingHandler) GetEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
-		response.InternalError(c, "notification email service is not configured")
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable(errReasonNotificationEmailUnavailable, "notification email service is not configured"))
 		return
 	}
 	tmpl, err := h.notificationEmailService.GetTemplate(c.Request.Context(), c.Param("event"), c.Param("locale"))
@@ -3664,7 +3669,7 @@ func (h *SettingHandler) GetEmailTemplate(c *gin.Context) {
 // PUT /api/v1/admin/settings/email-templates/:event/:locale
 func (h *SettingHandler) UpdateEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
-		response.InternalError(c, "notification email service is not configured")
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable(errReasonNotificationEmailUnavailable, "notification email service is not configured"))
 		return
 	}
 	var req dto.UpdateEmailTemplateRequest
@@ -3684,7 +3689,7 @@ func (h *SettingHandler) UpdateEmailTemplate(c *gin.Context) {
 // POST /api/v1/admin/settings/email-templates/:event/:locale/restore-official
 func (h *SettingHandler) RestoreOfficialEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
-		response.InternalError(c, "notification email service is not configured")
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable(errReasonNotificationEmailUnavailable, "notification email service is not configured"))
 		return
 	}
 	tmpl, err := h.notificationEmailService.RestoreOfficialTemplate(c.Request.Context(), c.Param("event"), c.Param("locale"))
@@ -3699,7 +3704,7 @@ func (h *SettingHandler) RestoreOfficialEmailTemplate(c *gin.Context) {
 // POST /api/v1/admin/settings/email-templates/preview
 func (h *SettingHandler) PreviewEmailTemplate(c *gin.Context) {
 	if h.notificationEmailService == nil {
-		response.InternalError(c, "notification email service is not configured")
+		response.ErrorFrom(c, infraerrors.ServiceUnavailable(errReasonNotificationEmailUnavailable, "notification email service is not configured"))
 		return
 	}
 	var req dto.PreviewEmailTemplateRequest

@@ -129,7 +129,9 @@ func (h *DashboardHandler) GetSnapshotV2(c *gin.Context) {
 		)
 	})
 	if err != nil {
-		response.Error(c, 500, err.Error())
+		// 走 typed 错误协议：坏 filter 等客户端错误（infraerrors.BadRequest）保留 400，
+		// 真内部故障（未 typed）仍由 ErrorFrom 兜底为 500，不再裸 echo err.Error() 压成 500。
+		response.ErrorFrom(c, err)
 		return
 	}
 	if cached.ETag != "" {

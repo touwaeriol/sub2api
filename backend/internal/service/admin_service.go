@@ -758,7 +758,7 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	// Protect admin users: cannot disable admin accounts
 	if user.Role == "admin" && input.Status == "disabled" {
-		return nil, errors.New("cannot disable admin user")
+		return nil, infraerrors.Forbidden("FORBIDDEN", "cannot disable admin user")
 	}
 
 	oldConcurrency := user.Concurrency
@@ -869,7 +869,7 @@ func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 		return err
 	}
 	if user.Role == "admin" {
-		return errors.New("cannot delete admin user")
+		return infraerrors.Forbidden("FORBIDDEN", "cannot delete admin user")
 	}
 
 	apiKeys, err := s.listUserAPIKeysForDeletion(ctx, id)
@@ -1004,7 +1004,7 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	}
 
 	if user.Balance < 0 {
-		return nil, fmt.Errorf("balance cannot be negative, current balance: %.2f, requested operation would result in: %.2f", oldBalance, user.Balance)
+		return nil, infraerrors.BadRequest("INVALID_ARGUMENT", fmt.Sprintf("balance cannot be negative, current balance: %.2f, requested operation would result in: %.2f", oldBalance, user.Balance))
 	}
 
 	if err := s.userRepo.Update(ctx, user); err != nil {
@@ -1968,29 +1968,29 @@ func normalizePrice(price *float64) *float64 {
 func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGroupID, fallbackGroupID int64) error {
 	// 不能将自己设置为降级分组
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
-		return fmt.Errorf("cannot set self as fallback group")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "cannot set self as fallback group")
 	}
 
 	visited := map[int64]struct{}{}
 	nextID := fallbackGroupID
 	for {
 		if _, seen := visited[nextID]; seen {
-			return fmt.Errorf("fallback group cycle detected")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group cycle detected")
 		}
 		visited[nextID] = struct{}{}
 		if currentGroupID > 0 && nextID == currentGroupID {
-			return fmt.Errorf("fallback group cycle detected")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group cycle detected")
 		}
 
 		// 检查降级分组是否存在
 		fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, nextID)
 		if err != nil {
-			return fmt.Errorf("fallback group not found: %w", err)
+			return infraerrors.NotFound("NOT_FOUND", fmt.Sprintf("fallback group not found: %v", err))
 		}
 
 		// 降级分组不能启用 claude_code_only，否则会造成死循环
 		if nextID == fallbackGroupID && fallbackGroup.ClaudeCodeOnly {
-			return fmt.Errorf("fallback group cannot have claude_code_only enabled")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group cannot have claude_code_only enabled")
 		}
 
 		if fallbackGroup.FallbackGroupID == nil {
@@ -2006,27 +2006,27 @@ func (s *adminServiceImpl) validateFallbackGroup(ctx context.Context, currentGro
 // fallbackGroupID: 兜底分组 ID
 func (s *adminServiceImpl) validateFallbackGroupOnInvalidRequest(ctx context.Context, currentGroupID int64, platform, subscriptionType string, fallbackGroupID int64) error {
 	if platform != PlatformAnthropic && platform != PlatformAntigravity {
-		return fmt.Errorf("invalid request fallback only supported for anthropic or antigravity groups")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "invalid request fallback only supported for anthropic or antigravity groups")
 	}
 	if subscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("subscription groups cannot set invalid request fallback")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "subscription groups cannot set invalid request fallback")
 	}
 	if currentGroupID > 0 && currentGroupID == fallbackGroupID {
-		return fmt.Errorf("cannot set self as invalid request fallback group")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "cannot set self as invalid request fallback group")
 	}
 
 	fallbackGroup, err := s.groupRepo.GetByIDLite(ctx, fallbackGroupID)
 	if err != nil {
-		return fmt.Errorf("fallback group not found: %w", err)
+		return infraerrors.NotFound("NOT_FOUND", fmt.Sprintf("fallback group not found: %v", err))
 	}
 	if fallbackGroup.Platform != PlatformAnthropic {
-		return fmt.Errorf("fallback group must be anthropic platform")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group must be anthropic platform")
 	}
 	if fallbackGroup.SubscriptionType == SubscriptionTypeSubscription {
-		return fmt.Errorf("fallback group cannot be subscription type")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group cannot be subscription type")
 	}
 	if fallbackGroup.FallbackGroupIDOnInvalidRequest != nil {
-		return fmt.Errorf("fallback group cannot have invalid request fallback configured")
+		return infraerrors.BadRequest("INVALID_ARGUMENT", "fallback group cannot have invalid request fallback configured")
 	}
 	return nil
 }
@@ -3254,15 +3254,15 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 	// 如果是订阅类型，验证必须有 GroupID
 	if input.Type == RedeemTypeSubscription {
 		if input.GroupID == nil {
-			return nil, errors.New("group_id is required for subscription type")
+			return nil, infraerrors.BadRequest("INVALID_ARGUMENT", "group_id is required for subscription type")
 		}
 		// 验证分组存在且为订阅类型
 		group, err := s.groupRepo.GetByID(ctx, *input.GroupID)
 		if err != nil {
-			return nil, fmt.Errorf("group not found: %w", err)
+			return nil, infraerrors.NotFound("NOT_FOUND", fmt.Sprintf("group not found: %v", err))
 		}
 		if !group.IsSubscriptionType() {
-			return nil, errors.New("group must be subscription type")
+			return nil, infraerrors.BadRequest("INVALID_ARGUMENT", "group must be subscription type")
 		}
 	}
 

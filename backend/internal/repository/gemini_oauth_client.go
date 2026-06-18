@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -69,7 +70,8 @@ func (c *geminiOAuthClient) ExchangeCode(ctx context.Context, oauthType, code, c
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if !resp.IsSuccessState() {
-		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", resp.StatusCode, geminicli.SanitizeBodyForLogs(resp.String()))
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("token exchange failed: status %d, body: %s", resp.StatusCode, geminicli.SanitizeBodyForLogs(resp.String())))
 	}
 	return &tokenResp, nil
 }
@@ -112,7 +114,8 @@ func (c *geminiOAuthClient) RefreshToken(ctx context.Context, oauthType, refresh
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	if !resp.IsSuccessState() {
-		return nil, fmt.Errorf("token refresh failed: status %d, body: %s", resp.StatusCode, geminicli.SanitizeBodyForLogs(resp.String()))
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("token refresh failed: status %d, body: %s", resp.StatusCode, geminicli.SanitizeBodyForLogs(resp.String())))
 	}
 	return &tokenResp, nil
 }

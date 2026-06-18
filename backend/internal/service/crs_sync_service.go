@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/util/urlvalidator"
 )
@@ -201,18 +202,18 @@ func (s *CRSSyncService) fetchCRSExport(ctx context.Context, baseURL, username, 
 	if s.cfg.Security.URLAllowlist.Enabled {
 		normalized, err := normalizeBaseURL(normalizedURL, s.cfg.Security.URLAllowlist.CRSHosts, s.cfg.Security.URLAllowlist.AllowPrivateHosts)
 		if err != nil {
-			return nil, err
+			return nil, infraerrors.BadRequest("INVALID_ARGUMENT", err.Error())
 		}
 		normalizedURL = normalized
 	} else {
 		normalized, err := urlvalidator.ValidateURLFormat(normalizedURL, s.cfg.Security.URLAllowlist.AllowInsecureHTTP)
 		if err != nil {
-			return nil, fmt.Errorf("invalid base_url: %w", err)
+			return nil, infraerrors.BadRequest("INVALID_ARGUMENT", fmt.Sprintf("invalid base_url: %v", err))
 		}
 		normalizedURL = normalized
 	}
 	if strings.TrimSpace(username) == "" || strings.TrimSpace(password) == "" {
-		return nil, errors.New("username and password are required")
+		return nil, infraerrors.BadRequest("INVALID_ARGUMENT", "username and password are required")
 	}
 
 	client, err := httpclient.GetClient(httpclient.Options{
@@ -1165,12 +1166,14 @@ func crsLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("crs login failed: status=%d body=%s", resp.StatusCode, string(raw))
+		return "", infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("crs login failed: status=%d body=%s", resp.StatusCode, string(raw)))
 	}
 
 	var parsed crsLoginResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", fmt.Errorf("crs login parse failed: %w", err)
+		return "", infraerrors.FromUpstream(http.StatusBadGateway, "UPSTREAM_ERROR",
+			fmt.Sprintf("crs login parse failed: %v", err))
 	}
 	if !parsed.Success || strings.TrimSpace(parsed.Token) == "" {
 		msg := parsed.Message
@@ -1180,7 +1183,7 @@ func crsLogin(ctx context.Context, client *http.Client, baseURL, username, passw
 		if msg == "" {
 			msg = "unknown error"
 		}
-		return "", errors.New("crs login failed: " + msg)
+		return "", infraerrors.FromUpstream(http.StatusBadGateway, "UPSTREAM_ERROR", "crs login failed: "+msg)
 	}
 	return parsed.Token, nil
 }
@@ -1200,12 +1203,14 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("crs export failed: status=%d body=%s", resp.StatusCode, string(raw))
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("crs export failed: status=%d body=%s", resp.StatusCode, string(raw)))
 	}
 
 	var parsed crsExportResponse
 	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return nil, fmt.Errorf("crs export parse failed: %w", err)
+		return nil, infraerrors.FromUpstream(http.StatusBadGateway, "UPSTREAM_ERROR",
+			fmt.Sprintf("crs export parse failed: %v", err))
 	}
 	if !parsed.Success {
 		msg := parsed.Message
@@ -1215,7 +1220,7 @@ func crsExportAccounts(ctx context.Context, client *http.Client, baseURL, adminT
 		if msg == "" {
 			msg = "unknown error"
 		}
-		return nil, errors.New("crs export failed: " + msg)
+		return nil, infraerrors.FromUpstream(http.StatusBadGateway, "UPSTREAM_ERROR", "crs export failed: "+msg)
 	}
 	return &parsed, nil
 }

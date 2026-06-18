@@ -85,7 +85,7 @@ func (s *GroupService) Create(ctx context.Context, req CreateGroupRequest) (*Gro
 	imageRateMultiplier := 1.0
 	if req.ImageRateMultiplier != nil {
 		if *req.ImageRateMultiplier < 0 {
-			return nil, fmt.Errorf("image_rate_multiplier must be >= 0")
+			return nil, infraerrors.BadRequest("INVALID_IMAGE_RATE_MULTIPLIER", "image_rate_multiplier must be >= 0")
 		}
 		imageRateMultiplier = *req.ImageRateMultiplier
 	}
@@ -189,7 +189,7 @@ func (s *GroupService) Update(ctx context.Context, id int64, req UpdateGroupRequ
 	}
 	if req.ImageRateMultiplier != nil {
 		if *req.ImageRateMultiplier < 0 {
-			return nil, fmt.Errorf("image_rate_multiplier must be >= 0")
+			return nil, infraerrors.BadRequest("INVALID_IMAGE_RATE_MULTIPLIER", "image_rate_multiplier must be >= 0")
 		}
 		group.ImageRateMultiplier = *req.ImageRateMultiplier
 	}

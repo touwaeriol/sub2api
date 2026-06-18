@@ -191,16 +191,16 @@ func (s *RedeemService) GenerateRandomCode() (string, error) {
 // GenerateCodes 批量生成兑换码
 func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequest) ([]RedeemCode, error) {
 	if req.Count <= 0 {
-		return nil, errors.New("count must be greater than 0")
+		return nil, infraerrors.BadRequest("REDEEM_CODE_COUNT_INVALID", "count must be greater than 0")
 	}
 
 	// 邀请码类型不需要数值，其他类型需要非零值（支持负数用于退款）
 	if req.Type != RedeemTypeInvitation && req.Value == 0 {
-		return nil, errors.New("value must not be zero")
+		return nil, infraerrors.BadRequest("REDEEM_CODE_VALUE_INVALID", "value must not be zero")
 	}
 
 	if req.Count > 1000 {
-		return nil, errors.New("cannot generate more than 1000 codes at once")
+		return nil, infraerrors.BadRequest("REDEEM_CODE_COUNT_TOO_LARGE", "cannot generate more than 1000 codes at once")
 	}
 
 	codeType := req.Type
@@ -242,17 +242,17 @@ func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequ
 // to be mapped to a deterministic redeem code.
 func (s *RedeemService) CreateCode(ctx context.Context, code *RedeemCode) error {
 	if code == nil {
-		return errors.New("redeem code is required")
+		return infraerrors.BadRequest("REDEEM_CODE_REQUIRED", "redeem code is required")
 	}
 	code.Code = strings.TrimSpace(code.Code)
 	if code.Code == "" {
-		return errors.New("code is required")
+		return infraerrors.BadRequest("REDEEM_CODE_CODE_REQUIRED", "code is required")
 	}
 	if code.Type == "" {
 		code.Type = RedeemTypeBalance
 	}
 	if code.Type != RedeemTypeInvitation && code.Value == 0 {
-		return errors.New("value must not be zero")
+		return infraerrors.BadRequest("REDEEM_CODE_VALUE_INVALID", "value must not be zero")
 	}
 	if code.Status == "" {
 		code.Status = StatusUnused
@@ -483,7 +483,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 		}
 
 	default:
-		return nil, fmt.Errorf("unsupported redeem type: %s", redeemCode.Type)
+		return nil, infraerrors.BadRequest("REDEEM_CODE_TYPE_UNSUPPORTED", fmt.Sprintf("unsupported redeem type: %s", redeemCode.Type))
 	}
 
 	// 提交事务

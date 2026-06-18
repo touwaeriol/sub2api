@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/httpclient"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
@@ -213,11 +214,11 @@ func validateTierID(tierID string) error {
 		return nil // Empty is allowed
 	}
 	if len(tierID) > 64 {
-		return fmt.Errorf("tier_id exceeds maximum length of 64 characters")
+		return infraerrors.BadRequest("INVALID_TIER_ID", "tier_id exceeds maximum length of 64 characters")
 	}
 	// Allow alphanumeric, underscore, hyphen, and slash (for tier paths)
 	if !regexp.MustCompile(`^[a-zA-Z0-9_/-]+$`).MatchString(tierID) {
-		return fmt.Errorf("tier_id contains invalid characters")
+		return infraerrors.BadRequest("INVALID_TIER_ID", "tier_id contains invalid characters")
 	}
 	return nil
 }
@@ -453,7 +454,7 @@ func (s *GeminiOAuthService) ExchangeCode(ctx context.Context, input *GeminiExch
 	}
 	if strings.TrimSpace(input.State) == "" || input.State != session.State {
 		logger.LegacyPrintf("service.gemini_oauth", "[GeminiOAuth] ERROR: Invalid state")
-		return nil, fmt.Errorf("invalid state")
+		return nil, infraerrors.BadRequest("INVALID_OAUTH_STATE", "invalid oauth state")
 	}
 
 	proxyURL := session.ProxyURL

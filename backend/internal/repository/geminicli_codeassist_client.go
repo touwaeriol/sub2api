@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/geminicli"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/googleapi"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -51,12 +52,15 @@ func (c *geminiCliCodeAssistClient) LoadCodeAssist(ctx context.Context, accessTo
 		if googleapi.IsServiceDisabledError(body) {
 			activationURL := googleapi.ExtractActivationURL(body)
 			if activationURL != "" {
-				return nil, fmt.Errorf("gemini API not enabled for this project, please enable it by visiting: %s\n\nAfter enabling the API, wait a few minutes for the changes to propagate, then try again", activationURL)
+				return nil, infraerrors.FromUpstream(resp.StatusCode, "GEMINI_API_DISABLED",
+					fmt.Sprintf("gemini API not enabled for this project, please enable it by visiting: %s\n\nAfter enabling the API, wait a few minutes for the changes to propagate, then try again", activationURL))
 			}
-			return nil, fmt.Errorf("gemini API not enabled for this project, please enable it in the Google Cloud Console at: https://console.cloud.google.com/apis/library/cloudaicompanion.googleapis.com")
+			return nil, infraerrors.FromUpstream(resp.StatusCode, "GEMINI_API_DISABLED",
+				"gemini API not enabled for this project, please enable it in the Google Cloud Console at: https://console.cloud.google.com/apis/library/cloudaicompanion.googleapis.com")
 		}
 
-		return nil, fmt.Errorf("loadCodeAssist failed: status %d, body: %s", resp.StatusCode, sanitizedBody)
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("loadCodeAssist failed: status %d, body: %s", resp.StatusCode, sanitizedBody))
 	}
 	fmt.Printf("[CodeAssist] LoadCodeAssist success: status %d, response: %+v\n", resp.StatusCode, out)
 	return &out, nil
@@ -95,12 +99,15 @@ func (c *geminiCliCodeAssistClient) OnboardUser(ctx context.Context, accessToken
 		if googleapi.IsServiceDisabledError(body) {
 			activationURL := googleapi.ExtractActivationURL(body)
 			if activationURL != "" {
-				return nil, fmt.Errorf("gemini API not enabled for this project, please enable it by visiting: %s\n\nAfter enabling the API, wait a few minutes for the changes to propagate, then try again", activationURL)
+				return nil, infraerrors.FromUpstream(resp.StatusCode, "GEMINI_API_DISABLED",
+					fmt.Sprintf("gemini API not enabled for this project, please enable it by visiting: %s\n\nAfter enabling the API, wait a few minutes for the changes to propagate, then try again", activationURL))
 			}
-			return nil, fmt.Errorf("gemini API not enabled for this project, please enable it in the Google Cloud Console at: https://console.cloud.google.com/apis/library/cloudaicompanion.googleapis.com")
+			return nil, infraerrors.FromUpstream(resp.StatusCode, "GEMINI_API_DISABLED",
+				"gemini API not enabled for this project, please enable it in the Google Cloud Console at: https://console.cloud.google.com/apis/library/cloudaicompanion.googleapis.com")
 		}
 
-		return nil, fmt.Errorf("onboardUser failed: status %d, body: %s", resp.StatusCode, sanitizedBody)
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("onboardUser failed: status %d, body: %s", resp.StatusCode, sanitizedBody))
 	}
 	fmt.Printf("[CodeAssist] OnboardUser success: status %d, response: %+v\n", resp.StatusCode, out)
 	return &out, nil

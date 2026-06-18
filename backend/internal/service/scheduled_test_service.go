@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/robfig/cron/v3"
 )
 
@@ -31,7 +32,7 @@ func NewScheduledTestService(
 func (s *ScheduledTestService) CreatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
 	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("invalid cron expression: %w", err)
+		return nil, infraerrors.BadRequest("SCHEDULED_TEST_CRON_INVALID", fmt.Sprintf("invalid cron expression: %v", err))
 	}
 	plan.NextRunAt = &nextRun
 
@@ -56,7 +57,7 @@ func (s *ScheduledTestService) ListPlansByAccount(ctx context.Context, accountID
 func (s *ScheduledTestService) UpdatePlan(ctx context.Context, plan *ScheduledTestPlan) (*ScheduledTestPlan, error) {
 	nextRun, err := computeNextRun(plan.CronExpression, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("invalid cron expression: %w", err)
+		return nil, infraerrors.BadRequest("SCHEDULED_TEST_CRON_INVALID", fmt.Sprintf("invalid cron expression: %v", err))
 	}
 	plan.NextRunAt = &nextRun
 

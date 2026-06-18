@@ -691,9 +691,13 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 		return nil, upErr
 	}
 
-	// If the account is not configured to handle this status code, fall back to
-	// a generic gateway error without exposing upstream internals (mirrors
-	// handleCompatErrorResponse).
+	// If the account is not configured to handle this status code, pass the real
+	// upstream status code through to the client instead of collapsing it into a
+	// 500. Mirrors the passthrough write in handleErrorResponse /
+	// handleCompatErrorResponse (openai_gateway_service.go:4339 / :4487), which
+	// emit resp.StatusCode + "upstream_error" + the sanitized upstream message.
+	// This keeps upstream 4xx as 4xx (and 5xx as the real 5xx) rather than
+	// masking a transient/client error as an internal failure.
 	if !account.ShouldHandleErrorCode(resp.StatusCode) {
 		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 			Platform:           account.Platform,
@@ -706,9 +710,9 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			Detail:             upstreamDetail,
 		})
 		upErr := &OpenAIImagesUpstreamError{
-			StatusCode:        http.StatusInternalServerError,
+			StatusCode:        resp.StatusCode,
 			ErrorType:         "upstream_error",
-			Message:           "Upstream gateway error",
+			Message:           upstreamMsg,
 			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
 		}
 		writeOpenAIImagesUpstreamErrorResponse(c, upErr)

@@ -3,7 +3,6 @@ package service
 
 import (
 	"encoding/json"
-	"errors"
 	"hash/fnv"
 	"log/slog"
 	"reflect"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 )
 
 type Account struct {
@@ -2101,40 +2101,40 @@ func ValidateQuotaResetConfig(extra map[string]any) error {
 	// 校验时区
 	if tz, ok := extra["quota_reset_timezone"].(string); ok && tz != "" {
 		if _, err := time.LoadLocation(tz); err != nil {
-			return errors.New("invalid quota_reset_timezone: must be a valid IANA timezone name")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "invalid quota_reset_timezone: must be a valid IANA timezone name")
 		}
 	}
 	// 日配额重置模式
 	if mode, ok := extra["quota_daily_reset_mode"].(string); ok {
 		if mode != "rolling" && mode != "fixed" {
-			return errors.New("quota_daily_reset_mode must be 'rolling' or 'fixed'")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "quota_daily_reset_mode must be 'rolling' or 'fixed'")
 		}
 	}
 	// 日配额重置小时
 	if v, ok := extra["quota_daily_reset_hour"]; ok {
 		hour := int(parseExtraFloat64(v))
 		if hour < 0 || hour > 23 {
-			return errors.New("quota_daily_reset_hour must be between 0 and 23")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "quota_daily_reset_hour must be between 0 and 23")
 		}
 	}
 	// 周配额重置模式
 	if mode, ok := extra["quota_weekly_reset_mode"].(string); ok {
 		if mode != "rolling" && mode != "fixed" {
-			return errors.New("quota_weekly_reset_mode must be 'rolling' or 'fixed'")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "quota_weekly_reset_mode must be 'rolling' or 'fixed'")
 		}
 	}
 	// 周配额重置星期几
 	if v, ok := extra["quota_weekly_reset_day"]; ok {
 		day := int(parseExtraFloat64(v))
 		if day < 0 || day > 6 {
-			return errors.New("quota_weekly_reset_day must be between 0 (Sunday) and 6 (Saturday)")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "quota_weekly_reset_day must be between 0 (Sunday) and 6 (Saturday)")
 		}
 	}
 	// 周配额重置小时
 	if v, ok := extra["quota_weekly_reset_hour"]; ok {
 		hour := int(parseExtraFloat64(v))
 		if hour < 0 || hour > 23 {
-			return errors.New("quota_weekly_reset_hour must be between 0 and 23")
+			return infraerrors.BadRequest("INVALID_ARGUMENT", "quota_weekly_reset_hour must be between 0 and 23")
 		}
 	}
 	return nil

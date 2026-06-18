@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
@@ -49,6 +50,9 @@ const (
 	opsListViewErrors   = "errors"
 	opsListViewExcluded = "excluded"
 	opsListViewAll      = "all"
+
+	// 坏 filter（invalid sort/kind/platform 等）走 typed BadRequest 的 reason。
+	errReasonOpsInvalidRequestFilter = "OPS_INVALID_REQUEST_FILTER"
 )
 
 func parseOpsViewParam(c *gin.Context) string {
@@ -608,9 +612,10 @@ func (h *OpsHandler) ListRequestDetails(c *gin.Context) {
 
 	out, err := h.opsService.ListRequestDetails(c.Request.Context(), filter)
 	if err != nil {
-		// Invalid sort/kind/platform etc should be a bad request; keep it simple.
+		// 坏 filter（invalid sort/kind/platform 等）是客户端错误，回 400 并透传原因；
+		// 用 typed BadRequest 走统一错误协议，其余真内部错误保持 500。
 		if strings.Contains(strings.ToLower(err.Error()), "invalid") {
-			response.BadRequest(c, err.Error())
+			response.ErrorFrom(c, infraerrors.BadRequest(errReasonOpsInvalidRequestFilter, err.Error()))
 			return
 		}
 		response.Error(c, http.StatusInternalServerError, "Failed to list request details")

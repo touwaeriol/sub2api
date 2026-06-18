@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/logger"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/oauth"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/proxyurl"
@@ -64,7 +65,8 @@ func (s *claudeOAuthService) GetOrganizationUUID(ctx context.Context, sessionKey
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 1 Response - Status: %d", resp.StatusCode)
 
 	if !resp.IsSuccessState() {
-		return "", fmt.Errorf("failed to get organizations: status %d, body: %s", resp.StatusCode, resp.String())
+		return "", infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("failed to get organizations: status %d, body: %s", resp.StatusCode, resp.String()))
 	}
 
 	if len(orgs) == 0 {
@@ -142,7 +144,8 @@ func (s *claudeOAuthService) GetAuthorizationCode(ctx context.Context, sessionKe
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 2 Response - Status: %d, Body: %s", resp.StatusCode, logredact.RedactJSON(resp.Bytes()))
 
 	if !resp.IsSuccessState() {
-		return "", fmt.Errorf("failed to get authorization code: status %d, body: %s", resp.StatusCode, resp.String())
+		return "", infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("failed to get authorization code: status %d, body: %s", resp.StatusCode, resp.String()))
 	}
 
 	if result.RedirectURI == "" {
@@ -225,7 +228,8 @@ func (s *claudeOAuthService) ExchangeCodeForToken(ctx context.Context, code, cod
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 3 Response - Status: %d, Body: %s", resp.StatusCode, logredact.RedactJSON(resp.Bytes()))
 
 	if !resp.IsSuccessState() {
-		return nil, fmt.Errorf("token exchange failed: status %d, body: %s", resp.StatusCode, resp.String())
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("token exchange failed: status %d, body: %s", resp.StatusCode, resp.String()))
 	}
 
 	logger.LegacyPrintf("repository.claude_oauth", "[OAuth] Step 3 SUCCESS - Got access token")
@@ -260,7 +264,8 @@ func (s *claudeOAuthService) RefreshToken(ctx context.Context, refreshToken, pro
 	}
 
 	if !resp.IsSuccessState() {
-		return nil, fmt.Errorf("token refresh failed: status %d, body: %s", resp.StatusCode, resp.String())
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR",
+			fmt.Sprintf("token refresh failed: status %d, body: %s", resp.StatusCode, resp.String()))
 	}
 
 	return &tokenResp, nil

@@ -96,7 +96,7 @@ func (s *claudeUsageService) FetchUsageWithOptions(ctx context.Context, opts *se
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		msg := fmt.Sprintf("API returned status %d: %s", resp.StatusCode, string(body))
-		return nil, infraerrors.New(http.StatusInternalServerError, "UPSTREAM_ERROR", msg)
+		return nil, infraerrors.FromUpstream(resp.StatusCode, "UPSTREAM_ERROR", msg)
 	}
 
 	var usageResp service.ClaudeUsageResponse

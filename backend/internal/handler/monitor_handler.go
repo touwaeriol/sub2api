@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"net/http"
 	"strings"
 	"time"
 
@@ -84,7 +83,9 @@ func (h *MonitorHandler) GetGroupAccountMonitor(c *gin.Context) {
 	const maxPageSize = 500
 	accounts, _, err := h.accountLister.ListAccounts(ctx, 1, maxPageSize, "", "", "", "", group.ID, "", "name", "asc")
 	if err != nil {
-		response.Error(c, http.StatusInternalServerError, "failed to load accounts")
+		// 与同函数 line76（findGroup）一致：用 ErrorFrom 透传 typed 错误码，
+		// 不丢 err、不把上游/校验类错误硬编码成 500。
+		response.ErrorFrom(c, err)
 		return
 	}
 
