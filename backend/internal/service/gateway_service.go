@@ -1747,6 +1747,21 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	if err != nil {
 		return nil, err
 	}
+	// service_quota 账号级预过滤：调用经 BillingCacheService facade 收敛（网关不直接看到
+	// ServiceQuotaService 接口）；ticket nil / plan nil / 未启用 / 空候选都在 facade 内 fast-path，
+	// fail-open 由底层 SnapshotForAccounts 兜底。命中 account-/channel-scope 的候选被剔除后，
+	// 若候选清空则照常走 ErrNoAvailableAccounts / 503 链路。
+	if ticket := BillingTicketFromContext(ctx); ticket != nil {
+		if plan := ticket.PreCheckPlan(); plan != nil {
+			base := ServiceQuotaCheckRequest{
+				UserID:   plan.Req.UserID,
+				Platform: platform,
+				GroupID:  derefGroupID(groupID),
+				Model:    requestedModel,
+			}
+			accounts = s.billingCacheService.FilterAccountsByServiceQuotaSchedulability(ctx, ticket, base, accounts)
+		}
+	}
 	if len(accounts) == 0 {
 		return nil, ErrNoAvailableAccounts
 	}
@@ -8761,6 +8776,8 @@ type RecordUsageInput struct {
 	APIKeyService      APIKeyQuotaUpdater // 可选：用于更新API Key配额
 	QuotaPlatform      string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
 
+	ServiceQuotaRequest ServiceQuotaCheckRequest // service_quota 请求上下文（handler 装填 Model/AccountID/ChannelID）
+
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
 }
 
@@ -9247,8 +9264,9 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		RequestPayloadHash: input.RequestPayloadHash,
 		ForceCacheBilling:  input.ForceCacheBilling,
 		APIKeyService:      input.APIKeyService,
-		QuotaPlatform:      input.QuotaPlatform,
-		ChannelUsageFields: input.ChannelUsageFields,
+		QuotaPlatform:       input.QuotaPlatform,
+		ServiceQuotaRequest: input.ServiceQuotaRequest,
+		ChannelUsageFields:  input.ChannelUsageFields,
 	}, &recordUsageOpts{})
 }
 
@@ -9270,6 +9288,8 @@ type RecordUsageLongContextInput struct {
 	APIKeyService         APIKeyQuotaUpdater // API Key 配额服务（可选）
 	QuotaPlatform         string             // user×platform 配额计量平台：handler 在请求 ctx 内经 QuotaPlatform() 算定后传入（后扣运行在 worker 池 background ctx 上，取不到 ForcePlatform）
 
+	ServiceQuotaRequest ServiceQuotaCheckRequest // service_quota 请求上下文（handler 装填 Model/AccountID/ChannelID）
+
 	ChannelUsageFields // 渠道映射信息（由 handler 在 Forward 前解析）
 }
 
@@ -9288,8 +9308,9 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 		RequestPayloadHash: input.RequestPayloadHash,
 		ForceCacheBilling:  input.ForceCacheBilling,
 		APIKeyService:      input.APIKeyService,
-		QuotaPlatform:      input.QuotaPlatform,
-		ChannelUsageFields: input.ChannelUsageFields,
+		QuotaPlatform:       input.QuotaPlatform,
+		ServiceQuotaRequest: input.ServiceQuotaRequest,
+		ChannelUsageFields:  input.ChannelUsageFields,
 	}, &recordUsageOpts{
 		LongContextThreshold:  input.LongContextThreshold,
 		LongContextMultiplier: input.LongContextMultiplier,
@@ -9311,6 +9332,7 @@ type recordUsageCoreInput struct {
 	ForceCacheBilling  bool
 	APIKeyService      APIKeyQuotaUpdater
 	QuotaPlatform      string
+	ServiceQuotaRequest ServiceQuotaCheckRequest
 	ChannelUsageFields
 }
 
@@ -9431,6 +9453,34 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
+
+	// service_quota 用量计数：把本次 token/cost 增量喂给 TPM/TPD/cost 限流器。
+	// 故意脱离请求 ctx（客户端断开不应漏记），2 分钟硬上限防 Redis 挂死阻塞 worker。
+	// facade nil-guard + Record fail-open：未启用 / 无规则时静默 no-op。
+	if s.billingCacheService != nil && user != nil && cost != nil {
+		quotaReq := input.ServiceQuotaRequest
+		quotaReq.UserID = user.ID
+		if apiKey != nil && apiKey.GroupID != nil {
+			quotaReq.GroupID = *apiKey.GroupID
+		}
+		if apiKey != nil && apiKey.Group != nil {
+			quotaReq.Platform = apiKey.Group.Platform
+		}
+		if account != nil {
+			quotaReq.AccountID = account.ID
+		}
+		rec := ServiceQuotaRecordRequest{
+			ServiceQuotaCheckRequest: quotaReq,
+			InputTokens:              int64(result.Usage.InputTokens),
+			OutputTokens:             int64(result.Usage.OutputTokens),
+			CacheCreationTokens:      int64(result.Usage.CacheCreationInputTokens),
+			CacheReadTokens:          int64(result.Usage.CacheReadInputTokens),
+			Cost:                     cost.ActualCost,
+		}
+		quotaCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		s.billingCacheService.RecordServiceQuotaUsage(quotaCtx, rec)
+	}
 
 	return nil
 }
