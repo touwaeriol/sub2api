@@ -650,6 +650,7 @@ type GatewayService struct {
 	tlsFPProfileService   *TLSFingerprintProfileService
 	balanceNotifyService  *BalanceNotifyService
 	userPlatformQuotaRepo UserPlatformQuotaRepository
+	signaturePoolCache    SignaturePoolCache
 }
 
 // NewGatewayService creates a new GatewayService
@@ -681,6 +682,7 @@ func NewGatewayService(
 	resolver *ModelPricingResolver,
 	balanceNotifyService *BalanceNotifyService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
+	signaturePoolCache SignaturePoolCache,
 ) *GatewayService {
 	userGroupRateTTL := resolveUserGroupRateCacheTTL(cfg)
 	modelsListTTL := resolveModelsListCacheTTL(cfg)
@@ -717,6 +719,7 @@ func NewGatewayService(
 		resolver:              resolver,
 		balanceNotifyService:  balanceNotifyService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
+		signaturePoolCache:    signaturePoolCache,
 	}
 	svc.userGroupRateResolver = newUserGroupRateResolver(
 		userGroupRateRepo,
@@ -4758,6 +4761,11 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 		return nil, fmt.Errorf("parse request: empty request")
 	}
 
+	// 签名池：把 groupID 存入 ctx，供响应处理函数异步收割签名
+	if parsed.GroupID != nil {
+		ctx = context.WithValue(ctx, ctxkey.SignaturePoolGroupID, parsed.GroupID)
+	}
+
 	// Web Search 模拟：纯 web_search 请求时，直接调用搜索 API 构造响应
 	if account != nil && s.shouldEmulateWebSearch(ctx, account, parsed.GroupID, parsed.Body.Bytes()) {
 		return s.handleWebSearchEmulation(ctx, c, account, parsed)
@@ -5041,6 +5049,23 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if readErr == nil {
 				_ = resp.Body.Close()
 
+				// [优先级0] 签名池替换重试：用池中有效签名替换请求中的 signature，保留 thinking 能力
+				if poolResp, poolWireBody, ok := s.trySignaturePoolRetry(ctx, signaturePoolRetryParams{
+					C: c, Account: account, Body: body, RespBody: respBody, GroupID: parsed.GroupID,
+					ReqStream: reqStream, Token: token, TokenType: tokenType, MappedModel: reqModel,
+					ShouldMimicClaudeCode: shouldMimicClaudeCode, ProxyURL: proxyURL,
+				}); ok {
+					// 池签名重试被上游接受后同步 ParsedRequest，保证 usage/日志看到真实请求体。
+					lastWireBody = poolWireBody
+					if err := replaceBody(poolWireBody); err != nil {
+						_ = poolResp.Body.Close()
+						return nil, err
+					}
+					resp = poolResp
+					break
+				}
+
+				// [优先级1] 签名整流降级：剥离 thinking block 后重试
 				if s.shouldRectifySignatureError(ctx, account, respBody, reqModel) {
 					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
 						Platform:           account.Platform,
@@ -8315,6 +8340,8 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 					return nil, err
 				}
 
+				s.tryHarvestStreamSignature(ctx, account.ID, data)
+
 				for _, block := range outputBlocks {
 					if !clientDisconnected {
 						restored := reverseToolNamesIfPresent(c, []byte(block))
@@ -8677,6 +8704,9 @@ func (s *GatewayService) handleNonStreamingResponse(ctx context.Context, resp *h
 	}
 
 	body = reverseToolNamesIfPresent(c, body)
+
+	// 异步收割 thinking signature 存入签名池
+	s.tryHarvestResponseSignature(ctx, account.ID, body)
 
 	// 写入响应
 	c.Data(resp.StatusCode, contentType, body)

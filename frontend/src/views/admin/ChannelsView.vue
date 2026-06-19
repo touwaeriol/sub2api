@@ -367,6 +367,30 @@
                 </div>
                 <Toggle v-model="section.bedrock_cc_compat" />
               </div>
+
+              <!-- Signature Pool -->
+              <div class="flex items-center justify-between gap-4">
+                <div>
+                  <label class="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    {{ t('admin.channels.form.signaturePool', 'Signature Pool') }}
+                  </label>
+                  <p class="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                    {{ t('admin.channels.form.signaturePoolHint', '⚠ Enable to collect valid thinking signatures and retry with pool signatures on 400 errors') }}
+                  </p>
+                </div>
+                <Toggle v-model="section.signature_pool_enabled" />
+              </div>
+              <div v-if="section.signature_pool_enabled" class="mt-1">
+                <label class="text-[11px] text-gray-500 dark:text-gray-400">
+                  {{ t('admin.channels.form.signaturePoolKeywords', 'Error keywords (comma separated)') }}
+                </label>
+                <input
+                  v-model="section.signature_pool_keywords"
+                  type="text"
+                  class="input mt-0.5 text-xs"
+                  placeholder="signature,Invalid signature,thinking block"
+                />
+              </div>
             </div>
 
             <!-- Model Mapping -->
@@ -685,6 +709,8 @@ interface PlatformSection {
   web_search_emulation: boolean
   codex_image_generation_bridge: boolean
   bedrock_cc_compat: boolean
+  signature_pool_enabled: boolean
+  signature_pool_keywords: string
   account_stats_pricing_rules: FormPricingRule[]
 }
 
@@ -782,6 +808,8 @@ function addPlatformSection(platform: GroupPlatform) {
     web_search_emulation: false,
     codex_image_generation_bridge: false,
     bedrock_cc_compat: false,
+    signature_pool_enabled: false,
+    signature_pool_keywords: '',
     account_stats_pricing_rules: [],
   })
 }
@@ -1142,17 +1170,34 @@ function formToAPI(): { group_ids: number[], model_pricing: ChannelModelPricing[
     delete featuresConfig.codex_image_generation_bridge
   }
 
-  const bedrockCCCompat: Record<string, boolean> = {}
+  // bedrock_cc_compat: 保存为简单 bool（后端期望 true/false）
+  let bedrockCCCompatEnabled = false
   for (const section of form.platforms) {
     if (!section.enabled) continue
-    if (section.platform === 'anthropic') {
-      bedrockCCCompat[section.platform] = !!section.bedrock_cc_compat
+    if (section.platform === 'anthropic' && section.bedrock_cc_compat) {
+      bedrockCCCompatEnabled = true
     }
   }
-  if (Object.keys(bedrockCCCompat).length > 0) {
-    featuresConfig.bedrock_cc_compat = bedrockCCCompat
+  if (bedrockCCCompatEnabled) {
+    featuresConfig.bedrock_cc_compat = true
   } else {
     delete featuresConfig.bedrock_cc_compat
+  }
+
+  // signature_pool: 保存为 {enabled: bool, error_keywords: string}
+  let sigPoolEnabled = false
+  let sigPoolKeywords = ''
+  for (const section of form.platforms) {
+    if (!section.enabled) continue
+    if (section.signature_pool_enabled) {
+      sigPoolEnabled = true
+      sigPoolKeywords = section.signature_pool_keywords || ''
+    }
+  }
+  if (sigPoolEnabled) {
+    featuresConfig.signature_pool = { enabled: true, error_keywords: sigPoolKeywords }
+  } else {
+    delete featuresConfig.signature_pool
   }
 
   return { group_ids, model_pricing, model_mapping, features_config: featuresConfig }
@@ -1206,6 +1251,9 @@ function apiToForm(channel: Channel): PlatformSection[] {
     const codexImageGenerationBridge = fc?.codex_image_generation_bridge as Record<string, boolean> | undefined
     const codexImageGenerationBridgeEnabled = codexImageGenerationBridge?.[platform] === true
     const bedrockCCCompatEnabled = fc?.bedrock_cc_compat === true
+    const sigPool = fc?.signature_pool as { enabled?: boolean; error_keywords?: string } | undefined
+    const sigPoolEnabled = sigPool?.enabled === true
+    const sigPoolKeywords = sigPool?.error_keywords || ''
 
     sections.push({
       platform,
@@ -1217,6 +1265,8 @@ function apiToForm(channel: Channel): PlatformSection[] {
       web_search_emulation: webSearchEnabled,
       codex_image_generation_bridge: codexImageGenerationBridgeEnabled,
       bedrock_cc_compat: bedrockCCCompatEnabled,
+      signature_pool_enabled: sigPoolEnabled,
+      signature_pool_keywords: sigPoolKeywords,
       account_stats_pricing_rules: [],
     })
   }
