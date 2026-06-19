@@ -147,16 +147,11 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	// 如果有有效的区间定价，使用区间
 	if len(validIntervals) > 0 {
 		resolved.Intervals = validIntervals
-		// 区间不匹配时回退到 BasePricing，也需要覆盖图片价格
+		// 区间不匹配时回退到 BasePricing，用渠道 flat price 覆盖（不回退到 LiteLLM）
 		if resolved.BasePricing == nil {
 			resolved.BasePricing = &ModelPricing{}
 		}
-		if chPricing.ImageOutputPrice != nil {
-			resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
-		} else {
-			resolved.BasePricing.ImageOutputPricePerToken = 0
-		}
-		resolved.BasePricing.ImageOutputPriceExplicit = true
+		r.applyFlatPricesToBase(chPricing, resolved.BasePricing)
 		return
 	}
 
@@ -164,31 +159,36 @@ func (r *ModelPricingResolver) applyTokenOverrides(chPricing *ChannelModelPricin
 	if resolved.BasePricing == nil {
 		resolved.BasePricing = &ModelPricing{}
 	}
+	r.applyFlatPricesToBase(chPricing, resolved.BasePricing)
+}
 
+// applyFlatPricesToBase 将渠道 flat 价格覆盖到 BasePricing。
+// 渠道定价存在时，已配置的字段用配置值，ImageOutputPrice 未配置则归零（不回退到 LiteLLM）。
+func (r *ModelPricingResolver) applyFlatPricesToBase(chPricing *ChannelModelPricing, base *ModelPricing) {
 	if chPricing.InputPrice != nil {
-		resolved.BasePricing.InputPricePerToken = *chPricing.InputPrice
-		resolved.BasePricing.InputPricePerTokenPriority = *chPricing.InputPrice
+		base.InputPricePerToken = *chPricing.InputPrice
+		base.InputPricePerTokenPriority = *chPricing.InputPrice
 	}
 	if chPricing.OutputPrice != nil {
-		resolved.BasePricing.OutputPricePerToken = *chPricing.OutputPrice
-		resolved.BasePricing.OutputPricePerTokenPriority = *chPricing.OutputPrice
+		base.OutputPricePerToken = *chPricing.OutputPrice
+		base.OutputPricePerTokenPriority = *chPricing.OutputPrice
 	}
 	if chPricing.CacheWritePrice != nil {
-		resolved.BasePricing.CacheCreationPricePerToken = *chPricing.CacheWritePrice
-		resolved.BasePricing.CacheCreation5mPrice = *chPricing.CacheWritePrice
-		resolved.BasePricing.CacheCreation1hPrice = *chPricing.CacheWritePrice
+		base.CacheCreationPricePerToken = *chPricing.CacheWritePrice
+		base.CacheCreation5mPrice = *chPricing.CacheWritePrice
+		base.CacheCreation1hPrice = *chPricing.CacheWritePrice
 	}
 	if chPricing.CacheReadPrice != nil {
-		resolved.BasePricing.CacheReadPricePerToken = *chPricing.CacheReadPrice
-		resolved.BasePricing.CacheReadPricePerTokenPriority = *chPricing.CacheReadPrice
+		base.CacheReadPricePerToken = *chPricing.CacheReadPrice
+		base.CacheReadPricePerTokenPriority = *chPricing.CacheReadPrice
 	}
 	// 渠道定价覆盖一切：显式配置则用配置值，未配置则归零（不回退到 LiteLLM）
 	if chPricing.ImageOutputPrice != nil {
-		resolved.BasePricing.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
+		base.ImageOutputPricePerToken = *chPricing.ImageOutputPrice
 	} else {
-		resolved.BasePricing.ImageOutputPricePerToken = 0
+		base.ImageOutputPricePerToken = 0
 	}
-	resolved.BasePricing.ImageOutputPriceExplicit = true
+	base.ImageOutputPriceExplicit = true
 }
 
 // applyRequestTierOverrides 应用按次/图片模式的渠道覆盖
