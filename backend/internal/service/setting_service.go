@@ -2952,7 +2952,7 @@ func (s *SettingService) InitializeDefaultSettings(ctx context.Context) error {
 		// Available channels feature (default disabled; opt-in)
 		SettingKeyAvailableChannelsEnabled: "false",
 		// Service quota feature (default disabled; opt-in)
-		SettingKeyServiceQuotaEnabled:      "false",
+		SettingKeyServiceQuotaEnabled: "false",
 
 		// Affiliate (邀请返利) feature (default disabled; opt-in)
 		SettingKeyAffiliateEnabled: "false",

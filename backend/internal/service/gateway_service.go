@@ -9297,18 +9297,18 @@ type recordUsageOpts struct {
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
-		Result:             input.Result,
-		APIKey:             input.APIKey,
-		User:               input.User,
-		Account:            input.Account,
-		Subscription:       input.Subscription,
-		InboundEndpoint:    input.InboundEndpoint,
-		UpstreamEndpoint:   input.UpstreamEndpoint,
-		UserAgent:          input.UserAgent,
-		IPAddress:          input.IPAddress,
-		RequestPayloadHash: input.RequestPayloadHash,
-		ForceCacheBilling:  input.ForceCacheBilling,
-		APIKeyService:      input.APIKeyService,
+		Result:              input.Result,
+		APIKey:              input.APIKey,
+		User:                input.User,
+		Account:             input.Account,
+		Subscription:        input.Subscription,
+		InboundEndpoint:     input.InboundEndpoint,
+		UpstreamEndpoint:    input.UpstreamEndpoint,
+		UserAgent:           input.UserAgent,
+		IPAddress:           input.IPAddress,
+		RequestPayloadHash:  input.RequestPayloadHash,
+		ForceCacheBilling:   input.ForceCacheBilling,
+		APIKeyService:       input.APIKeyService,
 		QuotaPlatform:       input.QuotaPlatform,
 		ServiceQuotaRequest: input.ServiceQuotaRequest,
 		ChannelUsageFields:  input.ChannelUsageFields,
@@ -9341,18 +9341,18 @@ type RecordUsageLongContextInput struct {
 // RecordUsageWithLongContext 记录使用量并扣费，支持长上下文双倍计费（用于 Gemini）
 func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *RecordUsageLongContextInput) error {
 	return s.recordUsageCore(ctx, &recordUsageCoreInput{
-		Result:             input.Result,
-		APIKey:             input.APIKey,
-		User:               input.User,
-		Account:            input.Account,
-		Subscription:       input.Subscription,
-		InboundEndpoint:    input.InboundEndpoint,
-		UpstreamEndpoint:   input.UpstreamEndpoint,
-		UserAgent:          input.UserAgent,
-		IPAddress:          input.IPAddress,
-		RequestPayloadHash: input.RequestPayloadHash,
-		ForceCacheBilling:  input.ForceCacheBilling,
-		APIKeyService:      input.APIKeyService,
+		Result:              input.Result,
+		APIKey:              input.APIKey,
+		User:                input.User,
+		Account:             input.Account,
+		Subscription:        input.Subscription,
+		InboundEndpoint:     input.InboundEndpoint,
+		UpstreamEndpoint:    input.UpstreamEndpoint,
+		UserAgent:           input.UserAgent,
+		IPAddress:           input.IPAddress,
+		RequestPayloadHash:  input.RequestPayloadHash,
+		ForceCacheBilling:   input.ForceCacheBilling,
+		APIKeyService:       input.APIKeyService,
 		QuotaPlatform:       input.QuotaPlatform,
 		ServiceQuotaRequest: input.ServiceQuotaRequest,
 		ChannelUsageFields:  input.ChannelUsageFields,
@@ -9364,19 +9364,19 @@ func (s *GatewayService) RecordUsageWithLongContext(ctx context.Context, input *
 
 // recordUsageCoreInput 是 recordUsageCore 的公共输入字段，从两种输入结构体中提取。
 type recordUsageCoreInput struct {
-	Result             *ForwardResult
-	APIKey             *APIKey
-	User               *User
-	Account            *Account
-	Subscription       *UserSubscription
-	InboundEndpoint    string
-	UpstreamEndpoint   string
-	UserAgent          string
-	IPAddress          string
-	RequestPayloadHash string
-	ForceCacheBilling  bool
-	APIKeyService      APIKeyQuotaUpdater
-	QuotaPlatform      string
+	Result              *ForwardResult
+	APIKey              *APIKey
+	User                *User
+	Account             *Account
+	Subscription        *UserSubscription
+	InboundEndpoint     string
+	UpstreamEndpoint    string
+	UserAgent           string
+	IPAddress           string
+	RequestPayloadHash  string
+	ForceCacheBilling   bool
+	APIKeyService       APIKeyQuotaUpdater
+	QuotaPlatform       string
 	ServiceQuotaRequest ServiceQuotaCheckRequest
 	ChannelUsageFields
 }
