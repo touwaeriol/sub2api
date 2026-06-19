@@ -277,6 +277,7 @@ export default {
     yes: 'Yes',
     no: 'No',
     all: 'All',
+    global: 'Global',
     none: 'None',
     selectAll: 'Select all',
     noData: 'No data',
