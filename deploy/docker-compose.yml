@@ -11,6 +11,10 @@
 # No Setup Wizard needed - the system auto-initializes on first run.
 # =============================================================================
 
+# 固定 compose project name，避免依赖 cwd（默认是目录名 deploy）。
+# 对齐已有正式容器的 project=sub2api；beta 部署仍可用 -p sub2api-beta override。
+name: sub2api
+
 services:
   # ===========================================================================
   # Sub2API Application
@@ -51,13 +55,15 @@ services:
 
       # =======================================================================
       # Database Configuration (PostgreSQL)
+      # Default: uses local postgres container
+      # External DB: set DATABASE_HOST and DATABASE_SSLMODE in .env
       # =======================================================================
-      - DATABASE_HOST=postgres
-      - DATABASE_PORT=5432
+      - DATABASE_HOST=${DATABASE_HOST:-postgres}
+      - DATABASE_PORT=${DATABASE_PORT:-5432}
       - DATABASE_USER=${POSTGRES_USER:-sub2api}
       - DATABASE_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
       - DATABASE_DBNAME=${POSTGRES_DB:-sub2api}
-      - DATABASE_SSLMODE=disable
+      - DATABASE_SSLMODE=${DATABASE_SSLMODE:-disable}
       - DATABASE_MAX_OPEN_CONNS=${DATABASE_MAX_OPEN_CONNS:-50}
       - DATABASE_MAX_IDLE_CONNS=${DATABASE_MAX_IDLE_CONNS:-10}
       - DATABASE_CONN_MAX_LIFETIME_MINUTES=${DATABASE_CONN_MAX_LIFETIME_MINUTES:-30}
@@ -162,8 +168,6 @@ services:
       - GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS=${GATEWAY_IMAGE_CONCURRENCY_WAIT_TIMEOUT_SECONDS:-30}
       - GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS=${GATEWAY_IMAGE_CONCURRENCY_MAX_WAITING_REQUESTS:-100}
     depends_on:
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
     networks:

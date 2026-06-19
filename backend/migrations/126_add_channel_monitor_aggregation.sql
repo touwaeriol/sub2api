@@ -40,6 +40,11 @@ CREATE TABLE IF NOT EXISTS channel_monitor_daily_rollups (
     deleted_at            TIMESTAMPTZ
 );
 
+-- 兼容：若 daily_rollups 已由更早编号的迁移建过且缺 deleted_at（不同迁移谱系的数据库
+-- 上 CREATE TABLE IF NOT EXISTS 会跳过建表），显式补列，保证后续 deleted_at 索引可建。
+ALTER TABLE channel_monitor_daily_rollups
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_monitor_daily_rollups_unique
     ON channel_monitor_daily_rollups (monitor_id, model, bucket_date);
 CREATE INDEX IF NOT EXISTS idx_channel_monitor_daily_rollups_bucket
