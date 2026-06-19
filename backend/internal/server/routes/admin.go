@@ -98,6 +98,9 @@ func RegisterAdminRoutes(
 		// 渠道监控
 		registerChannelMonitorRoutes(admin, h)
 
+		// 服务限额（Service Quota）
+		registerServiceQuotaRoutes(admin, h)
+
 		// 风控中心
 		registerContentModerationRoutes(admin, h)
 
@@ -111,6 +114,25 @@ func registerAdminComplianceRoutes(admin *gin.RouterGroup, h *handler.Handlers) 
 	{
 		compliance.GET("", h.Admin.Compliance.GetStatus)
 		compliance.POST("/accept", h.Admin.Compliance.Accept)
+	}
+}
+
+func registerServiceQuotaRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	if h.Admin.ServiceQuota == nil {
+		return
+	}
+	quotas := admin.Group("/service-quotas")
+	{
+		quotas.GET("", h.Admin.ServiceQuota.List)
+		quotas.POST("", h.Admin.ServiceQuota.Create)
+		quotas.PUT("/:id", h.Admin.ServiceQuota.Update)
+		quotas.DELETE("/:id", h.Admin.ServiceQuota.Delete)
+		// 手动重置 Redis 计数器（按 rule_id + path_id + limiter_type [+ scope_user_id]）
+		quotas.POST("/reset", h.Admin.ServiceQuota.ResetCounter)
+		// 运行时监控（独立 handler，规则 CRUD 之外的只读快照入口）
+		if h.Admin.ServiceQuotaMonitor != nil {
+			quotas.GET("/monitor", h.Admin.ServiceQuotaMonitor.Snapshot)
+		}
 	}
 }
 
@@ -217,6 +239,9 @@ func registerOpsRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 		ops.GET("/dashboard/error-trend", h.Admin.Ops.GetDashboardErrorTrend)
 		ops.GET("/dashboard/error-distribution", h.Admin.Ops.GetDashboardErrorDistribution)
 		ops.GET("/dashboard/openai-token-stats", h.Admin.Ops.GetDashboardOpenAITokenStats)
+
+		// Service quota metrics (in-memory atomic counters; not gated by monitoring switch)
+		ops.GET("/service-quota-metrics", h.Admin.Ops.GetServiceQuotaMetrics)
 	}
 }
 
