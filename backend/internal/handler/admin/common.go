@@ -11,7 +11,6 @@ package admin
 
 import (
 	"errors"
-	"log/slog"
 	"strconv"
 	"strings"
 
@@ -19,7 +18,6 @@ import (
 	"github.com/go-playground/validator/v10"
 
 	pkgerrors "github.com/Wei-Shaw/sub2api/internal/pkg/errors"
-	"github.com/Wei-Shaw/sub2api/internal/service"
 )
 
 // admin 包内多个 handler 共享的通用错误码常量。
@@ -161,26 +159,4 @@ func mergeMetadata(base, extra map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
-}
-
-// snapshotPathIDsForOwner 在删除 channel/group/account 之前抓一份 service_quota_paths.id 快照。
-//
-// 为什么必须先抓：FK CASCADE 在 DELETE channel/group/account 时连带删 service_quota_paths
-// 的引用行，删完之后查不到，导致后续 ResetCountersForPaths 拿到空列表 → Redis 残留 counter key
-// 静默漏清。所以约定调用顺序为 "snapshot → delete → reset"。
-//
-// 失败仅 warn 不抛：清理 Redis 计数是 best-effort（TTL 仍兜底），不能因为这个查询失败
-// 阻塞主删除流程。serviceQuotaSvc 为 nil 时直接返回 nil（service quota 模块未启用）。
-func snapshotPathIDsForOwner(c *gin.Context, serviceQuotaSvc service.ServiceQuotaService, owner string, ownerID int64) []int64 {
-	if serviceQuotaSvc == nil {
-		return nil
-	}
-	pathIDs, err := serviceQuotaSvc.SnapshotPathIDsByOwner(c.Request.Context(), owner, ownerID)
-	if err != nil {
-		// 静默漏清比阻塞主删除流程更糟，所以只 warn；后续 ResetCountersForPaths 拿空列表自然 noop。
-		slog.WarnContext(c.Request.Context(), "snapshotPathIDsForOwner failed",
-			"owner", owner, "owner_id", ownerID, "err", err)
-		return nil
-	}
-	return pathIDs
 }
