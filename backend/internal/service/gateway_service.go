@@ -9064,26 +9064,7 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	// service_quota 用量计数：把本次 token/cost 增量喂给 TPM/TPD/cost 限流器。
 	// 故意脱离请求 ctx（客户端断开不应漏记 RPM/TPD），2 分钟硬上限防 Redis 挂死阻塞 worker。
 	// facade nil-guard + Record fail-open：未启用 / 无规则时静默 no-op。
-	if deps.billingCacheService != nil && p.User != nil {
-		quotaReq := p.ServiceQuotaRequest
-		quotaReq.UserID = p.User.ID
-		if p.APIKey != nil && p.APIKey.GroupID != nil {
-			quotaReq.GroupID = *p.APIKey.GroupID
-		}
-		if p.APIKey != nil && p.APIKey.Group != nil {
-			quotaReq.Platform = p.APIKey.Group.Platform
-		}
-		if p.Account != nil {
-			quotaReq.AccountID = p.Account.ID
-		}
-		rec := ServiceQuotaRecordRequest{
-			ServiceQuotaCheckRequest: quotaReq,
-			InputTokens:              p.InputTokens,
-			OutputTokens:             p.OutputTokens,
-			CacheCreationTokens:      p.CacheCreationTokens,
-			CacheReadTokens:          p.CacheReadTokens,
-			Cost:                     p.Cost.ActualCost,
-		}
+	if rec, ok := buildServiceQuotaRecordRequest(p); ok && deps.billingCacheService != nil {
 		quotaCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		deps.billingCacheService.RecordServiceQuotaUsage(quotaCtx, rec)
@@ -9129,6 +9110,34 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 	// no dependency on the request context or upstream connection.
 	go notifyBalanceLow(p, deps, result)
 	go notifyAccountQuota(p, deps, result)
+}
+
+// buildServiceQuotaRecordRequest 从 postUsageBillingParams 装配 ServiceQuotaRecordRequest。
+// 返回 ok=false 表示本次请求不需要写服务限额计数（p/User/Cost 为 nil）。
+// ServiceQuotaRequest 已在 handler 路径装填 platform/channel/model，这里补 UserID/GroupID/Platform/AccountID。
+func buildServiceQuotaRecordRequest(p *postUsageBillingParams) (ServiceQuotaRecordRequest, bool) {
+	if p == nil || p.User == nil || p.Cost == nil {
+		return ServiceQuotaRecordRequest{}, false
+	}
+	req := p.ServiceQuotaRequest
+	req.UserID = p.User.ID
+	if p.APIKey != nil && p.APIKey.GroupID != nil {
+		req.GroupID = *p.APIKey.GroupID
+	}
+	if p.APIKey != nil && p.APIKey.Group != nil {
+		req.Platform = p.APIKey.Group.Platform
+	}
+	if p.Account != nil {
+		req.AccountID = p.Account.ID
+	}
+	return ServiceQuotaRecordRequest{
+		ServiceQuotaCheckRequest: req,
+		InputTokens:              p.InputTokens,
+		OutputTokens:             p.OutputTokens,
+		CacheCreationTokens:      p.CacheCreationTokens,
+		CacheReadTokens:          p.CacheReadTokens,
+		Cost:                     p.Cost.ActualCost,
+	}, true
 }
 
 // notifyBalanceLow sends balance low notification after deduction.
