@@ -490,9 +490,19 @@ func ProvideBillingCacheService(
 	rpmCache UserRPMCache,
 	rateRepo UserGroupRateRepository,
 	cfg *config.Config,
+	serviceQuota ServiceQuotaService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 ) *BillingCacheService {
-	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, userPlatformQuotaRepo)
+	return NewBillingCacheService(cache, userRepo, subRepo, apiKeyRepo, rpmCache, rateRepo, cfg, serviceQuota, userPlatformQuotaRepo)
+}
+
+// ProvideServiceQuotaService 注入服务限额服务。userRepo 自动满足 ServiceQuotaUserChecker。
+func ProvideServiceQuotaService(repo ServiceQuotaRuleRepository, settings *SettingService, limiter ServiceQuotaLimiter, cache ServiceQuotaCache, userRepo UserRepository) ServiceQuotaService {
+	var users ServiceQuotaUserChecker
+	if checker, ok := userRepo.(ServiceQuotaUserChecker); ok {
+		users = checker
+	}
+	return NewServiceQuotaService(repo, settings, limiter, cache, users)
 }
 
 // ProvideAPIKeyService wires APIKeyService and connects rate-limit cache invalidation.
@@ -528,6 +538,8 @@ var ProviderSet = wire.NewSet(
 	ProvidePricingService,
 	NewBillingService,
 	ProvideBillingCacheService,
+	ProvideServiceQuotaService,
+	NewServiceQuotaMonitorService,
 	NewAnnouncementService,
 	NewAdminService,
 	NewGatewayService,

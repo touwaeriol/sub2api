@@ -62,12 +62,14 @@ type SettingHandler struct {
 	opsService               *service.OpsService
 	paymentConfigService     *service.PaymentConfigService
 	paymentService           *service.PaymentService
+	// serviceQuotaSvc 用于在 service_quota_enabled 总开关变更时失效 Redis 缓存。
+	serviceQuotaSvc          service.ServiceQuotaService
 	userAttributeService     *service.UserAttributeService
 	notificationEmailService *service.NotificationEmailService
 }
 
 // NewSettingHandler 创建系统设置处理器
-func NewSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, userAttributeService *service.UserAttributeService) *SettingHandler {
+func NewSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, serviceQuotaSvc service.ServiceQuotaService, userAttributeService *service.UserAttributeService) *SettingHandler {
 	return &SettingHandler{
 		settingService:       settingService,
 		emailService:         emailService,
@@ -75,6 +77,7 @@ func NewSettingHandler(settingService *service.SettingService, emailService *ser
 		opsService:           opsService,
 		paymentConfigService: paymentConfigService,
 		paymentService:       paymentService,
+		serviceQuotaSvc:      serviceQuotaSvc,
 		userAttributeService: userAttributeService,
 	}
 }
@@ -300,6 +303,8 @@ func (h *SettingHandler) GetSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: settings.ChannelMonitorDefaultIntervalSeconds,
 
 		AvailableChannelsEnabled: settings.AvailableChannelsEnabled,
+
+		ServiceQuotaEnabled: settings.ServiceQuotaEnabled,
 
 		AffiliateEnabled: settings.AffiliateEnabled,
 
@@ -557,6 +562,8 @@ type UpdateSettingsRequest struct {
 	AuthSourceDefaultDingTalkGrantOnSignup    *bool                             `json:"auth_source_default_dingtalk_grant_on_signup"`
 	AuthSourceDefaultDingTalkGrantOnFirstBind *bool                             `json:"auth_source_default_dingtalk_grant_on_first_bind"`
 	ForceEmailOnThirdPartySignup              *bool                             `json:"force_email_on_third_party_signup"`
+
+	ServiceQuotaEnabled *bool `json:"service_quota_enabled"`
 
 	// Model fallback configuration
 	EnableModelFallback      bool   `json:"enable_model_fallback"`
@@ -1602,6 +1609,12 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		AffiliateRebatePerInviteeCap:           affiliateRebatePerInviteeCap,
 		DefaultUserRPMLimit:                    req.DefaultUserRPMLimit,
 		DefaultSubscriptions:                   defaultSubscriptions,
+		ServiceQuotaEnabled: func() bool {
+			if req.ServiceQuotaEnabled != nil {
+				return *req.ServiceQuotaEnabled
+			}
+			return previousSettings.ServiceQuotaEnabled
+		}(),
 		EnableModelFallback:                    req.EnableModelFallback,
 		FallbackModelAnthropic:                 req.FallbackModelAnthropic,
 		FallbackModelOpenAI:                    req.FallbackModelOpenAI,
@@ -1931,6 +1944,13 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 
 	h.auditSettingsUpdate(c, previousSettings, settings, previousAuthSourceDefaults, authSourceDefaults, req)
 
+	// service_quota_enabled 总开关变化后，需要立即失效 Redis 缓存中的启用快照，
+	// 否则缓存 TTL（5min）内 ServiceQuotaService 的 PreCheck 仍读取旧值。
+	if h.serviceQuotaSvc != nil && previousSettings != nil &&
+		previousSettings.ServiceQuotaEnabled != settings.ServiceQuotaEnabled {
+		h.serviceQuotaSvc.InvalidateEnabledCache(c.Request.Context())
+	}
+
 	// 重新获取设置返回
 	updatedSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
@@ -2138,6 +2158,8 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		ChannelMonitorDefaultIntervalSeconds: updatedSettings.ChannelMonitorDefaultIntervalSeconds,
 
 		AvailableChannelsEnabled: updatedSettings.AvailableChannelsEnabled,
+
+		ServiceQuotaEnabled: updatedSettings.ServiceQuotaEnabled,
 
 		AffiliateEnabled: updatedSettings.AffiliateEnabled,
 
@@ -2627,6 +2649,9 @@ func diffSettings(before *service.SystemSettings, after *service.SystemSettings,
 	}
 	if before.AvailableChannelsEnabled != after.AvailableChannelsEnabled {
 		changed = append(changed, "available_channels_enabled")
+	}
+	if before.ServiceQuotaEnabled != after.ServiceQuotaEnabled {
+		changed = append(changed, "service_quota_enabled")
 	}
 	if before.AffiliateEnabled != after.AffiliateEnabled {
 		changed = append(changed, "affiliate_enabled")

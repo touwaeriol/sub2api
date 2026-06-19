@@ -91,12 +91,14 @@ var ProviderSet = wire.NewSet(
 	NewChannelRepository,
 	NewChannelMonitorRepository,
 	NewChannelMonitorRequestTemplateRepository,
+	NewServiceQuotaRuleRepository,
 	NewContentModerationRepository,
 	NewAffiliateRepository,
 	NewUserPlatformQuotaRepository,     // T14: user × platform quota
 	NewUserPlatformQuotaServiceAdapter, // T14: adapter → service.UserPlatformQuotaRepository
 
 	// Cache implementations
+	NewServiceQuotaCache,
 	NewGatewayCache,
 	NewBillingCache,
 	NewAPIKeyCache,
@@ -124,6 +126,7 @@ var ProviderSet = wire.NewSet(
 	NewErrorPassthroughCache,
 	NewTLSFingerprintProfileCache,
 	NewContentModerationHashCache,
+	NewServiceQuotaLimiter,
 	NewSignaturePoolCache,
 
 	// Encryptors

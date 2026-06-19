@@ -38,6 +38,8 @@ func ProvideAdminHandlers(
 	channelMonitorTemplateHandler *admin.ChannelMonitorRequestTemplateHandler,
 	contentModerationHandler *admin.ContentModerationHandler,
 	paymentHandler *admin.PaymentHandler,
+	serviceQuotaHandler *admin.ServiceQuotaHandler,
+	serviceQuotaMonitorHandler *admin.ServiceQuotaMonitorHandler,
 	affiliateHandler *admin.AffiliateHandler,
 	complianceHandler *admin.ComplianceHandler,
 ) *AdminHandlers {
@@ -71,6 +73,8 @@ func ProvideAdminHandlers(
 		ChannelMonitorTemplate: channelMonitorTemplateHandler,
 		ContentModeration:      contentModerationHandler,
 		Payment:                paymentHandler,
+		ServiceQuota:           serviceQuotaHandler,
+		ServiceQuotaMonitor:    serviceQuotaMonitorHandler,
 		Affiliate:              affiliateHandler,
 		Compliance:             complianceHandler,
 	}
@@ -89,8 +93,8 @@ func ProvideSettingHandler(settingService *service.SettingService, buildInfo Bui
 }
 
 // ProvideAdminSettingHandler creates admin.SettingHandler with notification template APIs.
-func ProvideAdminSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, userAttributeService *service.UserAttributeService, notificationEmailService *service.NotificationEmailService) *admin.SettingHandler {
-	h := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, userAttributeService)
+func ProvideAdminSettingHandler(settingService *service.SettingService, emailService *service.EmailService, turnstileService *service.TurnstileService, opsService *service.OpsService, paymentConfigService *service.PaymentConfigService, paymentService *service.PaymentService, serviceQuotaSvc service.ServiceQuotaService, userAttributeService *service.UserAttributeService, notificationEmailService *service.NotificationEmailService) *admin.SettingHandler {
+	h := admin.NewSettingHandler(settingService, emailService, turnstileService, opsService, paymentConfigService, paymentService, serviceQuotaSvc, userAttributeService)
 	h.SetNotificationEmailService(notificationEmailService)
 	return h
 }
@@ -113,6 +117,7 @@ func ProvideHandlers(
 	paymentHandler *PaymentHandler,
 	paymentWebhookHandler *PaymentWebhookHandler,
 	availableChannelHandler *AvailableChannelHandler,
+	userServiceQuotaHandler *UserServiceQuotaHandler,
 	_ *service.IdempotencyCoordinator,
 	_ *service.IdempotencyCleanupService,
 ) *Handlers {
@@ -133,6 +138,7 @@ func ProvideHandlers(
 		Payment:          paymentHandler,
 		PaymentWebhook:   paymentWebhookHandler,
 		AvailableChannel: availableChannelHandler,
+		UserServiceQuota: userServiceQuotaHandler,
 	}
 }
 
@@ -154,6 +160,7 @@ var ProviderSet = wire.NewSet(
 	NewPaymentHandler,
 	NewPaymentWebhookHandler,
 	NewAvailableChannelHandler,
+	NewUserServiceQuotaHandler,
 
 	// Admin handlers
 	admin.NewDashboardHandler,
@@ -185,6 +192,8 @@ var ProviderSet = wire.NewSet(
 	admin.NewChannelMonitorRequestTemplateHandler,
 	admin.NewContentModerationHandler,
 	admin.NewPaymentHandler,
+	admin.NewServiceQuotaHandler,
+	admin.NewServiceQuotaMonitorHandler,
 	admin.NewAffiliateHandler,
 	admin.NewComplianceHandler,
 

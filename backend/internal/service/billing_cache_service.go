@@ -109,6 +109,8 @@ type BillingCacheService struct {
 	circuitBreaker        *billingCircuitBreaker
 	userPlatformQuotaRepo UserPlatformQuotaRepository
 
+	serviceQuota ServiceQuotaService
+
 	cacheWriteChan     chan cacheWriteTask
 	cacheWriteWg       sync.WaitGroup
 	cacheWriteStopOnce sync.Once
@@ -132,6 +134,7 @@ func NewBillingCacheService(
 	userRPMCache UserRPMCache,
 	userGroupRateRepo UserGroupRateRepository,
 	cfg *config.Config,
+	serviceQuotaService ServiceQuotaService,
 	userPlatformQuotaRepo UserPlatformQuotaRepository,
 ) *BillingCacheService {
 	svc := &BillingCacheService{
@@ -142,6 +145,7 @@ func NewBillingCacheService(
 		userRPMCache:          userRPMCache,
 		userGroupRateRepo:     userGroupRateRepo,
 		cfg:                   cfg,
+		serviceQuota:          serviceQuotaService,
 		userPlatformQuotaRepo: userPlatformQuotaRepo,
 	}
 	svc.circuitBreaker = newBillingCircuitBreaker(cfg.Billing.CircuitBreaker)
@@ -705,48 +709,155 @@ func (s *BillingCacheService) IncrementUserPlatformQuotaUsage(userID int64, plat
 // 余额模式：检查缓存余额 > 0
 // 订阅模式：检查缓存用量未超过限额（Group限额从参数传入）
 // platform 为请求的目标平台（如 "anthropic"），传空串 "" 时跳过 user × platform quota 检查。
-func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
+// PrepareBillingCheck 是两阶段 PreCheck 的第一阶段入口。
+//
+// 在 caller 路由前调用：执行余额 / 订阅 / API Key 限速 / RPM 等不依赖 channel/account
+// 的检查；通过 ServiceQuotaService.PreCheckSelect 选出候选规则但不抢 concurrency；
+// 返回的 *BillingTicket 必须由 caller 持有并在所有返回路径上 defer ticket.Close()。
+// 后续 caller 选定 channel + account 后，调用 ticket.Consume(ctx, channelID, accountID)
+// 才真正按 channel/account scope 抢 concurrency / 增 RPM。
+// 失败语义：返回 error 时 ticket==nil，caller 不需要也不应该 Close。
+func (s *BillingCacheService) PrepareBillingCheck(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription) (*BillingTicket, error) {
+	return s.PrepareBillingCheckForRequest(ctx, user, apiKey, group, subscription, ServiceQuotaCheckRequest{}, "")
+}
+
+// PrepareBillingCheckForRequest 是 PrepareBillingCheck 的"携带 quota 请求上下文"扩展版。
+func (s *BillingCacheService) PrepareBillingCheckForRequest(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, quotaReq ServiceQuotaCheckRequest, platform string) (ticket *BillingTicket, err error) {
 	// 简易模式：跳过所有计费检查
 	if s.cfg.RunMode == config.RunModeSimple {
-		return nil
+		return nil, nil
 	}
 	if s.circuitBreaker != nil && !s.circuitBreaker.Allow() {
-		return ErrBillingServiceUnavailable
+		return nil, ErrBillingServiceUnavailable
 	}
+
+	if user != nil {
+		quotaReq.UserID = user.ID
+		if group != nil {
+			quotaReq.GroupID = group.ID
+			quotaReq.Platform = group.Platform
+		}
+	}
+
+	t := &BillingTicket{
+		svc:      s,
+		quotaReq: quotaReq,
+	}
+
+	if s.serviceQuota != nil && user != nil {
+		plan, perr := s.serviceQuota.PreCheckSelect(ctx, quotaReq)
+		if perr != nil {
+			return nil, perr
+		}
+		t.plan = plan
+	}
+
+	// 任何后续检查失败都要释放已抢占的 concurrency 槽位，
+	// 避免 PreCheck 通过、后续 RPM/余额校验失败时 lease 永远漏。
+	defer func() {
+		if err != nil && t != nil {
+			t.Close()
+		}
+	}()
 
 	// 判断计费模式
 	isSubscriptionMode := group != nil && group.IsSubscriptionType() && subscription != nil
 
 	if isSubscriptionMode {
-		if err := s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
-			return err
+		if err = s.checkSubscriptionEligibility(ctx, user.ID, group, subscription); err != nil {
+			return nil, err
 		}
-	} else {
-		if err := s.checkBalanceEligibility(ctx, user.ID); err != nil {
-			return err
+	} else if user != nil {
+		if err = s.checkBalanceEligibility(ctx, user.ID); err != nil {
+			return nil, err
 		}
 	}
 
 	// user × platform quota 仅在 standard（余额）模式生效；订阅模式豁免
-	if !isSubscriptionMode {
-		if err := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); err != nil {
-			return err
+	if !isSubscriptionMode && user != nil {
+		if pErr := s.checkUserPlatformQuotaEligibility(ctx, user.ID, platform); pErr != nil {
+			return nil, pErr
 		}
 	}
 
 	// Check API Key rate limits (applies to both billing modes)
 	if apiKey != nil && apiKey.HasRateLimits() {
-		if err := s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
-			return err
+		if err = s.checkAPIKeyRateLimits(ctx, apiKey); err != nil {
+			return nil, err
 		}
 	}
 
 	// RPM 限流：级联回落（Override → Group → User），放在最后以避免为注定失败的请求增加计数。
-	if err := s.checkRPM(ctx, user, group); err != nil {
-		return err
+	if err = s.checkRPM(ctx, user, group); err != nil {
+		return nil, err
 	}
 
+	return t, nil
+}
+
+// CheckBillingEligibility 检查用户是否有资格发起请求（单步版本，不返回 ticket）。
+// platform 为请求的目标平台（如 "anthropic"），传空串 "" 时跳过 user × platform quota 检查。
+func (s *BillingCacheService) CheckBillingEligibility(ctx context.Context, user *User, apiKey *APIKey, group *Group, subscription *UserSubscription, platform string) error {
+	ticket, err := s.PrepareBillingCheckForRequest(ctx, user, apiKey, group, subscription, ServiceQuotaCheckRequest{}, platform)
+	if err != nil {
+		return err
+	}
+	if ticket != nil {
+		ticket.Close()
+	}
 	return nil
+}
+
+// wrapServiceQuotaLeaseOnce 把 PreCheck 返回的 lease.Release 包成 sync.Once，
+// 调用方可放心在 defer 路径多次执行。lease 为 nil 或 Release 为 nil 时透传。
+func wrapServiceQuotaLeaseOnce(lease *ServiceQuotaLease) *ServiceQuotaLease {
+	if lease == nil || lease.Release == nil {
+		return lease
+	}
+	original := lease.Release
+	var once sync.Once
+	lease.Release = func() {
+		once.Do(original)
+	}
+	return lease
+}
+
+// ReleaseQuotaLease 安全释放 *ServiceQuotaLease，nil 友好。
+func ReleaseQuotaLease(lease *ServiceQuotaLease) {
+	if lease == nil || lease.Release == nil {
+		return
+	}
+	lease.Release()
+}
+
+// RecordServiceQuotaUsage 收敛 ServiceQuota.Record 调用，让 gateway / 任何其他 caller
+// 不必再穿透 BillingCacheService.serviceQuota 这个内部字段。nil-guard：service 或
+// serviceQuota 未注入时静默 no-op；Record 本身 fail-open 不返回 error。
+func (s *BillingCacheService) RecordServiceQuotaUsage(ctx context.Context, req ServiceQuotaRecordRequest) {
+	if s == nil || s.serviceQuota == nil {
+		return
+	}
+	s.serviceQuota.Record(ctx, req)
+}
+
+// FilterAccountsByServiceQuotaSchedulability 是 GatewayService 调度阶段调用的 facade：
+// 把 ticket 的 PreCheckPlan + 全局 ServiceQuotaService 引用收敛进 BillingCacheService，
+// 让网关代码不直接看到 ServiceQuotaService 接口（封装边界）。
+// nil / 未注入 / plan 空 → 返回原 accounts；fail-open，不抛 error。
+func (s *BillingCacheService) FilterAccountsByServiceQuotaSchedulability(
+	ctx context.Context,
+	ticket *BillingTicket,
+	base ServiceQuotaCheckRequest,
+	accounts []Account,
+) []Account {
+	if s == nil || s.serviceQuota == nil || ticket == nil {
+		return accounts
+	}
+	plan := ticket.PreCheckPlan()
+	if plan == nil {
+		return accounts
+	}
+	return FilterAccountsByServiceQuotaSchedulability(ctx, s.serviceQuota, plan, base, accounts)
 }
 
 // checkRPM 执行并行 RPM 限流，所有适用的限制同时生效，任一超限即拒绝：
