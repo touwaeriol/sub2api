@@ -8807,6 +8807,14 @@ type postUsageBillingParams struct {
 	AccountRateMultiplier float64
 	APIKeyService         APIKeyQuotaUpdater
 	Platform              string // 来自 APIKey 关联 Group 的平台标识
+
+	// service_quota 用量计数：caller 装填请求上下文 + 本次 token 增量，
+	// applyUsageBilling 据此调 RecordServiceQuotaUsage 喂 TPM/TPD/cost 限流器。
+	ServiceQuotaRequest ServiceQuotaCheckRequest
+	InputTokens         int64
+	OutputTokens        int64
+	CacheCreationTokens int64
+	CacheReadTokens     int64
 }
 
 // PlatformFromAPIKey 从 APIKey 关联的 Group 推导 platform 名称。
@@ -9051,6 +9059,34 @@ func finalizePostUsageBilling(ctx context.Context, p *postUsageBillingParams, de
 
 	if p.Cost.ActualCost > 0 && p.APIKey != nil && p.APIKey.HasRateLimits() {
 		deps.billingCacheService.QueueUpdateAPIKeyRateLimitUsage(p.APIKey.ID, p.Cost.ActualCost)
+	}
+
+	// service_quota 用量计数：把本次 token/cost 增量喂给 TPM/TPD/cost 限流器。
+	// 故意脱离请求 ctx（客户端断开不应漏记 RPM/TPD），2 分钟硬上限防 Redis 挂死阻塞 worker。
+	// facade nil-guard + Record fail-open：未启用 / 无规则时静默 no-op。
+	if deps.billingCacheService != nil && p.User != nil {
+		quotaReq := p.ServiceQuotaRequest
+		quotaReq.UserID = p.User.ID
+		if p.APIKey != nil && p.APIKey.GroupID != nil {
+			quotaReq.GroupID = *p.APIKey.GroupID
+		}
+		if p.APIKey != nil && p.APIKey.Group != nil {
+			quotaReq.Platform = p.APIKey.Group.Platform
+		}
+		if p.Account != nil {
+			quotaReq.AccountID = p.Account.ID
+		}
+		rec := ServiceQuotaRecordRequest{
+			ServiceQuotaCheckRequest: quotaReq,
+			InputTokens:              p.InputTokens,
+			OutputTokens:             p.OutputTokens,
+			CacheCreationTokens:      p.CacheCreationTokens,
+			CacheReadTokens:          p.CacheReadTokens,
+			Cost:                     p.Cost.ActualCost,
+		}
+		quotaCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		deps.billingCacheService.RecordServiceQuotaUsage(quotaCtx, rec)
 	}
 
 	deps.deferredService.ScheduleLastUsedUpdate(p.Account.ID)
@@ -9447,40 +9483,17 @@ func (s *GatewayService) recordUsageCore(ctx context.Context, input *recordUsage
 		AccountRateMultiplier: accountRateMultiplier,
 		APIKeyService:         input.APIKeyService,
 		Platform:              quotaPlatform,
+		ServiceQuotaRequest:   input.ServiceQuotaRequest,
+		InputTokens:           int64(result.Usage.InputTokens),
+		OutputTokens:          int64(result.Usage.OutputTokens),
+		CacheCreationTokens:   int64(result.Usage.CacheCreationInputTokens),
+		CacheReadTokens:       int64(result.Usage.CacheReadInputTokens),
 	}, s.billingDeps(), s.usageBillingRepo)
 
 	if billingErr != nil {
 		return billingErr
 	}
 	writeUsageLogBestEffort(ctx, s.usageLogRepo, usageLog, "service.gateway")
-
-	// service_quota 用量计数：把本次 token/cost 增量喂给 TPM/TPD/cost 限流器。
-	// 故意脱离请求 ctx（客户端断开不应漏记），2 分钟硬上限防 Redis 挂死阻塞 worker。
-	// facade nil-guard + Record fail-open：未启用 / 无规则时静默 no-op。
-	if s.billingCacheService != nil && user != nil && cost != nil {
-		quotaReq := input.ServiceQuotaRequest
-		quotaReq.UserID = user.ID
-		if apiKey != nil && apiKey.GroupID != nil {
-			quotaReq.GroupID = *apiKey.GroupID
-		}
-		if apiKey != nil && apiKey.Group != nil {
-			quotaReq.Platform = apiKey.Group.Platform
-		}
-		if account != nil {
-			quotaReq.AccountID = account.ID
-		}
-		rec := ServiceQuotaRecordRequest{
-			ServiceQuotaCheckRequest: quotaReq,
-			InputTokens:              int64(result.Usage.InputTokens),
-			OutputTokens:             int64(result.Usage.OutputTokens),
-			CacheCreationTokens:      int64(result.Usage.CacheCreationInputTokens),
-			CacheReadTokens:          int64(result.Usage.CacheReadInputTokens),
-			Cost:                     cost.ActualCost,
-		}
-		quotaCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancel()
-		s.billingCacheService.RecordServiceQuotaUsage(quotaCtx, rec)
-	}
 
 	return nil
 }

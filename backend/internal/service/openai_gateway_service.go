@@ -5825,6 +5825,8 @@ type OpenAIRecordUsageInput struct {
 	APIKeyService      APIKeyQuotaUpdater
 	// CyberBlocked 为 true 时把该用量行标记为 cyber（request_type=cyber），计费逻辑不变。
 	CyberBlocked bool
+	// ServiceQuotaRequest 携带 service_quota 请求上下文（handler 装填 Model/AccountID/ChannelID）。
+	ServiceQuotaRequest ServiceQuotaCheckRequest
 	ChannelUsageFields
 }
 
@@ -6109,6 +6111,11 @@ func (s *OpenAIGatewayService) RecordUsage(ctx context.Context, input *OpenAIRec
 			AccountRateMultiplier: accountRateMultiplier,
 			APIKeyService:         input.APIKeyService,
 			Platform:              PlatformFromAPIKey(apiKey),
+			ServiceQuotaRequest:   input.ServiceQuotaRequest,
+			InputTokens:           int64(result.Usage.InputTokens),
+			OutputTokens:          int64(result.Usage.OutputTokens),
+			CacheCreationTokens:   int64(result.Usage.CacheCreationInputTokens),
+			CacheReadTokens:       int64(result.Usage.CacheReadInputTokens),
 		}, s.billingDeps(), s.usageBillingRepo)
 		return err
 	}()
