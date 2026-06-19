@@ -390,6 +390,12 @@ export const useAppStore = defineStore('app', () => {
     cachedPublicSettings.value = null
   }
 
+  function patchPublicSettings(patch: Partial<PublicSettings>): void {
+    const base = cachedPublicSettings.value || window.__APP_CONFIG__
+    if (!base) return
+    applySettings({ ...base, ...patch })
+  }
+
   /**
    * Initialize settings from injected config (window.__APP_CONFIG__)
    * This is called synchronously before Vue app mounts to prevent flash
@@ -458,6 +464,7 @@ export const useAppStore = defineStore('app', () => {
 
     // Public settings actions
     fetchPublicSettings,
+    patchPublicSettings,
     clearPublicSettingsCache,
     initFromInjectedConfig
   }

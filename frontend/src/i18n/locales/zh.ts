@@ -341,6 +341,75 @@ export default {
         minutes: '{m}m',
         withSuffix: '{time} 后解除'
       }
+    },
+    // 通用错误码 → 文案映射（与后端 pkgerrors.Reason 对齐）：admin/user 全站共用，
+    // handler 层统一返回 reason 后由前端按 reason 取该 key 渲染本地化提示。
+    errors: {
+      INVALID_REQUEST_BODY: '请求格式错误',
+      INVALID_ID: 'ID 无效',
+      SERVICE_QUOTA_UNAVAILABLE: '服务限额功能暂不可用',
+      // Account
+      INVALID_ACCOUNT_ID: '账号 ID 无效',
+      ACCOUNT_NOT_FOUND: '账号不存在',
+      ACCOUNT_DUPLICATE: '账号已存在',
+      // User
+      INVALID_USER_ID: '用户 ID 无效',
+      USER_NOT_FOUND: '用户不存在',
+      EMAIL_INVALID: '邮箱格式错误',
+      BALANCE_INVALID: '余额数值无效',
+      // Group
+      INVALID_GROUP_ID: '分组 ID 无效',
+      GROUP_NOT_FOUND: '分组不存在',
+      GROUP_DUPLICATE: '分组名已存在',
+      INVALID_GROUP_FILTER: '分组筛选参数无效',
+      // Setting
+      INVALID_SETTING_KEY: '设置项无效',
+      SETTING_REQUIRED: '设置项必填',
+      TURNSTILE_SITE_KEY_REQUIRED: 'Turnstile Site Key 必填',
+      TURNSTILE_SECRET_REQUIRED: 'Turnstile Secret 必填',
+      // Account 补充（audit 8 发现 backend 已用但前端未翻译）
+      INVALID_RATE_MULTIPLIER: '倍率参数无效',
+      ACCOUNT_IDS_REQUIRED: '账号 ID 列表必填',
+      INVALID_EXTRA_FIELD: '扩展字段无效',
+      NO_UPDATES_PROVIDED: '未提供更新内容',
+      PRIVACY_UNSUPPORTED: '该账号不支持隐私设置',
+      MISSING_ACCESS_TOKEN: '缺少 access token',
+      TIER_REFRESH_UNSUPPORTED: '该账号不支持等级刷新',
+      TOTP_ENCRYPTION_KEY_MISSING: 'TOTP 加密密钥未配置',
+      // Service quota（handler 与 service 层 reason → 用户文案）
+      SERVICE_QUOTA_MONITOR_UNAVAILABLE: '限额监控暂不可用',
+      SERVICE_QUOTA_INVALID_RULE: '限额规则配置无效',
+      SERVICE_QUOTA_INVALID_COUNTER_MODE: '计数模式无效',
+      SERVICE_QUOTA_INVALID_LIMITERS: '请至少配置一个限流器',
+      SERVICE_QUOTA_INVALID_LIMITER_TYPE: '限流器类型无效',
+      SERVICE_QUOTA_INVALID_LIMIT_VALUE: '限额数值无效',
+      SERVICE_QUOTA_INVALID_WINDOW_MODE: '时间窗口模式无效',
+      SERVICE_QUOTA_DUPLICATE_LIMITER: '限流器配置重复',
+      SERVICE_QUOTA_INVALID_TOKEN_COMPONENT: 'Token 计费项无效',
+      SERVICE_QUOTA_INVALID_PATHS: '请至少配置一个路径',
+      SERVICE_QUOTA_SCOPE_ACCOUNT_NOT_FOUND: '指定的账号不存在',
+      SERVICE_QUOTA_SCOPE_GROUP_NOT_FOUND: '指定的分组不存在',
+      SERVICE_QUOTA_SCOPE_CHANNEL_NOT_FOUND: '指定的渠道不存在',
+      SERVICE_QUOTA_SCOPE_MISMATCH: '限制范围与规则不匹配',
+      SERVICE_QUOTA_INVALID_RESET_TARGET: '重置目标参数无效',
+      // 通用鉴权 / 监控错误
+      UNAUTHENTICATED: '请先登录',
+      SNAPSHOT_FAILED: '加载实时数据失败，请稍后重试',
+      INVALID_QUERY_PARAM: '查询参数无效'
+    }
+  },
+
+  // 通用字段级校验错误码 → i18n 文案。
+  // 弹窗经 fieldErrorI18nKeys(code, moduleNamespace)：先尝试模块命名空间
+  // （如 admin.serviceQuota.errors.*），未命中回退到本通用命名空间。
+  validation: {
+    fieldErrors: {
+      REQUIRED: '必填',
+      MIN: '值过小',
+      MAX: '值过大',
+      ONEOF: '取值不在允许范围',
+      MUST_BE_POSITIVE: '必须为正数',
+      INVALID_VALUE: '取值无效'
     }
   },
 
@@ -390,6 +459,10 @@ export default {
     channels: '渠道管理',
     availableChannels: '可用渠道',
     subscriptions: '订阅管理',
+    serviceQuota: '服务配额',
+    serviceQuotaMonitor: '限额监控',
+    serviceQuotaConfig: '限额配置',
+    myQuota: '我的限额',
     accounts: '账号管理',
     proxies: 'IP管理',
     redeemCodes: '兑换码',
@@ -4745,6 +4818,182 @@ export default {
       failedToLoadUsages: '加载使用记录失败'
     },
 
+    serviceQuota: {
+      title: '服务配额',
+      description: '在现有用户配额之上，额外管理 RPM、TPM、TPD、每日美元消费以及并发请求等规则。',
+      createRule: '新建规则',
+      editRule: '编辑服务配额规则',
+      deleteRule: '删除服务配额规则',
+      emptyTitle: '暂无服务配额规则',
+      emptyDescription: '创建第一条规则，在现有配额之上叠加限制。',
+      userId: '用户 ID：{id}',
+      unnamedRule: '未命名规则 #{id}',
+      loadError: '加载服务配额规则失败',
+      saveSuccess: '服务配额规则已保存',
+      saveError: '保存服务配额规则失败',
+      deleteSuccess: '服务配额规则已删除',
+      deleteError: '删除服务配额规则失败',
+      toggleSuccess: '状态更新成功',
+      toggleError: '状态更新失败',
+      counterResetOnToggle: '已重置该规则的限流计数',
+      deleteConfirm: '删除规则 {name}？删除后立即停止生效。',
+      filters: {
+        allCounterModes: '全部计数模式',
+        allFallback: '全部默认状态',
+        allStatus: '全部状态'
+      },
+      columns: {
+        status: '状态',
+        name: '名称',
+        limiters: '限流器',
+        paths: '路径',
+        counterMode: '计数模式',
+        targetUsers: '绑定用户',
+        fallback: '是否默认',
+        type: '类型',
+        window: '窗口',
+        limit: '限额',
+        actions: '操作'
+      },
+      targetUsersOverflow: '等 {count} 人',
+      scopeDetails: {
+        platform: '平台：{value}',
+        channel: '渠道：{value}',
+        group: '分组：{value}',
+        account: '账号：{value}',
+        model: '模型：{value}',
+        channelCount: '渠道 ×{count}',
+        groupCount: '分组 ×{count}',
+        accountCount: '账号 ×{count}',
+        allRequests: '所有请求'
+      },
+      limiters: {
+        rpm: 'RPM',
+        tpm: 'TPM',
+        tpd: 'TPD',
+        dailyUsd: '每日美元消费',
+        concurrency: '并发请求',
+        rpmCountOnArrival: {
+          label: '请求到达即计入',
+          help: '默认关闭，仅成功请求计入；开启后请求被路由到账号即 +1，避免高并发超额'
+        }
+      },
+      counterModes: {
+        user: '指定用户',
+        perUser: '所有用户',
+        shared: '全局共享'
+      },
+      counterModeHints: {
+        user: '只对指定的用户列表生效，每人独立计数',
+        perUser: '对 scope 内所有用户生效，按 user_id 分片计数',
+        shared: '对 scope 内所有用户生效，共享同一个计数器'
+      },
+      fallback: {
+        label: '默认规则',
+        hint: '仅在同一 limiter 类型没有其他非默认规则命中时生效（限流器粒度）',
+        yes: '默认',
+        no: '常规'
+      },
+      windows: {
+        fixed: '固定窗口',
+        rolling: '滑动窗口',
+        none: '不设窗口'
+      },
+      form: {
+        name: '规则名称',
+        namePlaceholder: '便于识别的备注，可留空',
+        counterMode: '计数模式',
+        fallback: '默认规则',
+        targetUserIds: '绑定用户 ID',
+        targetUserIdsPlaceholder: '逗号分隔的用户 ID，例如 1,2,3',
+        targetUserIdsRequired: '计数模式为"指定用户"时必填',
+        limitersTitle: '限流器（一条规则可同时配置多种）',
+        limitersHint: '同一类型只能配置一个；并发不支持窗口',
+        pathsTitle: '匹配路径（命中任意一条即生效）',
+        pathsHint: '每条路径按 平台 → 渠道 → 分组 → 账号 → 模型 单选；留空表示不限制该维度',
+        platform: '平台',
+        platformPlaceholder: '例如 anthropic / openai / gemini',
+        channelId: '渠道',
+        groupId: '分组',
+        accountId: '账号',
+        modelPattern: '模型通配符',
+        modelPatternPlaceholder: '例如 claude-opus-* 或精确模型名',
+        modelPatternHint: '支持通配符 *，例如 claude-* 匹配该平台下所有 claude 模型',
+        required: '必填'
+      },
+      limiterEditor: {
+        empty: '尚未添加限流器，点击下方按钮添加',
+        add: '添加限流器'
+      },
+      tokenComponents: {
+        title: '计入项',
+        input: '输入',
+        output: '输出',
+        cache_creation: '缓存写入',
+        cache_read: '缓存读取',
+        minOneRequired: '至少勾选 1 项'
+      },
+      pathEditor: {
+        empty: '尚未添加路径，点击下方按钮添加',
+        add: '添加路径',
+        pathIndex: '路径 #{index}'
+      },
+      errors: {
+        limitValueMustBePositive: '限额必须 > 0',
+        formInvalid: '表单存在错误，请修正后再保存',
+        REQUIRED: '必填',
+        INVALID_VALUE: '取值无效',
+        MUST_BE_POSITIVE: '必须 > 0',
+        TARGET_USERS_REQUIRED: '请至少选择 1 个用户',
+        TOKEN_COMPONENTS_REQUIRED: '至少勾选 1 项',
+        PLATFORM_REQUIRED: '平台必填'
+      }
+    },
+
+    serviceQuotaMonitor: {
+      title: '限额监控',
+      description: '实时查看所有服务限流器的当前用量与负载',
+      disabled: '服务限额未启用，请前往「设置 → 功能开关」开启',
+      empty: '当前没有活跃的服务限流器',
+      truncated: '超过 {count} 条已截断',
+      loadError: '加载限额监控失败',
+      notActive: '未活跃',
+      fallbackTag: '默认',
+      resetIn: '重置: {seconds}s 后',
+      scopeHintNoUser: '未选择用户：显示「指定用户」与「全局共享」规则；选择用户后还可看到「按用户独立」实时计数',
+      scopeHintWithUser: '已选用户：显示该用户被指定的规则、全局共享规则与该用户的独立计数',
+      asOf: '数据更新于 {seconds} 秒前',
+      refresh: '刷新',
+      filters: {
+        rule: '规则',
+        user: '用户',
+        channel: '渠道',
+        group: '分组',
+        account: '账号',
+        platform: '平台',
+        clear: '清空筛选'
+      },
+      columns: {
+        rule: '规则',
+        path: '路径',
+        limiter: '限流类型',
+        window: '窗口',
+        usage: '用量',
+        counterMode: '限制模式',
+        scopeUser: '用户',
+        isFallback: '是否默认',
+        actions: '操作'
+      },
+      statusActive: '现在',
+      refreshTitle: '刷新这个限流器的最新计数',
+      reset: '重置',
+      resetTitle: '清空这个限流器的当前计数',
+      resetConfirmTitle: '确认重置该限流器计数？',
+      resetConfirmMessage: '将清空规则「{rule}」的 {limiter} 当前计数。已用完的 quota 将立即恢复，已并发占用的槽位会被释放（在飞请求 Release 时自动跳过空 key）。该操作不可撤销。',
+      resetSuccess: '已重置该限流器计数',
+      resetError: '重置失败'
+    },
+
     // Usage Records
     usage: {
       title: '使用记录',
@@ -5613,6 +5862,14 @@ export default {
           configureLink: '前往 渠道管理 > 渠道定价 配置模型价格',
           enabled: '启用可用渠道',
           enabledHint: '关闭后用户端侧边栏入口隐藏，接口返回空数组。',
+        },
+        serviceQuota: {
+          title: '服务配额',
+          description: '开启后显示服务配额菜单，并在现有用户配额之上叠加检查 RPM / TPM / TPD / 每日美元 / 并发请求规则。',
+          configureLink: '进入服务配额规则管理',
+          enabled: '启用服务配额',
+          enabledHint: '关闭时不执行服务配额规则。',
+          unrelatedRpmWarning: '⚠ 注意：用户级别的 RPM / 并发限制与本功能完全独立、互不影响。是否放开或收紧用户级限流，需要在「用户管理 / 用户组」里单独配置；启用本开关不会自动放开任何用户级限制。',
         },
         riskControl: {
           title: '风控中心',
@@ -6891,6 +7148,29 @@ export default {
     quotaEndsIn: '额度将在 {time} 后结束',
     windowNotActive: '等待首次使用',
     usageOf: '已用 {used} / {limit}'
+  },
+
+  userQuotaMonitor: {
+    title: '我的限额',
+    description: '实时查看您命中的服务限流器与当前用量',
+    disabled: '服务限额功能未启用',
+    empty: '暂未命中任何服务限流规则',
+    emptyAfterFilter: '当前筛选条件下没有匹配的限流器',
+    truncated: '超过 {count} 条已截断',
+    loadError: '加载我的限额失败',
+    refresh: '手动刷新',
+    filters: {
+      rule: '规则',
+      platform: '平台',
+      scope: '限额范围',
+      scopeGlobal: '仅全局共享',
+      scopeMine: '仅我的独立',
+      limiterType: '限流类型',
+      status: '状态',
+      statusExceeded: '已超限',
+      statusHealthy: '健康',
+      reset: '重置筛选'
+    }
   },
 
   // Onboarding Tour
