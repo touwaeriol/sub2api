@@ -750,14 +750,12 @@ func (s *OpenAIGatewayService) handleOpenAIImagesErrorResponse(
 			Message:            upstreamMsg,
 			Detail:             upstreamDetail,
 		})
-		upErr := &OpenAIImagesUpstreamError{
-			StatusCode:        http.StatusInternalServerError,
-			ErrorType:         "upstream_error",
-			Message:           "Upstream gateway error",
-			UpstreamRequestID: strings.TrimSpace(resp.Header.Get("x-request-id")),
+		contentType := resp.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/json"
 		}
-		writeOpenAIImagesUpstreamErrorResponse(c, upErr)
-		return nil, upErr
+		c.Data(resp.StatusCode, contentType, body)
+		return nil, fmt.Errorf("upstream error: %d (not in custom error codes)", resp.StatusCode)
 	}
 
 	// Track rate limits / decide whether to disable the account (secondary failover).
